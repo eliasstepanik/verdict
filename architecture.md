@@ -1451,6 +1451,18 @@ pub struct StepContext {
 }
 ```
 
+
+> **Implementation notes (Phase 1 decisions):**
+> - `Guard::Compiles` and `Guard::TestsPass` derive their working directory from
+>   `ctx.filesystem_policy.workspace_root` — no separate `working_dir` field on `StepContext`.
+> - `FilesystemPolicy` and `NetworkPolicy` are canonically declared in `agent.rs` (part of
+>   `AgentPolicy`) and imported into `context.rs`.
+> - `SkillSet` is declared as a minimal stub `pub struct SkillSet { pub skills: Vec<String> }` in
+>   `agent.rs` for Phase 1; replaced with the full type in `skills/skill.rs` during Phase 5.
+> - `StepAction::LlmCall` returns a static stub string in Phase 1 (no real LLM); real provider
+>   integration is Phase 2+.
+> - `Guard::MaxTokens` uses the `tiktoken-rs` crate (cl100k_base encoding) for token counting.
+
 ---
 
 # Updated PipelineRunner Behavior

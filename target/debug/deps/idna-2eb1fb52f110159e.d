@@ -1,0 +1,10 @@
+C:\Users\Elias Stepanik\OpenCloud\Persönlich\Dev\Projecte\verdict\target\debug\deps\idna-2eb1fb52f110159e.d: C:\Users\Elias\ Stepanik\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\idna-1.1.0\src\lib.rs C:\Users\Elias\ Stepanik\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\idna-1.1.0\src\deprecated.rs C:\Users\Elias\ Stepanik\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\idna-1.1.0\src\punycode.rs C:\Users\Elias\ Stepanik\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\idna-1.1.0\src\uts46.rs
+
+C:\Users\Elias Stepanik\OpenCloud\Persönlich\Dev\Projecte\verdict\target\debug\deps\libidna-2eb1fb52f110159e.rlib: C:\Users\Elias\ Stepanik\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\idna-1.1.0\src\lib.rs C:\Users\Elias\ Stepanik\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\idna-1.1.0\src\deprecated.rs C:\Users\Elias\ Stepanik\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\idna-1.1.0\src\punycode.rs C:\Users\Elias\ Stepanik\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\idna-1.1.0\src\uts46.rs
+
+C:\Users\Elias Stepanik\OpenCloud\Persönlich\Dev\Projecte\verdict\target\debug\deps\libidna-2eb1fb52f110159e.rmeta: C:\Users\Elias\ Stepanik\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\idna-1.1.0\src\lib.rs C:\Users\Elias\ Stepanik\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\idna-1.1.0\src\deprecated.rs C:\Users\Elias\ Stepanik\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\idna-1.1.0\src\punycode.rs C:\Users\Elias\ Stepanik\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\idna-1.1.0\src\uts46.rs
+
+C:\Users\Elias\ Stepanik\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\idna-1.1.0\src\lib.rs:
+C:\Users\Elias\ Stepanik\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\idna-1.1.0\src\deprecated.rs:
+C:\Users\Elias\ Stepanik\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\idna-1.1.0\src\punycode.rs:
+C:\Users\Elias\ Stepanik\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\idna-1.1.0\src\uts46.rs:
