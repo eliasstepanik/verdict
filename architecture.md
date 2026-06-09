@@ -1834,20 +1834,22 @@ Output:
 
 ## Phase 1 — Core Framework
 
-- [ ] Core types: `Pipeline`, `AgentStep`, `Guard`, `Verdict`, `StepAction`
-- [ ] `Agent` type
-- [ ] `PipelineRunner`
-- [ ] `StepContext`
-- [ ] Sequential step execution
-- [ ] Built-in guards:
-  - [ ] `Compiles`
-  - [ ] `TestsPass`
-  - [ ] `FileExists`
-  - [ ] `MatchesSchema`
-  - [ ] `MaxTokens`
-  - [ ] `ValidJson`
-- [ ] Basic audit log
-- [ ] Basic failure modes
+
+- [x] Core types: `Pipeline`, `AgentStep`, `Guard`, `Verdict`, `StepAction`
+- [x] `Agent` type
+- [x] `PipelineRunner`
+- [x] `StepContext`
+- [x] Sequential step execution
+- [x] Built-in guards:
+  - [x] `Compiles`
+  - [x] `TestsPass`
+  - [x] `FileExists`
+  - [x] `MatchesSchema`
+  - [x] `MaxTokens`
+  - [x] `ValidJson`
+- [x] Basic audit log
+- [x] Basic failure modes
+
 
 ## Phase 2 — Tools
 
