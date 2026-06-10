@@ -16,7 +16,7 @@ pub use crate::guard::{Guard, GuardEngine, GuardError, TestRunner};
 pub use crate::mcp::{McpClient, McpError, McpServerConfig, McpToolAdapter, DiscoveredTool};
 pub use crate::pipeline::{AgentStep, FailureMode, InjectionProtection, Pipeline};
 pub use crate::registry::{AgentRegistry, SkillRegistry, ToolRegistry};
-pub use crate::skills::builtin::{api_design, code_review, rust_debugging};
+pub use crate::skills::builtin::{api_design, code_review, refactoring, rust_debugging, test_writing};
 pub use crate::runner::{GuardPhase, PipelineError, PipelineResult, PipelineRunner};
 pub use crate::toolset::ToolSet;
 pub use crate::tools::{Tool, ToolContext, ToolError, ToolOutput, ToolSource, FunctionTool};

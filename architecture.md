@@ -1506,7 +1506,7 @@ pub struct StepContext {
 > - `UseSkill` with an unknown skill name returns `StepError::ActionFailed` (not `NotImplemented`).
 > - `SkillMode::Auto` behaves identically to `SkillMode::Pipeline` — chooses pipeline if available, else instructions.
 > - Built-in skills: `rust_debugging` has a pipeline; `code_review` and `api_design` are prompt-only.
-> - `test_writing` and `refactoring` built-in skills not implemented — not in module layout.
+> - `test_writing` and `refactoring` built-in skills implemented as prompt-only skills (no pipeline).
 > - `Guard::DiffWithinScope` not added — not in the architecture's Guard enum.
 
 
@@ -1614,6 +1614,9 @@ verdict/
 │   │       ├── rust_debugging.rs
 │   │       ├── code_review.rs
 │   │       └── api_design.rs
+│   │       ├── test_writing.rs
+│   │       └── refactoring.rs
+
 │   │
 │   ├── injection.rs
 │   ├── audit.rs                 # Audit logging
@@ -1942,12 +1945,12 @@ Output:
 - [x] `StepAction::UseSkill`
 - [x] Prompt-only skills
 - [x] Pipeline-backed skills
-- [ ] Built-in skills:
+- [x] Built-in skills:
   - [x] Rust debugging
   - [x] code review
   - [x] API design
-  - [ ] test writing
-  - [ ] refactoring
+  - [x] test writing
+  - [x] refactoring
 
 ## Phase 6 — Built-In Agents
 
