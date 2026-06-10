@@ -1,1 +1,0 @@
-(dyn for<'a> Fn(&'a StepContext) -> Result<(), GuardError> + Send + Sync + 'static)
