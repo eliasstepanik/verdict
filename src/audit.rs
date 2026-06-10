@@ -11,6 +11,9 @@ pub enum AuditEvent {
     VerdictFailed { verdict: String, reason: String },
     StepCompleted { verdict_passed: bool },
     StepFailed { error: String },
+    ToolCallStarted { tool: String, args: String },
+    ToolCallCompleted { tool: String, output_bytes: usize },
+    ToolCallFailed { tool: String, reason: String },
     PipelineStarted,
     PipelineCompleted { steps_passed: u32, steps_failed: u32 },
     PipelineFailed { reason: String },
@@ -70,6 +73,18 @@ impl AuditLog {
                     }
                     AuditEvent::StepFailed { error } => {
                         json!({ "type": "StepFailed", "error": error })
+                    }
+                    AuditEvent::ToolCallStarted { tool, args } => {
+                        json!({ "type": "ToolCallStarted", "tool": tool, "args": args })
+                    }
+                    AuditEvent::ToolCallCompleted {
+                        tool,
+                        output_bytes,
+                    } => {
+                        json!({ "type": "ToolCallCompleted", "tool": tool, "output_bytes": output_bytes })
+                    }
+                    AuditEvent::ToolCallFailed { tool, reason } => {
+                        json!({ "type": "ToolCallFailed", "tool": tool, "reason": reason })
                     }
                     AuditEvent::PipelineStarted => json!({ "type": "PipelineStarted" }),
                     AuditEvent::PipelineCompleted {

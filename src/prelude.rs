@@ -16,4 +16,5 @@ pub use crate::pipeline::{AgentStep, FailureMode, InjectionProtection, Pipeline}
 pub use crate::registry::{AgentRegistry, SkillRegistry, ToolRegistry};
 pub use crate::runner::{GuardPhase, PipelineError, PipelineResult, PipelineRunner};
 pub use crate::toolset::ToolSet;
+pub use crate::tools::{Tool, ToolContext, ToolError, ToolOutput, ToolSource, FunctionTool};
 pub use crate::verdict::{Verdict, VerdictEngine, VerdictError};

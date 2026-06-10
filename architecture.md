@@ -1463,6 +1463,15 @@ pub struct StepContext {
 >   integration is Phase 2+.
 > - `Guard::MaxTokens` uses the `tiktoken-rs` crate (cl100k_base encoding) for token counting.
 
+> **Phase 2 decisions:**
+> - `ToolRegistry` is real in `registry.rs`; `context.rs` imports from `registry` (no local stubs).
+> - `PipelineRunner` holds `Arc<ToolRegistry>` defaulting to `ToolRegistry::with_builtins()`.
+> - `ToolContext` carries `Arc<Mutex<AuditLog>>` for tool-call audit entries.
+> - `ToolSet::ReadOnly` explicitly allows: `fs.read`, `fs.list`, `search.files`, `search.grep`.
+> - Path safety: `fs.*` tools canonicalize paths and reject any path outside workspace root.
+> - `FunctionTool` wraps any async Rust function as a `Tool` trait object.
+> - New `AuditEvent` variants: `ToolCallStarted`, `ToolCallCompleted`, `ToolCallFailed`.
+
 ---
 
 # Updated PipelineRunner Behavior
@@ -1853,15 +1862,16 @@ Output:
 
 ## Phase 2 — Tools
 
-- [ ] `Tool` trait
-- [ ] `ToolRegistry`
-- [ ] Built-in filesystem tools
-- [ ] Built-in shell tools
-- [ ] Built-in search tools
-- [ ] Agent-local function tools
-- [ ] Tool schema validation
-- [ ] Tool call audit logging
-- [ ] Tool scope enforcement per step
+- [x] `Tool` trait
+- [x] `ToolRegistry`
+- [x] Built-in filesystem tools
+- [x] Built-in shell tools
+- [x] Built-in search tools
+- [x] Agent-local function tools
+- [x] Tool schema validation
+- [x] Tool call audit logging
+- [x] Tool scope enforcement per step
+
 
 ## Phase 3 — MCP Support
 
