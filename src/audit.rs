@@ -17,6 +17,25 @@ pub enum AuditEvent {
     PipelineStarted,
     PipelineCompleted { steps_passed: u32, steps_failed: u32 },
     PipelineFailed { reason: String },
+    /// Delegation to a child agent started
+    DelegationStarted {
+        parent_agent: String,
+        child_agent: String,
+        depth: u32,
+    },
+    /// Delegation completed successfully
+    DelegationCompleted {
+        parent_agent: String,
+        child_agent: String,
+        depth: u32,
+    },
+    /// Delegation failed
+    DelegationFailed {
+        parent_agent: String,
+        child_agent: String,
+        depth: u32,
+        reason: String,
+    },
 }
 
 /// A single audit log entry
@@ -95,6 +114,15 @@ impl AuditLog {
                     }
                     AuditEvent::PipelineFailed { reason } => {
                         json!({ "type": "PipelineFailed", "reason": reason })
+                    }
+                    AuditEvent::DelegationStarted { parent_agent, child_agent, depth } => {
+                        json!({ "type": "DelegationStarted", "parent_agent": parent_agent, "child_agent": child_agent, "depth": depth })
+                    }
+                    AuditEvent::DelegationCompleted { parent_agent, child_agent, depth } => {
+                        json!({ "type": "DelegationCompleted", "parent_agent": parent_agent, "child_agent": child_agent, "depth": depth })
+                    }
+                    AuditEvent::DelegationFailed { parent_agent, child_agent, depth, reason } => {
+                        json!({ "type": "DelegationFailed", "parent_agent": parent_agent, "child_agent": child_agent, "depth": depth, "reason": reason })
                     }
                 };
 
