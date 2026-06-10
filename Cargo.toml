@@ -16,6 +16,10 @@ tiktoken-rs = "0.5"
 axum = "0.7"
 reqwest = { version = "0.12", features = ["json"] }
 url = "2"
+toml = "0.8"
+serde_yaml = "0.9"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
+mockito = "1"
+tempfile = "3"

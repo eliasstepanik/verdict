@@ -59,7 +59,7 @@ fn test_dag_topological_sort_basic() {
 #[test]
 fn test_dag_circular_dependency_detection() {
     // Create circular dependency: a -> b -> c -> a
-    let mut step_a = AgentStep {
+    let step_a = AgentStep {
         name: "step_a".into(),
         guard_in: Guard::None,
         action: StepAction::LlmCall {
@@ -98,7 +98,7 @@ fn test_dag_circular_dependency_detection() {
 
 #[tokio::test]
 async fn test_branch_action_true_path() {
-    let mut runner = PipelineRunner::new();
+    let runner = PipelineRunner::new();
     let agent = agents::planner_agent();
 
     // Setup context with output
@@ -132,7 +132,7 @@ async fn test_branch_action_true_path() {
 
 #[tokio::test]
 async fn test_branch_action_false_path() {
-    let mut runner = PipelineRunner::new();
+    let runner = PipelineRunner::new();
     let agent = agents::planner_agent();
 
     // Setup context with output
@@ -167,7 +167,7 @@ async fn test_branch_action_false_path() {
 
 #[test]
 fn test_remote_agent_client_construction() {
-    let client = RemoteAgentClient::new();
+    let _client = RemoteAgentClient::new();
     // Verify client can be created (no actual HTTP call)
     assert_eq!(std::mem::size_of::<RemoteAgentClient>() > 0, true);
 }
@@ -181,7 +181,7 @@ fn test_hot_reload_handle_creation() {
         max_retries: 0,
     };
 
-    let handle = HotReloadHandle::new(pipeline.clone());
+    let _handle = HotReloadHandle::new(pipeline.clone());
     // Verify handle was created
     assert_eq!(std::mem::size_of::<HotReloadHandle>() > 0, true);
 }
@@ -212,7 +212,7 @@ async fn test_hot_reload_handle_swap_pipeline() {
 
 #[test]
 fn test_plugin_registry_creation() {
-    let registry = PluginRegistry::new();
+    let _registry = PluginRegistry::new();
     // Verify registry can be created
     assert_eq!(std::mem::size_of::<PluginRegistry>() > 0, true);
 }
@@ -334,7 +334,7 @@ fn test_agent_step_has_dag_fields() {
         parallel: true,
     };
 
-    assert_eq!(step.dependencies, vec!["step_a".into()]);
+    assert_eq!(step.dependencies, vec![String::from("step_a")]);
     assert_eq!(step.parallel, true);
 }
 
@@ -407,7 +407,7 @@ async fn test_pipeline_execution_with_dag_support() {
 #[test]
 fn test_prelude_exports() {
     // Verify Phase 9 types are exported from prelude
-    use verdict::*;
+    use ::verdict::*;
 
     // Can construct types from prelude
     let _client = RemoteAgentClient::new();

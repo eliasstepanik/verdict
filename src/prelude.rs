@@ -1,5 +1,8 @@
 //! Prelude: commonly used types and traits
 
+// Phase 10: Stub Completion
+pub use crate::llm::{LlmProvider, LlmClient, LlmRequest, LlmResponse, LlmError, ProviderSpec};
+
 // Phase 9: Advanced Execution
 pub use crate::action::RemoteAgentError;
 pub use crate::agent::RemoteAgentClient;
@@ -21,7 +24,7 @@ pub use crate::budget::{BudgetTracker, RateLimiter, BudgetError};
 
 // Core types
 pub use crate::action::{
-    DelegationPolicy, IterationFailureMode, ProviderSpec, SkillMode, StepAction, StepError,
+    DelegationPolicy, IterationFailureMode, SkillMode, StepAction, StepError,
     StepOutput,
 };
 pub use crate::agent::{

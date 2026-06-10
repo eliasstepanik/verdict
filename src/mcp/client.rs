@@ -108,14 +108,74 @@ impl McpClient {
     }
 
     /// Discover tools available from the MCP server
-    /// 
-    /// In Phase 3, this is a placeholder that returns an empty list.
-    /// Full implementation requires maintaining persistent stdio connections,
-    /// which will be implemented in Phase 4+ when needed.
     pub async fn discover_tools(&mut self) -> Result<Vec<DiscoveredTool>, McpError> {
-        // Phase 3: Return empty list as placeholder
-        // Full implementation requires proper async stdio handling
-        Ok(Vec::new())
+        // Check that child process is running
+        if self.process.is_none() {
+            return Err(McpError::NotRunning);
+        }
+
+        // Get a reference to stdin and stdout from the child process
+        let process = self.process.as_mut().ok_or(McpError::NotRunning)?;
+        let stdin = process.stdin.as_mut().ok_or(McpError::Io("no stdin".into()))?;
+        let stdout = process.stdout.as_mut().ok_or(McpError::Io("no stdout".into()))?;
+
+        // Write JSON-RPC request
+        use tokio::io::AsyncWriteExt;
+        let request = json!({
+            "jsonrpc": "2.0",
+            "id": 0,
+            "method": "tools/list",
+            "params": {}
+        });
+        let request_str = format!("{}\n", request.to_string());
+        stdin
+            .write_all(request_str.as_bytes())
+            .await
+            .map_err(|e| McpError::Io(e.to_string()))?;
+        stdin
+            .flush()
+            .await
+            .map_err(|e| McpError::Io(e.to_string()))?;
+
+        // Read response using BufReader
+        use tokio::io::{AsyncBufReadExt, BufReader};
+        let mut reader = BufReader::new(stdout);
+        let mut response_line = String::new();
+        reader
+            .read_line(&mut response_line)
+            .await
+            .map_err(|e| McpError::Io(e.to_string()))?;
+
+        // Parse JSON-RPC response
+        let response: Value = serde_json::from_str(&response_line)
+            .map_err(|e| McpError::JsonRpc(e.to_string()))?;
+
+        // Extract tools from result.tools
+        let tools = response
+            .get("result")
+            .and_then(|r| r.get("tools"))
+            .and_then(|t| t.as_array())
+            .ok_or_else(|| McpError::JsonRpc("missing or invalid 'tools' field".into()))?;
+
+        let mut discovered = Vec::new();
+        for tool_def in tools {
+            match self.parse_tool_definition(tool_def) {
+                Ok(tool) => {
+                    // Apply allowed_tools filter if configured
+                    if self.config.allowed_tools.is_empty()
+                        || self.config.allowed_tools.contains(&tool.name)
+                    {
+                        discovered.push(tool);
+                    }
+                }
+                Err(e) => {
+                    // Skip invalid tools with a log (in real implementation)
+                    eprintln!("Warning: skipping invalid tool definition: {}", e);
+                }
+            }
+        }
+
+        Ok(discovered)
     }
 
     /// Parse a tool definition from a JSON object
@@ -149,21 +209,80 @@ impl McpClient {
     }
 
     /// Call a tool on the MCP server
-    /// 
-    /// In Phase 3, this is a placeholder.
     pub async fn call_tool(
         &mut self,
-        _tool_name: &str,
-        _arguments: Value,
+        tool_name: &str,
+        arguments: Value,
     ) -> Result<Value, McpError> {
+        // Check that child process is running
         if self.process.is_none() {
             return Err(McpError::NotRunning);
         }
 
-        // Phase 3: Not yet implemented
-        Err(McpError::NotImplemented(
-            "Tool calls not yet implemented in Phase 3".to_string(),
-        ))
+        // Increment ID counter
+        let id = {
+            let mut id_ref = self.request_id.lock().unwrap();
+            *id_ref += 1;
+            *id_ref
+        };
+
+        // Build JSON-RPC request
+        let request = json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "tools/call",
+            "params": {
+                "name": tool_name,
+                "arguments": arguments
+            }
+        });
+
+        // Write request to child stdin
+        let process = self.process.as_mut().ok_or(McpError::NotRunning)?;
+        let stdin = process.stdin.as_mut().ok_or(McpError::Io("no stdin".into()))?;
+
+        use tokio::io::AsyncWriteExt;
+        let request_str = format!("{}\n", request.to_string());
+        stdin
+            .write_all(request_str.as_bytes())
+            .await
+            .map_err(|e| McpError::Io(e.to_string()))?;
+        stdin
+            .flush()
+            .await
+            .map_err(|e| McpError::Io(e.to_string()))?;
+
+        // Read response from child stdout
+        let stdout = process.stdout.as_mut().ok_or(McpError::Io("no stdout".into()))?;
+        use tokio::io::{AsyncBufReadExt, BufReader};
+        let mut reader = BufReader::new(stdout);
+        let mut response_line = String::new();
+        reader
+            .read_line(&mut response_line)
+            .await
+            .map_err(|e| McpError::Io(e.to_string()))?;
+
+        // Parse JSON-RPC response
+        let response: Value = serde_json::from_str(&response_line)
+            .map_err(|e| McpError::JsonRpc(e.to_string()))?;
+
+        // Check for error in response
+        if let Some(error) = response.get("error") {
+            let error_msg = error
+                .get("message")
+                .and_then(|m| m.as_str())
+                .unwrap_or("unknown error");
+            return Err(McpError::JsonRpc(format!("tool call failed: {}", error_msg)));
+        }
+
+        // Extract result.content
+        let content = response
+            .get("result")
+            .and_then(|r| r.get("content"))
+            .cloned()
+            .ok_or_else(|| McpError::JsonRpc("missing 'result.content'".into()))?;
+
+        Ok(content)
     }
 }
 
@@ -199,7 +318,8 @@ mod tests {
         let mut client = McpClient::connect(config).await.unwrap();
 
         let result = client.discover_tools().await;
-        assert!(result.is_ok());
-        assert!(result.unwrap().is_empty());
+        // Should fail because no process is running
+        assert!(result.is_err());
+        assert!(matches!(result, Err(McpError::NotRunning)));
     }
 }
