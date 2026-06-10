@@ -777,6 +777,29 @@ Loop exits as soon as all tests pass. Typical run: 1–2 iterations.
 
 ---
 
+### [verdict-code](https://github.com/eliasstepanik/verdict-code)
+An interactive opencode-like CLI assistant that demonstrates all major verdict features
+in a single runnable project: `Pipeline`, `Guard`, `Verdict`, `ToolRegistry`, `SkillRegistry`,
+`FunctionTool`, `StepAction::ToolCall`, and `StepAction::UseSkill`.
+
+Every user message runs through a real verdict pipeline. Slash commands let you exercise
+tools and skills directly:
+
+| Command | Demonstrates |
+|---------|-------------|
+| `/tools` | `ToolRegistry`, `FunctionTool`, `StepAction::ToolCall`, `ToolSet::Allow` |
+| `/skills` | `SkillRegistry`, built-in skills, `StepAction::UseSkill` |
+| type "count words" | triggers a 4th `ToolCall` step automatically in the pipeline |
+
+```bash
+git clone https://github.com/eliasstepanik/verdict-code
+cd verdict-code
+# Edit BASE_URL and API_KEY in src/main.rs
+cargo run
+```
+
+---
+
 ## References
 
 - **Architecture**: Read `architecture.md` for the full design and extended examples
