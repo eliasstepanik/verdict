@@ -20,6 +20,8 @@ pub fn debugger_agent() -> Agent {
             system: "You are a debugging agent. Diagnose and fix failures.".into(),
             user: "Failing command: {command}\n\nError output: {error}\n\nChanged files: {files}\n\nProvide: root_cause, patch, expected_test_result.".into(),
             model: None,
+            conversation_id: None,
+            append_to_history: true,
         },
         guard_out: Guard::NonEmptyOutput,
         verdict: Verdict::Automated(Guard::NonEmptyOutput),

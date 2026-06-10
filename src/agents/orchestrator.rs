@@ -20,6 +20,8 @@ pub fn orchestrator_agent() -> Agent {
             system: "You are an orchestrator agent. Coordinate specialized agents to achieve the user's goal.".into(),
             user: "Goal: {goal}\n\nAvailable agents: planner, coder, reviewer, debugger, reflector.\n\nProduce a delegation plan.".into(),
             model: None,
+            conversation_id: None,
+            append_to_history: true,
         },
         guard_out: Guard::NonEmptyOutput,
         verdict: Verdict::Automated(Guard::NonEmptyOutput),

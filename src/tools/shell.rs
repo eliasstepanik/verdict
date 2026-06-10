@@ -1,11 +1,14 @@
+#![allow(dead_code)]
+
 //! Built-in shell tools
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tokio::process::Command;
+use tokio::io::{AsyncBufReadExt, BufReader};
 
-use crate::tools::tool::{Tool, ToolOutput, ToolError, ToolSource, ToolContext};
+use crate::tools::tool::{Tool, ToolOutput, ToolError, ToolSource, ToolContext, ToolChunk};
 
 /// cargo check tool
 pub struct CargoCheckTool;
@@ -48,6 +51,51 @@ impl Tool for CargoCheckTool {
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
         Ok(ToolOutput::text(format!("{}{}", stdout, stderr)))
+    }
+
+    async fn call_streaming(
+        &self,
+        _args: Value,
+        ctx: ToolContext,
+    ) -> Result<Vec<ToolChunk>, ToolError> {
+        let workspace_root = &ctx.filesystem_policy.workspace_root;
+
+        let mut child = Command::new("cargo")
+            .arg("check")
+            .current_dir(workspace_root)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .map_err(|e| ToolError::ExecutionFailed {
+                reason: format!("failed to spawn cargo check: {}", e),
+            })?;
+
+        let mut chunks = Vec::new();
+
+        if let Some(stdout) = child.stdout.take() {
+            let mut lines = BufReader::new(stdout).lines();
+            while let Some(line) = lines
+                .next_line()
+                .await
+                .map_err(|e| ToolError::ExecutionFailed {
+                    reason: format!("failed to read stdout: {}", e),
+                })?
+            {
+                chunks.push(ToolChunk {
+                    delta: format!("{}\n", line),
+                    is_final: false,
+                });
+            }
+        }
+
+        let _ = child.wait().await;
+
+        chunks.push(ToolChunk {
+            delta: String::new(),
+            is_final: true,
+        });
+
+        Ok(chunks)
     }
 }
 
@@ -92,6 +140,51 @@ impl Tool for CargoTestTool {
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
         Ok(ToolOutput::text(format!("{}{}", stdout, stderr)))
+    }
+
+    async fn call_streaming(
+        &self,
+        _args: Value,
+        ctx: ToolContext,
+    ) -> Result<Vec<ToolChunk>, ToolError> {
+        let workspace_root = &ctx.filesystem_policy.workspace_root;
+
+        let mut child = Command::new("cargo")
+            .arg("test")
+            .current_dir(workspace_root)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .map_err(|e| ToolError::ExecutionFailed {
+                reason: format!("failed to spawn cargo test: {}", e),
+            })?;
+
+        let mut chunks = Vec::new();
+
+        if let Some(stdout) = child.stdout.take() {
+            let mut lines = BufReader::new(stdout).lines();
+            while let Some(line) = lines
+                .next_line()
+                .await
+                .map_err(|e| ToolError::ExecutionFailed {
+                    reason: format!("failed to read stdout: {}", e),
+                })?
+            {
+                chunks.push(ToolChunk {
+                    delta: format!("{}\n", line),
+                    is_final: false,
+                });
+            }
+        }
+
+        let _ = child.wait().await;
+
+        chunks.push(ToolChunk {
+            delta: String::new(),
+            is_final: true,
+        });
+
+        Ok(chunks)
     }
 }
 
@@ -208,6 +301,70 @@ impl Tool for RunCommandTool {
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
         Ok(ToolOutput::text(format!("{}{}", stdout, stderr)))
+    }
+
+    async fn call_streaming(
+        &self,
+        args: Value,
+        ctx: ToolContext,
+    ) -> Result<Vec<ToolChunk>, ToolError> {
+        let command = args
+            .get("command")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| ToolError::SchemaValidationFailed {
+                reason: "missing 'command' field".to_string(),
+            })?;
+
+        let cmd_args: Vec<String> = args
+            .get("args")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let workspace_root = &ctx.filesystem_policy.workspace_root;
+
+        let mut cmd = Command::new(command);
+        for arg in cmd_args {
+            cmd.arg(arg);
+        }
+        cmd.current_dir(workspace_root)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+
+        let mut child = cmd.spawn().map_err(|e| ToolError::ExecutionFailed {
+            reason: format!("failed to spawn command: {}", e),
+        })?;
+
+        let mut chunks = Vec::new();
+
+        if let Some(stdout) = child.stdout.take() {
+            let mut lines = BufReader::new(stdout).lines();
+            while let Some(line) = lines
+                .next_line()
+                .await
+                .map_err(|e| ToolError::ExecutionFailed {
+                    reason: format!("failed to read stdout: {}", e),
+                })?
+            {
+                chunks.push(ToolChunk {
+                    delta: format!("{}\n", line),
+                    is_final: false,
+                });
+            }
+        }
+
+        let _ = child.wait().await;
+
+        chunks.push(ToolChunk {
+            delta: String::new(),
+            is_final: true,
+        });
+
+        Ok(chunks)
     }
 }
 

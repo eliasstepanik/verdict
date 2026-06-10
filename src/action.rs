@@ -65,7 +65,7 @@ pub enum SkillMode {
 }
 
 /// Output from a step action
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct StepOutput {
     /// Raw output string
     pub raw: String,
@@ -97,6 +97,10 @@ pub enum StepAction {
         system: String,
         user: String,
         model: Option<ProviderSpec>,
+        /// Optional conversation ID for multi-turn interactions
+        conversation_id: Option<String>,
+        /// Whether to append the user message and assistant response to conversation history
+        append_to_history: bool,
     },
 
     /// Run a tool directly
@@ -153,16 +157,53 @@ pub enum StepAction {
         agent_name: String,
         payload: Value,
     },
+
+    /// Call an LLM and stream the response via the runner's OutputSink.
+    /// Guards and verdicts still run against the fully assembled output after streaming completes.
+    LlmCallStreaming {
+        system: String,
+        user: String,
+        model: Option<ProviderSpec>,
+    },
+
+    /// ReAct tool-use loop: iterate until stop condition met
+    ToolUseLoop {
+        system: String,
+        user: String,
+        model: ProviderSpec,
+        tools: Vec<String>,
+        max_rounds: usize,
+        stop_condition: StopCondition,
+    },
+}
+
+/// Stop condition for ToolUseLoop
+#[derive(Debug, Clone)]
+pub enum StopCondition {
+    /// Stop when LLM returns no tool calls (text-only response)
+    TextOnly,
+    /// Stop when output matches a regex pattern
+    Pattern(String),
+    /// Always run to max_rounds
+    MaxRounds,
 }
 
 impl std::fmt::Debug for StepAction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            StepAction::LlmCall { system, user, model } => f
+            StepAction::LlmCall {
+                system,
+                user,
+                model,
+                conversation_id,
+                append_to_history,
+            } => f
                 .debug_struct("LlmCall")
                 .field("system", system)
                 .field("user", user)
                 .field("model", model)
+                .field("conversation_id", conversation_id)
+                .field("append_to_history", append_to_history)
                 .finish(),
             StepAction::ToolCall { tool, args } => f
                 .debug_struct("ToolCall")
@@ -228,6 +269,28 @@ impl std::fmt::Debug for StepAction {
                 .field("endpoint", endpoint)
                 .field("agent_name", agent_name)
                 .field("payload", payload)
+                .finish(),
+            StepAction::LlmCallStreaming { system, user, model } => f
+                .debug_struct("LlmCallStreaming")
+                .field("system", system)
+                .field("user", user)
+                .field("model", model)
+                .finish(),
+            StepAction::ToolUseLoop {
+                system,
+                user,
+                model,
+                tools,
+                max_rounds,
+                stop_condition,
+            } => f
+                .debug_struct("ToolUseLoop")
+                .field("system", system)
+                .field("user", user)
+                .field("model", model)
+                .field("tools", tools)
+                .field("max_rounds", max_rounds)
+                .field("stop_condition", stop_condition)
                 .finish(),
         }
     }

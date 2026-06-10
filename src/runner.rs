@@ -1,10 +1,13 @@
 use std::collections::HashMap;
 use std::io::{self, BufRead, Write};
 use std::pin::Pin;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use thiserror::Error;
+use futures::stream::StreamExt;
+use tokio::sync::Mutex as TokioMutex;
+use async_recursion::async_recursion;
 
-use crate::action::{StepAction, StepError, StepOutput, IterationFailureMode, SkillMode};
+use crate::action::{StepAction, StepError, StepOutput, IterationFailureMode, SkillMode, StopCondition};
 use crate::agent::Agent;
 use crate::audit::{AuditEntry, AuditEvent, AuditLog};
 use crate::context::{StepContext, StepResult, TraceEntry};
@@ -54,7 +57,7 @@ pub enum PipelineError {
 }
 
 /// Result of running a pipeline
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PipelineResult {
     pub pipeline_name: String,
     pub steps_passed: Vec<String>,
@@ -62,6 +65,26 @@ pub struct PipelineResult {
     pub step_results: HashMap<String, StepResult>,
     pub audit_log: AuditLog,
     pub success: bool,
+}
+
+/// An event emitted to an output sink during pipeline execution
+#[derive(Debug, Clone)]
+pub enum OutputEvent {
+    /// A chunk of LLM output (for streaming)
+    LlmChunk { step: String, delta: String },
+    /// A tool produced a chunk of output
+    ToolChunk { step: String, tool: String, delta: String },
+    /// A step completed
+    StepCompleted { step: String, output: StepOutput },
+    /// The pipeline completed
+    PipelineCompleted { result: PipelineResult },
+}
+
+/// Trait for receiving pipeline output events (streaming support)
+#[async_trait::async_trait]
+pub trait OutputSink: Send + Sync {
+    /// Emit an output event. Fire-and-forget — caller does not await completion.
+    async fn emit(&self, event: OutputEvent);
 }
 
 /// Executor for pipelines with guards, verdicts, and audit logging
@@ -72,6 +95,8 @@ pub struct PipelineRunner {
     pub agent_registry: Arc<AgentRegistry>,
     pub skill_registry: Arc<crate::skills::registry::SkillRegistry>,
     pub llm_client: Option<Arc<crate::llm::LlmClient>>,
+    pub output_sink: Option<Arc<dyn OutputSink>>,
+    pub conversation_registry: Arc<std::sync::Mutex<crate::llm::ConversationRegistry>>,
 }
 
 impl PipelineRunner {
@@ -82,6 +107,10 @@ impl PipelineRunner {
             agent_registry: Arc::new(AgentRegistry::new()),
             skill_registry: Arc::new(crate::skills::registry::SkillRegistry::new()),
             llm_client: None,
+            output_sink: None,
+            conversation_registry: Arc::new(std::sync::Mutex::new(
+                crate::llm::ConversationRegistry::new(),
+            )),
         }
     }
 
@@ -92,6 +121,10 @@ impl PipelineRunner {
             agent_registry: Arc::new(AgentRegistry::new()),
             skill_registry: Arc::new(crate::skills::registry::SkillRegistry::new()),
             llm_client: None,
+            output_sink: None,
+            conversation_registry: Arc::new(std::sync::Mutex::new(
+                crate::llm::ConversationRegistry::new(),
+            )),
         }
     }
 
@@ -103,6 +136,10 @@ impl PipelineRunner {
             agent_registry,
             skill_registry: Arc::new(crate::skills::registry::SkillRegistry::new()),
             llm_client: None,
+            output_sink: None,
+            conversation_registry: Arc::new(std::sync::Mutex::new(
+                crate::llm::ConversationRegistry::new(),
+            )),
         }
     }
 
@@ -117,6 +154,10 @@ impl PipelineRunner {
             agent_registry,
             skill_registry: Arc::new(crate::skills::registry::SkillRegistry::new()),
             llm_client: None,
+            output_sink: None,
+            conversation_registry: Arc::new(std::sync::Mutex::new(
+                crate::llm::ConversationRegistry::new(),
+            )),
         }
     }
 
@@ -130,12 +171,22 @@ impl PipelineRunner {
             agent_registry: Arc::new(AgentRegistry::new()),
             skill_registry,
             llm_client: None,
+            output_sink: None,
+            conversation_registry: Arc::new(std::sync::Mutex::new(
+                crate::llm::ConversationRegistry::new(),
+            )),
         }
     }
 
     /// Add an LLM client to this runner
     pub fn with_llm_client(mut self, client: Arc<crate::llm::LlmClient>) -> Self {
         self.llm_client = Some(client);
+        self
+    }
+
+    /// Add an output sink for streaming events
+    pub fn with_output_sink(mut self, sink: Arc<dyn OutputSink>) -> Self {
+        self.output_sink = Some(sink);
         self
     }
 
@@ -165,11 +216,149 @@ impl PipelineRunner {
         ctx.agent_registry = self.agent_registry.clone();
         ctx.tool_registry = self.tool_registry.clone();
         ctx.skill_registry = self.skill_registry.clone();
+        ctx.llm_client = self.llm_client.clone();
 
         let mut steps_passed = Vec::new();
         let mut steps_failed = Vec::new();
 
-        for step in &pipeline.steps {
+        let mut step_idx = 0;
+        while step_idx < pipeline.steps.len() {
+            let step = &pipeline.steps[step_idx];
+            
+            // Check if this is a parallel step — if so, collect all consecutive parallel steps
+            if step.parallel {
+                // Collect all consecutive parallel steps starting from step_idx
+                let mut parallel_batch_indices = vec![step_idx];
+                let mut batch_idx = step_idx + 1;
+                while batch_idx < pipeline.steps.len() && pipeline.steps[batch_idx].parallel {
+                    parallel_batch_indices.push(batch_idx);
+                    batch_idx += 1;
+                }
+
+                // Execute parallel steps with true tokio::task::spawn concurrency
+                use tokio::task::JoinSet;
+                
+                let mut join_set: JoinSet<(String, Result<(StepContext, StepOutput), String>)> = JoinSet::new();
+
+                for &idx in &parallel_batch_indices {
+                    let step_def = pipeline.steps[idx].clone();
+                    let mut local_ctx = ctx.clone();
+                    local_ctx.step_name = step_def.name.clone();
+                    local_ctx.input = input.clone();
+                    local_ctx.allowed_tools = step_def.tools.clone();
+                    
+                    let ctx_arc = Arc::new(TokioMutex::new(local_ctx));
+                    
+                    // Clone runner and step info for spawn closure
+                    let runner = self.clone();
+                    let step_name = step_def.name.clone();
+                    let action = step_def.action.clone();
+                    let guard_in = step_def.guard_in.clone();
+                    let guard_out = step_def.guard_out.clone();
+                    let verdict = step_def.verdict.clone();
+                    
+                    join_set.spawn(async move {
+                        // guard_in check
+                        {
+                            let ctx_guard = ctx_arc.lock().await;
+                            if let Err(e) = GuardEngine::evaluate(&guard_in, &*ctx_guard).await {
+                                return (step_name, Err(format!("guard_in: {}", e)));
+                            }
+                        }
+                        
+                        // Execute action
+                        let action_result = runner.execute_action(&action, ctx_arc.clone()).await;
+                        
+                        match action_result {
+                            Ok(output) => {
+                                // Lock context to update output and check guard_out
+                                let mut ctx_guard = ctx_arc.lock().await;
+                                ctx_guard.output = Some(output.clone());
+                                
+                                // guard_out check
+                                if let Err(e) = GuardEngine::evaluate(&guard_out, &*ctx_guard).await {
+                                    return (step_name, Err(format!("guard_out: {}", e)));
+                                }
+                                
+                                // verdict check
+                                if let Err(e) = VerdictEngine::evaluate(&verdict, &*ctx_guard).await {
+                                    return (step_name, Err(format!("verdict: {}", e)));
+                                }
+                                
+                                // Extract final context for return (clone to avoid holding lock)
+                                let final_ctx = ctx_guard.clone();
+                                drop(ctx_guard);
+                                
+                                (step_name, Ok((final_ctx, output)))
+                            }
+                            Err(e) => (step_name, Err(format!("action: {}", e.to_string()))),
+                        }
+                    });
+                }
+
+                // Join all parallel tasks
+                let mut any_failed = false;
+                while let Some(join_result) = join_set.join_next().await {
+                    match join_result {
+                        Ok((step_name, Ok((step_ctx, output)))) => {
+                            // Merge results (last-writer-wins)
+                            let sr = StepResult {
+                                step_name: step_name.clone(),
+                                output: output.clone(),
+                                verdict_passed: true,
+                                error: None,
+                            };
+                            ctx.step_results.insert(step_name.clone(), sr);
+                            // Merge trace entries
+                            ctx.trace.entries.extend(step_ctx.trace.entries);
+                            steps_passed.push(step_name);
+                        }
+                        Ok((step_name, Err(reason))) => {
+                            let sr = StepResult {
+                                step_name: step_name.clone(),
+                                output: StepOutput::new(String::new()),
+                                verdict_passed: false,
+                                error: Some(reason),
+                            };
+                            ctx.step_results.insert(step_name.clone(), sr);
+                            steps_failed.push(step_name);
+                            any_failed = true;
+                        }
+                        Err(join_err) => {
+                            return Err(PipelineError::StepFailed {
+                                step: "parallel_batch".to_string(),
+                                error: crate::action::StepError::ActionFailed {
+                                    reason: format!("task join error: {}", join_err),
+                                },
+                            });
+                        }
+                    }
+                }
+
+                if any_failed {
+                    match &pipeline.on_failure {
+                        FailureMode::Abort => {
+                            return Err(PipelineError::StepFailed {
+                                step: "parallel_batch".to_string(),
+                                error: crate::action::StepError::ActionFailed {
+                                    reason: "one or more parallel steps failed".to_string(),
+                                },
+                            });
+                        }
+                        FailureMode::Skip => { /* continue */ }
+                        FailureMode::Retry => { /* treat as sequential retry is not applicable for parallel */ }
+                        FailureMode::Fallback(fallback_pipeline) => {
+                            let fallback = fallback_pipeline.as_ref().clone();
+                            let _ = Box::pin(self.run(&fallback, agent, ctx.input.clone())).await;
+                        }
+                    }
+                }
+
+                step_idx += parallel_batch_indices.len();
+                continue;
+            }
+            
+            // Sequential step execution
             // Step execution loop
             let mut retry_count = 0;
             let max_retries = pipeline.max_retries;
@@ -238,7 +427,18 @@ impl PipelineRunner {
                     )
                     .await
                 } else {
-                    self.execute_action(&step.action, &mut ctx).await
+                    let ctx_arc = Arc::new(TokioMutex::new(ctx.clone()));
+                    let action_result = self.execute_action(&step.action, ctx_arc.clone()).await;
+                    // Merge back any changes (e.g., conversation history, budget, trace, etc.)
+                    ctx = match Arc::try_unwrap(ctx_arc) {
+                        Ok(mutex) => mutex.into_inner(),
+                        Err(arc) => {
+                            // If there are still references, we need to block to get the value
+                            let rt = tokio::runtime::Runtime::new().unwrap();
+                            rt.block_on(async { arc.lock().await }).clone()
+                        }
+                    };
+                    action_result
                 };
 
                 match action_result {
@@ -278,13 +478,35 @@ impl PipelineRunner {
                                 steps_failed.push(step.name.clone());
                                 break;
                             }
-                            FailureMode::Fallback(_) => {
-                                // Phase 2+: implement fallback
+                            FailureMode::Fallback(fallback_pipeline) => {
                                 steps_failed.push(step.name.clone());
-                                return Err(PipelineError::StepFailed {
-                                    step: step.name.clone(),
-                                    error: e,
+                                let fallback = fallback_pipeline.as_ref().clone();
+                                
+                                self.audit_log.append(AuditEntry {
+                                    timestamp: Utc::now(),
+                                    pipeline_name: pipeline.name.clone(),
+                                    step_name: step.name.clone(),
+                                    event: AuditEvent::FallbackTriggered {
+                                        step: step.name.clone(),
+                                        reason: e.to_string(),
+                                    },
                                 });
+                                
+                                let mut fallback_ctx = ctx.clone();
+                                fallback_ctx.step_results.clear();
+                                
+                                match Box::pin(self.run(&fallback, agent, ctx.input.clone())).await {
+                                    Ok(_fallback_result) => {
+                                        // Fallback succeeded; step failed but pipeline continues
+                                        break;
+                                    }
+                                    Err(_fallback_err) => {
+                                        return Err(PipelineError::StepFailed {
+                                            step: step.name.clone(),
+                                            error: e,
+                                        });
+                                    }
+                                }
                             }
                         }
                     }
@@ -359,12 +581,106 @@ impl PipelineRunner {
                                 verdict_passed: true,
                             },
                         });
+
+                        // Emit step completion event to output sink
+                        if let Some(sink) = &self.output_sink {
+                            sink.emit(OutputEvent::StepCompleted {
+                                step: step.name.clone(),
+                                output: ctx.output.clone().unwrap_or_else(|| {
+                                    StepOutput::new("(no output)".to_string())
+                                }),
+                            }).await;
+                        }
                     }
                     Err(VerdictError::UserApprovalRequired { prompt }) => {
                         return Err(PipelineError::AwaitingApproval {
                             step: step.name.clone(),
                             prompt,
                         });
+                    }
+                    Err(VerdictError::UserApprovalDenied { prompt }) => {
+                        self.audit_log.append(AuditEntry {
+                            timestamp: Utc::now(),
+                            pipeline_name: pipeline.name.clone(),
+                            step_name: step.name.clone(),
+                            event: AuditEvent::VerdictFailed {
+                                verdict: format!("UserApproval"),
+                                reason: format!("user denied: {}", prompt),
+                            },
+                        });
+
+                        // Handle as verdict failure with the on_failure policy
+                        match &pipeline.on_failure {
+                            FailureMode::Abort => {
+                                steps_failed.push(step.name.clone());
+                                return Err(PipelineError::VerdictFailed {
+                                    step: step.name.clone(),
+                                    error: VerdictError::UserApprovalDenied { prompt },
+                                });
+                            }
+                            FailureMode::Retry => {
+                                retry_count += 1;
+                                if retry_count > max_retries {
+                                    steps_failed.push(step.name.clone());
+                                    return Err(PipelineError::MaxRetriesExceeded {
+                                        step: step.name.clone(),
+                                    });
+                                }
+                                continue;
+                            }
+                            FailureMode::Skip => {
+                                steps_failed.push(step.name.clone());
+                                self.audit_log.append(AuditEntry {
+                                    timestamp: Utc::now(),
+                                    pipeline_name: pipeline.name.clone(),
+                                    step_name: step.name.clone(),
+                                    event: AuditEvent::StepCompleted {
+                                        verdict_passed: false,
+                                    },
+                                });
+
+                                // Emit step completion event to output sink
+                                if let Some(sink) = &self.output_sink {
+                                    sink.emit(OutputEvent::StepCompleted {
+                                        step: step.name.clone(),
+                                        output: ctx.output.clone().unwrap_or_else(|| {
+                                            StepOutput::new("(no output)".to_string())
+                                        }),
+                                    }).await;
+                                }
+                                break;
+                            }
+                            FailureMode::Fallback(fallback_pipeline) => {
+                                steps_failed.push(step.name.clone());
+                                let fallback = fallback_pipeline.as_ref().clone();
+                                
+                                self.audit_log.append(AuditEntry {
+                                    timestamp: Utc::now(),
+                                    pipeline_name: pipeline.name.clone(),
+                                    step_name: step.name.clone(),
+                                    event: AuditEvent::FallbackTriggered {
+                                        step: step.name.clone(),
+                                        reason: format!("user denied approval"),
+                                    },
+                                });
+                                
+                                let mut fallback_ctx = ctx.clone();
+                                fallback_ctx.step_results.clear();
+                                
+                                match Box::pin(self.run(&fallback, agent, ctx.input.clone())).await {
+                                    Ok(_fallback_result) => {
+                                        // Fallback succeeded; step failed but pipeline continues
+                                        break;
+                                    }
+                                    Err(_fallback_err) => {
+                                        return Err(PipelineError::VerdictFailed {
+                                            step: step.name.clone(),
+                                            error: VerdictError::UserApprovalDenied { prompt },
+                                        });
+                                    }
+                                }
+                            }
+                        }
                     }
                     Err(e) => {
                         self.audit_log.append(AuditEntry {
@@ -406,58 +722,103 @@ impl PipelineRunner {
                                         verdict_passed: false,
                                     },
                                 });
+
+                                // Emit step completion event to output sink
+                                if let Some(sink) = &self.output_sink {
+                                    sink.emit(OutputEvent::StepCompleted {
+                                        step: step.name.clone(),
+                                        output: ctx.output.clone().unwrap_or_else(|| {
+                                            StepOutput::new("(no output)".to_string())
+                                        }),
+                                    }).await;
+                                }
                                 break;
                             }
-                            FailureMode::Fallback(_) => {
-                                // Phase 2+: implement fallback
+                            FailureMode::Fallback(fallback_pipeline) => {
                                 steps_failed.push(step.name.clone());
-                                return Err(PipelineError::VerdictFailed {
-                                    step: step.name.clone(),
-                                    error: e,
+                                let fallback = fallback_pipeline.as_ref().clone();
+                                
+                                self.audit_log.append(AuditEntry {
+                                    timestamp: Utc::now(),
+                                    pipeline_name: pipeline.name.clone(),
+                                    step_name: step.name.clone(),
+                                    event: AuditEvent::FallbackTriggered {
+                                        step: step.name.clone(),
+                                        reason: e.to_string(),
+                                    },
                                 });
+                                
+                                let mut fallback_ctx = ctx.clone();
+                                fallback_ctx.step_results.clear();
+                                
+                                match Box::pin(self.run(&fallback, agent, ctx.input.clone())).await {
+                                    Ok(_fallback_result) => {
+                                        // Fallback succeeded; step failed but pipeline continues
+                                        break;
+                                    }
+                                    Err(_fallback_err) => {
+                                        return Err(PipelineError::VerdictFailed {
+                                            step: step.name.clone(),
+                                            error: e,
+                                        });
+                                    }
+                                }
                             }
                         }
                     }
                 }
             }
+
+            // Advance to next step in the outer while loop
+            step_idx += 1;
         }
 
         // Finalize
         let success = steps_failed.is_empty();
-        self.audit_log.append(AuditEntry {
-            timestamp: Utc::now(),
-            pipeline_name: pipeline.name.clone(),
-            step_name: String::new(),
-            event: if success {
-                AuditEvent::PipelineCompleted {
-                    steps_passed: steps_passed.len() as u32,
-                    steps_failed: steps_failed.len() as u32,
-                }
-            } else {
-                AuditEvent::PipelineFailed {
-                    reason: format!("Failed steps: {:?}", steps_failed),
-                }
-            },
-        });
-
-        Ok(PipelineResult {
+        let pipeline_result = PipelineResult {
             pipeline_name: pipeline.name.clone(),
             steps_passed,
             steps_failed,
             step_results: ctx.step_results,
             audit_log: self.audit_log.clone(),
             success,
-        })
+        };
+
+        self.audit_log.append(AuditEntry {
+            timestamp: Utc::now(),
+            pipeline_name: pipeline.name.clone(),
+            step_name: String::new(),
+            event: if success {
+                AuditEvent::PipelineCompleted {
+                    steps_passed: pipeline_result.steps_passed.len() as u32,
+                    steps_failed: pipeline_result.steps_failed.len() as u32,
+                }
+            } else {
+                AuditEvent::PipelineFailed {
+                    reason: format!("Failed steps: {:?}", pipeline_result.steps_failed),
+                }
+            },
+        });
+
+        // Emit pipeline completion event to output sink
+        if let Some(sink) = &self.output_sink {
+            sink.emit(OutputEvent::PipelineCompleted {
+                result: pipeline_result.clone(),
+            }).await;
+        }
+
+        Ok(pipeline_result)
     }
 
     /// Execute a single step action
+    #[async_recursion]
     pub async fn execute_action(
         &self,
         action: &StepAction,
-        ctx: &mut StepContext,
+        ctx: Arc<TokioMutex<StepContext>>,
     ) -> Result<StepOutput, StepError> {
         match action {
-            StepAction::LlmCall { system, user, model } => {
+            StepAction::LlmCall { system, user, model, conversation_id, append_to_history } => {
                 let client = self.llm_client.as_ref()
                     .ok_or_else(|| StepError::ActionFailed {
                         reason: "no LLM client configured".into(),
@@ -468,11 +829,28 @@ impl PipelineRunner {
                     None => "gpt-4o".into(),
                 };
 
+                // Resolve history: named conversation takes precedence over per-step history
+                let history = {
+                    if let Some(conv_id) = conversation_id {
+                        let reg = self.conversation_registry.lock().unwrap();
+                        reg.get(conv_id).filter(|h| !h.is_empty()).cloned()
+                    } else {
+                        let ctx_lock = ctx.lock().await;
+                        if !ctx_lock.conversation_history.is_empty() {
+                            Some(ctx_lock.conversation_history.clone())
+                        } else {
+                            None
+                        }
+                    }
+                };
+
                 let req = crate::llm::LlmRequest {
                     system: system.clone(),
                     user: user.clone(),
                     model: model_str,
                     max_tokens: None,
+                    history,
+                    temperature: None,
                 };
 
                 let resp = client.complete(req).await
@@ -480,14 +858,47 @@ impl PipelineRunner {
                         reason: e.to_string(),
                     })?;
 
+                // Wire budget tracking
+                {
+                    let mut ctx_lock = ctx.lock().await;
+                    ctx_lock.budget.llm_calls_used += 1;
+                    if let Some(usage) = &resp.usage {
+                        let cost = ((usage.completion_tokens as f64) * 2.0 + (usage.prompt_tokens as f64)) * 0.000001;
+                        if let Some(remaining) = ctx_lock.budget.remaining_usd {
+                            ctx_lock.budget.remaining_usd = Some((remaining - cost).max(0.0));
+                        }
+                    }
+                }
+
+                // Append to conversation history (both named registry and per-step)
+                if *append_to_history {
+                    // Update named conversation if specified
+                    if let Some(conv_id) = conversation_id {
+                        let mut reg = self.conversation_registry.lock().unwrap();
+                        let history = reg.get_or_create(conv_id);
+                        history.push(crate::llm::provider::ChatRole::User, user.clone());
+                        history.push(crate::llm::provider::ChatRole::Assistant, resp.content.clone());
+                    }
+                    // Also update per-step conversation history
+                    {
+                        let mut ctx_lock = ctx.lock().await;
+                        ctx_lock.conversation_history.push(crate::llm::provider::ChatRole::User, user.clone());
+                        ctx_lock.conversation_history.push(crate::llm::provider::ChatRole::Assistant, resp.content.clone());
+                    }
+                }
+
                 Ok(StepOutput::new(resp.content))
             }
 
             StepAction::ToolCall { tool, args } => {
-                self.execute_tool_call(tool, args, ctx).await
+                let mut ctx_guard = ctx.lock().await;
+                self.execute_tool_call(tool, args, &mut *ctx_guard).await
             }
 
-            StepAction::Custom(f) => f(ctx),
+            StepAction::Custom(f) => {
+                let mut ctx_unwrap = ctx.lock().await;
+                f(&mut *ctx_unwrap)
+            }
 
             StepAction::UserInput { prompt, schema: _ } => {
                 // Read from stdin
@@ -511,15 +922,19 @@ impl PipelineRunner {
                 // Since we're in execute_action (&self), we can't call execute_delegation (&mut self).
                 // Instead, look up the agent and execute its pipeline directly.
                 
-                let child_agent = ctx.agent_registry.get(agent_name)
-                    .ok_or_else(|| StepError::ActionFailed {
-                        reason: format!("agent '{}' not found in registry", agent_name),
-                    })?;
+                let (child_agent, agent_registry) = {
+                    let ctx_lock = ctx.lock().await;
+                    let child_agent = ctx_lock.agent_registry.get(agent_name)
+                        .ok_or_else(|| StepError::ActionFailed {
+                            reason: format!("agent '{}' not found in registry", agent_name),
+                        })?;
+                    (child_agent, ctx_lock.agent_registry.clone())
+                };
 
                 // Create a new runner with shared registries
                 let mut child_runner = PipelineRunner::with_registries(
                     self.tool_registry.clone(),
-                    ctx.agent_registry.clone(),
+                    agent_registry,
                 );
                 child_runner.skill_registry = self.skill_registry.clone();
                 
@@ -534,14 +949,17 @@ impl PipelineRunner {
                 match Pin::from(Box::new(run_future)).await {
                     Ok(result) => {
                         // Merge results back into context
-                        ctx.step_results.extend(result.step_results);
-                        ctx.trace.entries.extend(result.audit_log.entries().iter().map(|e| {
-                            crate::context::TraceEntry {
-                                step_name: format!("{}.{}", agent_name, e.step_name),
-                                status: format!("{:?}", e.event),
-                                timestamp: e.timestamp,
-                            }
-                        }));
+                        {
+                            let mut ctx_lock = ctx.lock().await;
+                            ctx_lock.step_results.extend(result.step_results);
+                            ctx_lock.trace.entries.extend(result.audit_log.entries().iter().map(|e| {
+                                crate::context::TraceEntry {
+                                    step_name: format!("{}.{}", agent_name, e.step_name),
+                                    status: format!("{:?}", e.event),
+                                    timestamp: e.timestamp,
+                                }
+                            }));
+                        }
 
                         Ok(StepOutput::new(
                             format!("DelegateAgent '{}' completed: {}", agent_name, result.success),
@@ -555,28 +973,36 @@ impl PipelineRunner {
 
             StepAction::SubPipeline(pipeline) => {
                 // Recursively execute sub-pipeline with Box::pin to handle async recursion
+                let (agent_name, allowed_tools, input) = {
+                    let ctx_lock = ctx.lock().await;
+                    (ctx_lock.agent_name.clone(), ctx_lock.allowed_tools.clone(), ctx_lock.input.clone())
+                };
+                
                 let agent = crate::agent::Agent {
-                    name: ctx.agent_name.clone(),
+                    name: agent_name,
                     description: String::new(),
                     pipeline: pipeline.as_ref().clone(),
-                    tools: ctx.allowed_tools.clone(),
+                    tools: allowed_tools,
                     skills: Default::default(),
                     policy: Default::default(),
                 };
 
                 let mut runner = PipelineRunner::new();
-                let run_future = runner.run(pipeline, &agent, ctx.input.clone());
+                let run_future = runner.run(pipeline, &agent, input);
                 match Pin::from(Box::new(run_future)).await {
                     Ok(result) => {
                         // Merge result into context
-                        ctx.step_results.extend(result.step_results);
-                        ctx.trace.entries.extend(result.audit_log.entries().iter().map(|e| {
-                            crate::context::TraceEntry {
-                                step_name: e.step_name.clone(),
-                                status: format!("{:?}", e.event),
-                                timestamp: e.timestamp,
-                            }
-                        }));
+                        {
+                            let mut ctx_lock = ctx.lock().await;
+                            ctx_lock.step_results.extend(result.step_results);
+                            ctx_lock.trace.entries.extend(result.audit_log.entries().iter().map(|e| {
+                                crate::context::TraceEntry {
+                                    step_name: e.step_name.clone(),
+                                    status: format!("{:?}", e.event),
+                                    timestamp: e.timestamp,
+                                }
+                            }));
+                        }
 
                         Ok(StepOutput::new(
                             format!("SubPipeline completed: {}", result.success),
@@ -600,11 +1026,11 @@ impl PipelineRunner {
                         break;
                     }
 
-                    // Execute body with Box::pin for async recursion
-                    let body_future = self.execute_action(body, ctx);
-                    match Pin::from(Box::new(body_future)).await {
+                    // Execute body recursively
+                    match self.execute_action(body, ctx.clone()).await {
                         Ok(output) => {
-                            ctx.output = Some(output);
+                            let mut ctx_lock = ctx.lock().await;
+                            ctx_lock.output = Some(output);
                         }
                         Err(e) => {
                             match on_iteration_failure {
@@ -624,9 +1050,11 @@ impl PipelineRunner {
                     }
 
                     // Check condition
-                    match GuardEngine::evaluate(condition, ctx).await {
+                    let ctx_lock = ctx.lock().await;
+                    match GuardEngine::evaluate(condition, &*ctx_lock).await {
                         Ok(_) => {
                             // Condition passed, exit loop
+                            drop(ctx_lock);
                             return Ok(StepOutput::new(format!(
                                 "Loop exited after {} iterations",
                                 iteration + 1
@@ -634,6 +1062,7 @@ impl PipelineRunner {
                         }
                         Err(_) => {
                             // Condition failed, continue loop
+                            drop(ctx_lock);
                             iteration += 1;
                         }
                     }
@@ -647,17 +1076,23 @@ impl PipelineRunner {
 
             StepAction::UseSkill { skill, input: _skill_input, mode } => {
                 // Look up the skill in the registry
-                let skill_def = match ctx.skill_registry.get(skill) {
-                    Some(s) => s,
-                    None => {
-                        return Err(StepError::ActionFailed {
-                            reason: format!("Skill '{}' not found in registry", skill),
-                        })
+                let skill_def = {
+                    let ctx_lock = ctx.lock().await;
+                    match ctx_lock.skill_registry.get(skill) {
+                        Some(s) => s,
+                        None => {
+                            return Err(StepError::ActionFailed {
+                                reason: format!("Skill '{}' not found in registry", skill),
+                            })
+                        }
                     }
                 };
 
                 // Track active skill usage
-                ctx.active_skills.push(skill.clone());
+                {
+                    let mut ctx_lock = ctx.lock().await;
+                    ctx_lock.active_skills.push(skill.clone());
+                }
 
                 // Execute based on mode
                 match mode {
@@ -668,10 +1103,9 @@ impl PipelineRunner {
                     SkillMode::Pipeline => {
                         // Run skill's pipeline if available, else fall back to instructions
                         if let Some(pipeline) = skill_def.pipeline.clone() {
-                            // Execute the sub-pipeline with Box::pin for async recursion
+                            // Execute the sub-pipeline recursively
                             let sub_action = StepAction::SubPipeline(Box::new(pipeline));
-                            let sub_future = self.execute_action(&sub_action, ctx);
-                            match Pin::from(Box::new(sub_future)).await {
+                            match self.execute_action(&sub_action, ctx.clone()).await {
                                 Ok(output) => Ok(output),
                                 Err(e) => Err(e),
                             }
@@ -683,8 +1117,7 @@ impl PipelineRunner {
                         // If pipeline available, run it; else prompt-only
                         if let Some(pipeline) = skill_def.pipeline.clone() {
                             let sub_action = StepAction::SubPipeline(Box::new(pipeline));
-                            let sub_future = self.execute_action(&sub_action, ctx);
-                            match Pin::from(Box::new(sub_future)).await {
+                            match self.execute_action(&sub_action, ctx.clone()).await {
                                 Ok(output) => Ok(output),
                                 Err(e) => Err(e),
                             }
@@ -702,17 +1135,18 @@ impl PipelineRunner {
             } => {
                 // Evaluate condition against previous step output or context
                 // Simple string evaluation: check if condition appears in output
-                let prev_output = ctx.output.as_ref().map(|o| o.raw.clone()).unwrap_or_default();
+                let prev_output = {
+                    let ctx_lock = ctx.lock().await;
+                    ctx_lock.output.as_ref().map(|o| o.raw.clone()).unwrap_or_default()
+                };
                 let condition_matches = prev_output.contains(condition);
 
                 if condition_matches {
                     // Execute if_true
-                    let branch_future = self.execute_action(if_true, ctx);
-                    Pin::from(Box::new(branch_future)).await
+                    self.execute_action(if_true, ctx.clone()).await
                 } else if let Some(if_false_action) = if_false {
                     // Execute if_false
-                    let branch_future = self.execute_action(if_false_action, ctx);
-                    Pin::from(Box::new(branch_future)).await
+                    self.execute_action(if_false_action, ctx.clone()).await
                 } else {
                     // No else branch, just return the previous output
                     Ok(StepOutput::new(prev_output))
@@ -739,6 +1173,184 @@ impl PipelineRunner {
                     }
                 }
             }
+
+            StepAction::LlmCallStreaming { system, user, model } => {
+                // Stream the LLM response, emitting each chunk via OutputSink as it arrives.
+                // Guards and verdicts run on the fully assembled response after streaming completes.
+                let client = self.llm_client.as_ref()
+                    .ok_or_else(|| StepError::ActionFailed {
+                        reason: "no LLM client configured".into(),
+                    })?;
+
+                let model_str = match model {
+                    Some(spec) => spec.model.clone(),
+                    None => "gpt-4o".into(),
+                };
+
+                let history = {
+                    let ctx_lock = ctx.lock().await;
+                    if ctx_lock.conversation_history.is_empty() {
+                        None
+                    } else {
+                        Some(ctx_lock.conversation_history.clone())
+                    }
+                };
+
+                let req = crate::llm::LlmRequest {
+                    system: system.clone(),
+                    user: user.clone(),
+                    model: model_str,
+                    max_tokens: None,
+                    history,
+                    temperature: None,
+                };
+
+                // Call the provider's stream method to get chunks
+                let mut stream = client.stream(req);
+                let mut full_response = String::new();
+
+                // Consume the stream, emitting each chunk to the sink
+                while let Some(chunk_result) = stream.next().await {
+                    let chunk = chunk_result
+                        .map_err(|e: crate::llm::provider::LlmError| StepError::ActionFailed {
+                            reason: e.to_string(),
+                        })?;
+
+                    // Append this chunk's delta to the assembled response
+                    full_response.push_str(&chunk.delta);
+
+                    // Emit this chunk to the output sink if configured
+                    if let Some(sink) = &self.output_sink {
+                        let step_name = {
+                            let ctx_lock = ctx.lock().await;
+                            ctx_lock.step_name.clone()
+                        };
+                        sink.emit(OutputEvent::LlmChunk {
+                            step: step_name,
+                            delta: chunk.delta.clone(),
+                        }).await;
+                    }
+                }
+
+                // Wire budget tracking (estimate based on assembled response length)
+                {
+                    let mut ctx_lock = ctx.lock().await;
+                    ctx_lock.budget.llm_calls_used += 1;
+                    // Rough token estimate: ~4 chars per token
+                    let token_estimate = (full_response.len() as f64 / 4.0) as u32;
+                    let cost = (token_estimate as f64) * 0.000001;
+                    if let Some(remaining) = ctx_lock.budget.remaining_usd {
+                        ctx_lock.budget.remaining_usd = Some((remaining - cost).max(0.0));
+                    }
+
+                    // Append to conversation history
+                    ctx_lock.conversation_history.push(
+                        crate::llm::provider::ChatRole::User,
+                        user.clone(),
+                    );
+                    ctx_lock.conversation_history.push(
+                        crate::llm::provider::ChatRole::Assistant,
+                        full_response.clone(),
+                    );
+                }
+
+                Ok(StepOutput::new(full_response))
+            }
+
+            StepAction::ToolUseLoop {
+                system,
+                user,
+                model,
+                tools: _allowed_tools,
+                max_rounds,
+                stop_condition,
+            } => {
+                // ReAct tool-use loop: iterate LLM calls until condition met
+                // Note: tool_calls parsing from LLM response is a future enhancement
+                let client = self.llm_client.as_ref()
+                    .ok_or_else(|| StepError::ActionFailed {
+                        reason: "no LLM client configured".into(),
+                    })?;
+
+                let mut history = crate::llm::provider::MessageHistory {
+                    messages: vec![],
+                    conversation_id: None,
+                };
+
+                let mut final_response = String::new();
+                let max_iterations = *max_rounds;
+
+                for round in 0..max_iterations {
+                    // Call LLM with current message history
+                    let model_str = model.model.clone();
+                    let user_message = if round == 0 {
+                        user.clone()
+                    } else {
+                        final_response.clone()
+                    };
+
+                    let req = crate::llm::LlmRequest {
+                        system: system.clone(),
+                        user: user_message.clone(),
+                        model: model_str,
+                        max_tokens: None,
+                        history: if !history.messages.is_empty() {
+                            Some(history.clone())
+                        } else {
+                            None
+                        },
+                        temperature: None,
+                    };
+
+                    let response = client.complete(req).await
+                        .map_err(|e| StepError::ActionFailed {
+                            reason: e.to_string(),
+                        })?;
+
+                    final_response = response.content.clone();
+
+                    // Add assistant response to history
+                    history.messages.push(crate::llm::provider::ChatMessage {
+                        role: crate::llm::provider::ChatRole::Assistant,
+                        content: final_response.clone(),
+                    });
+
+                    // Check stop condition
+                    match stop_condition {
+                        StopCondition::TextOnly => {
+                            // Stop if response doesn't contain tool call syntax
+                            if !final_response.contains("<tool>") && !final_response.contains("[tool]") {
+                                break;
+                            }
+                        }
+                        StopCondition::Pattern(pattern) => {
+                            if let Ok(regex) = regex::Regex::new(pattern) {
+                                if regex.is_match(&final_response) {
+                                    break;
+                                }
+                            }
+                        }
+                        StopCondition::MaxRounds => {
+                            if round + 1 >= max_iterations {
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                // Wire budget tracking
+                {
+                    let mut ctx_lock = ctx.lock().await;
+                    ctx_lock.budget.llm_calls_used = ctx_lock.budget.llm_calls_used.saturating_add(1);
+                    let token_estimate = (final_response.len() as f64 / 4.0) as u32;
+                    let cost = (token_estimate as f64) * 0.000001;
+                    if let Some(remaining) = ctx_lock.budget.remaining_usd {
+                        ctx_lock.budget.remaining_usd = Some((remaining - cost).max(0.0));
+                    }
+                }
+
+                Ok(StepOutput::new(final_response))
+            }
         }
     }
 
@@ -749,7 +1361,7 @@ impl PipelineRunner {
         args: &Value,
         ctx: &mut StepContext,
     ) -> Result<StepOutput, StepError> {
-        let audit_log = Arc::new(Mutex::new(self.audit_log.clone()));
+        let audit_log = Arc::new(std::sync::Mutex::new(self.audit_log.clone()));
 
         // Step 1: Check tool is registered
         let tool = self
@@ -799,7 +1411,7 @@ impl PipelineRunner {
             });
         });
 
-        // Step 6: Run tool
+        // Step 6: Run tool with streaming
         let tool_context = ToolContext {
             filesystem_policy: ctx.filesystem_policy.clone(),
             network_policy: ctx.network_policy.clone(),
@@ -807,12 +1419,30 @@ impl PipelineRunner {
             audit_log: audit_log.clone(),
         };
 
-        let tool_result = tool.call(args.clone(), tool_context).await;
+        let tool_result = tool.call_streaming(args.clone(), tool_context).await;
 
         // Step 7: Handle result and record audit log
         match tool_result {
-            Ok(output) => {
-                let output_bytes = output.raw.len();
+            Ok(chunks) => {
+                // Assemble full output from chunks
+                let mut full_output = String::new();
+
+                for chunk in &chunks {
+                    full_output.push_str(&chunk.delta);
+
+                    // Emit this chunk to the output sink if not final and not empty
+                    if !chunk.is_final && !chunk.delta.is_empty() {
+                        if let Some(sink) = &self.output_sink {
+                            sink.emit(OutputEvent::ToolChunk {
+                                step: ctx.step_name.clone(),
+                                tool: tool_name.to_string(),
+                                delta: chunk.delta.clone(),
+                            }).await;
+                        }
+                    }
+                }
+
+                let output_bytes = full_output.len();
 
                 // Record successful tool call
                 audit_log_mutex.lock().ok().map(|mut log| {
@@ -830,7 +1460,10 @@ impl PipelineRunner {
                 // Step 8: Sanitize output (stub — pass through)
                 // Step 9: Validate output schema (stub — pass through)
 
-                Ok(StepOutput::new(output.raw))
+                // Wire budget tracking for tool calls
+                ctx.budget.tool_calls_used += 1;
+
+                Ok(StepOutput::new(full_output))
             }
             Err(e) => {
                 // Record failed tool call
@@ -1121,6 +1754,7 @@ impl PipelineRunner {
         ctx.agent_registry = self.agent_registry.clone();
         ctx.tool_registry = self.tool_registry.clone();
         ctx.skill_registry = self.skill_registry.clone();
+        ctx.llm_client = self.llm_client.clone();
         ctx.delegation_depth = delegation_depth;
         ctx.parent_agent = parent_agent;
 
@@ -1188,7 +1822,17 @@ impl PipelineRunner {
                     )
                     .await
                 } else {
-                    self.execute_action(&step.action, &mut ctx).await
+                    let ctx_arc = Arc::new(TokioMutex::new(ctx.clone()));
+                    let action_result = self.execute_action(&step.action, ctx_arc.clone()).await;
+                    // Merge back any changes
+                    ctx = match Arc::try_unwrap(ctx_arc) {
+                        Ok(mutex) => mutex.into_inner(),
+                        Err(arc) => {
+                            let rt = tokio::runtime::Runtime::new().unwrap();
+                            rt.block_on(async { arc.lock().await }).clone()
+                        }
+                    };
+                    action_result
                 };
 
                 match action_result_d {
@@ -1300,6 +1944,16 @@ impl PipelineRunner {
                             step_name: step.name.clone(),
                             event: AuditEvent::StepCompleted { verdict_passed: true },
                         });
+
+                        // Emit step completion event to output sink
+                        if let Some(sink) = &self.output_sink {
+                            sink.emit(OutputEvent::StepCompleted {
+                                step: step.name.clone(),
+                                output: ctx.output.clone().unwrap_or_else(|| {
+                                    StepOutput::new("(no output)".to_string())
+                                }),
+                            }).await;
+                        }
                     }
                     Err(VerdictError::UserApprovalRequired { prompt }) => {
                         return Err(PipelineError::AwaitingApproval {
@@ -1343,6 +1997,16 @@ impl PipelineRunner {
                                     step_name: step.name.clone(),
                                     event: AuditEvent::StepCompleted { verdict_passed: false },
                                 });
+
+                                // Emit step completion event to output sink
+                                if let Some(sink) = &self.output_sink {
+                                    sink.emit(OutputEvent::StepCompleted {
+                                        step: step.name.clone(),
+                                        output: ctx.output.clone().unwrap_or_else(|| {
+                                            StepOutput::new("(no output)".to_string())
+                                        }),
+                                    }).await;
+                                }
                                 break;
                             }
                             FailureMode::Fallback(_) => {
@@ -1359,30 +2023,39 @@ impl PipelineRunner {
         }
 
         let success = steps_failed.is_empty();
-        self.audit_log.append(AuditEntry {
-            timestamp: Utc::now(),
-            pipeline_name: pipeline.name.clone(),
-            step_name: String::new(),
-            event: if success {
-                AuditEvent::PipelineCompleted {
-                    steps_passed: steps_passed.len() as u32,
-                    steps_failed: steps_failed.len() as u32,
-                }
-            } else {
-                AuditEvent::PipelineFailed {
-                    reason: format!("Failed steps: {:?}", steps_failed),
-                }
-            },
-        });
-
-        Ok(PipelineResult {
+        let pipeline_result = PipelineResult {
             pipeline_name: pipeline.name.clone(),
             steps_passed,
             steps_failed,
             step_results: ctx.step_results,
             audit_log: self.audit_log.clone(),
             success,
-        })
+        };
+
+        self.audit_log.append(AuditEntry {
+            timestamp: Utc::now(),
+            pipeline_name: pipeline.name.clone(),
+            step_name: String::new(),
+            event: if success {
+                AuditEvent::PipelineCompleted {
+                    steps_passed: pipeline_result.steps_passed.len() as u32,
+                    steps_failed: pipeline_result.steps_failed.len() as u32,
+                }
+            } else {
+                AuditEvent::PipelineFailed {
+                    reason: format!("Failed steps: {:?}", pipeline_result.steps_failed),
+                }
+            },
+        });
+
+        // Emit pipeline completion event to output sink
+        if let Some(sink) = &self.output_sink {
+            sink.emit(OutputEvent::PipelineCompleted {
+                result: pipeline_result.clone(),
+            }).await;
+        }
+
+        Ok(pipeline_result)
     }
 
     /// Topologically sort pipeline steps based on dependencies (Phase 9 DAG support)
@@ -1478,7 +2151,16 @@ impl PipelineRunner {
         }
 
         // Execute the step action
-        let result = self.execute_action(&step.action, ctx).await;
+        let ctx_arc = Arc::new(TokioMutex::new(ctx.clone()));
+        let result = self.execute_action(&step.action, ctx_arc.clone()).await;
+        // Merge back any changes
+        *ctx = match Arc::try_unwrap(ctx_arc) {
+            Ok(mutex) => mutex.into_inner(),
+            Err(arc) => {
+                let rt = tokio::runtime::Runtime::new().unwrap();
+                rt.block_on(async { arc.lock().await }).clone()
+            }
+        };
 
         // Call on_step_end hooks (always called, even on error)
         if let Ok(ref output) = result {

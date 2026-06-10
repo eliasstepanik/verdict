@@ -1,7 +1,10 @@
 //! Prelude: commonly used types and traits
 
-// Phase 10: Stub Completion
-pub use crate::llm::{LlmProvider, LlmClient, LlmRequest, LlmResponse, LlmError, ProviderSpec};
+// Phase 11: Streaming, conversation history, LlmJudge
+pub use crate::llm::{
+    LlmProvider, LlmClient, LlmRequest, LlmResponse, LlmError, LlmUsage, ProviderSpec,
+    LlmChunk, ChatRole, ChatMessage, MessageHistory, ConversationRegistry,
+};
 
 // Phase 9: Advanced Execution
 pub use crate::action::RemoteAgentError;
@@ -39,9 +42,9 @@ pub use crate::mcp::{McpClient, McpError, McpServerConfig, McpToolAdapter, Disco
 pub use crate::pipeline::{AgentStep, FailureMode, InjectionProtection, Pipeline};
 pub use crate::registry::{AgentRegistry, SkillRegistry, ToolRegistry};
 pub use crate::skills::builtin::{api_design, code_review, refactoring, rust_debugging, test_writing};
-pub use crate::runner::{GuardPhase, PipelineError, PipelineResult, PipelineRunner};
+pub use crate::runner::{GuardPhase, PipelineError, PipelineResult, PipelineRunner, OutputSink, OutputEvent};
 pub use crate::toolset::ToolSet;
-pub use crate::tools::{Tool, ToolContext, ToolError, ToolOutput, ToolSource, FunctionTool};
+pub use crate::tools::{Tool, ToolContext, ToolError, ToolOutput, ToolSource, FunctionTool, ToolChunk};
 pub use crate::verdict::{Verdict, VerdictEngine, VerdictError};
 pub use crate::agents::{
     planner_agent, coder_agent, reviewer_agent, debugger_agent, reflector_agent, orchestrator_agent,

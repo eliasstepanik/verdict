@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 //! Built-in filesystem tools
 
 use async_trait::async_trait;
@@ -10,23 +12,41 @@ use crate::tools::tool::{Tool, ToolOutput, ToolError, ToolSource, ToolContext};
 
 /// Check if a path is within workspace root
 fn is_within_workspace(path: &Path, workspace_root: &Path) -> bool {
-    if let (Ok(canonical_path), Ok(canonical_root)) = (
-        std::fs::canonicalize(path).or_else(|_| {
-            // If file doesn't exist (e.g., for write operations), check the parent
-            if let Some(parent) = path.parent() {
-                std::fs::canonicalize(parent)
-            } else {
-                Err(std::io::Error::new(
-                    std::io::ErrorKind::NotFound,
-                    "no parent",
-                ))
+    // Resolve the path; for not-yet-existing files canonicalize the parent
+    // directory (which must exist) and re-attach the filename so we get the
+    // same long-name form as canonicalize(workspace_root).
+    let resolved = std::fs::canonicalize(path).or_else(|_| {
+        match (path.parent(), path.file_name()) {
+            (Some(parent), Some(name)) => {
+                std::fs::canonicalize(parent).map(|p| p.join(name))
             }
-        }),
-        std::fs::canonicalize(workspace_root),
-    ) {
-        canonical_path.starts_with(&canonical_root)
+            _ => Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "no parent",
+            )),
+        }
+    });
+
+    let (Ok(canonical_path), Ok(canonical_root)) = (resolved, std::fs::canonicalize(workspace_root))
+    else {
+        return false;
+    };
+
+    // Strip the Windows \\?\ verbatim prefix before comparing so that a
+    // canonicalized root and a fallback plain path compare equal.
+    let norm_path = strip_verbatim_prefix_fs(&canonical_path);
+    let norm_root = strip_verbatim_prefix_fs(&canonical_root);
+    norm_path.starts_with(&norm_root)
+}
+
+/// Strip the Windows `\\?\` verbatim prefix so that plain and UNC-canonicalized
+/// paths compare equal.  No-op on non-Windows platforms.
+fn strip_verbatim_prefix_fs(path: &Path) -> std::path::PathBuf {
+    let s = path.to_string_lossy();
+    if s.starts_with(r"\\?\") {
+        std::path::PathBuf::from(&s[4..])
     } else {
-        false
+        path.to_path_buf()
     }
 }
 
@@ -75,6 +95,13 @@ impl Tool for ReadFileTool {
         if !is_within_workspace(&full_path, workspace_root) {
             return Err(ToolError::ExecutionFailed {
                 reason: format!("path '{}' escapes workspace root", path_str),
+            });
+        }
+
+        // Check filesystem policy forbidden paths
+        if !ctx.filesystem_policy.is_path_allowed(&full_path) {
+            return Err(ToolError::ExecutionFailed {
+                reason: format!("path '{}' is not allowed by filesystem policy (forbidden)", path_str),
             });
         }
 
@@ -144,6 +171,13 @@ impl Tool for WriteFileTool {
         if !is_within_workspace(&full_path, workspace_root) {
             return Err(ToolError::ExecutionFailed {
                 reason: format!("path '{}' escapes workspace root", path_str),
+            });
+        }
+
+        // Check filesystem policy forbidden paths
+        if !ctx.filesystem_policy.is_path_allowed(&full_path) {
+            return Err(ToolError::ExecutionFailed {
+                reason: format!("path '{}' is not allowed by filesystem policy (forbidden)", path_str),
             });
         }
 
@@ -297,6 +331,13 @@ impl Tool for DeleteFileTool {
         if !is_within_workspace(&full_path, workspace_root) {
             return Err(ToolError::ExecutionFailed {
                 reason: format!("path '{}' escapes workspace root", path_str),
+            });
+        }
+
+        // Check filesystem policy forbidden paths
+        if !ctx.filesystem_policy.is_path_allowed(&full_path) {
+            return Err(ToolError::ExecutionFailed {
+                reason: format!("path '{}' is not allowed by filesystem policy (forbidden)", path_str),
             });
         }
 

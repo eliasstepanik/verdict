@@ -20,6 +20,8 @@ pub fn planner_agent() -> Agent {
             system: "You are a planning agent. Produce a structured execution plan.".into(),
             user: "Task: {task}\n\nProduce a plan with: steps, affected files, risks, required tools, test strategy.".into(),
             model: None,
+            conversation_id: None,
+            append_to_history: true,
         },
         guard_out: Guard::NonEmptyOutput,
         verdict: Verdict::Automated(Guard::NonEmptyOutput),

@@ -1,5 +1,6 @@
 //! Prompt injection protection and secret scanning — Phase 7
 
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 /// Risk level for detected injection or secret patterns
@@ -18,6 +19,38 @@ impl std::fmt::Display for RiskLevel {
             RiskLevel::Medium => write!(f, "Medium"),
             RiskLevel::High => write!(f, "High"),
             RiskLevel::Critical => write!(f, "Critical"),
+        }
+    }
+}
+
+/// A compiled pattern that can match as regex or fallback to string contains
+struct CompiledPattern {
+    raw: String,
+    regex: Option<Regex>,
+}
+
+impl CompiledPattern {
+    /// Create a new compiled pattern.
+    /// For injection scanning, patterns are always treated as literal strings, not regexes.
+    /// This prevents special regex characters like `[` and `]` from being interpreted as
+    /// character classes or other regex constructs.
+    fn new(raw: String) -> Self {
+        CompiledPattern { raw, regex: None }
+    }
+
+    /// Create a pattern that will be treated as a regex.
+    /// This should only be used for patterns that are intentionally designed as regexes.
+    #[allow(dead_code)]
+    fn with_regex(raw: String) -> Self {
+        let regex = Regex::new(&raw).ok();
+        CompiledPattern { raw, regex }
+    }
+
+    /// Check if the pattern matches the input text
+    fn is_match(&self, input: &str) -> bool {
+        match &self.regex {
+            Some(r) => r.is_match(input),
+            None => input.contains(&self.raw),
         }
     }
 }
@@ -41,6 +74,33 @@ pub struct SecretMatch {
 /// Injection detection patterns
 pub struct InjectionScanner;
 
+/// Calculate Shannon entropy of a string
+/// H = -Σ p(c) * log2(p(c)) where p(c) is the frequency of character c
+fn entropy(text: &str) -> f64 {
+    if text.is_empty() {
+        return 0.0;
+    }
+
+    let len = text.len() as f64;
+    let mut freq = [0f64; 256];
+    
+    // Count byte frequencies
+    for byte in text.as_bytes() {
+        freq[*byte as usize] += 1.0;
+    }
+    
+    // Calculate Shannon entropy
+    let mut h = 0.0;
+    for count in &freq {
+        if *count > 0.0 {
+            let p = *count / len;
+            h -= p * p.log2();
+        }
+    }
+    
+    h
+}
+
 impl InjectionScanner {
     /// Scan text for prompt injection patterns
     pub fn scan(text: &str) -> InjectionResult {
@@ -61,11 +121,12 @@ impl InjectionScanner {
             "assistant:", // In some formats
         ];
 
-        for pattern in critical_patterns {
-            if text_lower.contains(pattern) {
+        for pattern_str in critical_patterns {
+            let pattern = CompiledPattern::new(pattern_str.to_string());
+            if pattern.is_match(&text_lower) {
                 return InjectionResult {
                     detected: true,
-                    pattern: Some(pattern.to_string()),
+                    pattern: Some(pattern_str.to_string()),
                     risk_level: Some(RiskLevel::Critical),
                 };
             }
@@ -83,11 +144,12 @@ impl InjectionScanner {
             "change character",
         ];
 
-        for pattern in high_patterns {
-            if text_lower.contains(pattern) {
+        for pattern_str in high_patterns {
+            let pattern = CompiledPattern::new(pattern_str.to_string());
+            if pattern.is_match(&text_lower) {
                 return InjectionResult {
                     detected: true,
-                    pattern: Some(pattern.to_string()),
+                    pattern: Some(pattern_str.to_string()),
                     risk_level: Some(RiskLevel::High),
                 };
             }
@@ -103,11 +165,12 @@ impl InjectionScanner {
             "execute this",
         ];
 
-        for pattern in medium_patterns {
-            if text_lower.contains(pattern) {
+        for pattern_str in medium_patterns {
+            let pattern = CompiledPattern::new(pattern_str.to_string());
+            if pattern.is_match(&text_lower) {
                 return InjectionResult {
                     detected: true,
-                    pattern: Some(pattern.to_string()),
+                    pattern: Some(pattern_str.to_string()),
                     risk_level: Some(RiskLevel::Medium),
                 };
             }
@@ -122,12 +185,27 @@ impl InjectionScanner {
             "{instructions}",
         ];
 
-        for pattern in low_patterns {
-            if text_lower.contains(pattern) {
+        for pattern_str in low_patterns {
+            let pattern = CompiledPattern::new(pattern_str.to_string());
+            if pattern.is_match(&text_lower) {
                 return InjectionResult {
                     detected: true,
-                    pattern: Some(pattern.to_string()),
+                    pattern: Some(pattern_str.to_string()),
                     risk_level: Some(RiskLevel::Low),
+                };
+            }
+        }
+
+        // High-entropy detection for obfuscated payloads (base64-encoded commands, etc.)
+        // Threshold 4.9 bits/char: typical English text is ~3.5-4.5, while base64/encrypted
+        // payloads with uniform char distribution exceed 5.0. We use 4.9 to catch borderline cases.
+        if text.len() > 50 {
+            let h = entropy(text);
+            if h > 4.9 {
+                return InjectionResult {
+                    detected: true,
+                    pattern: Some("high_entropy_payload".to_string()),
+                    risk_level: Some(RiskLevel::High),
                 };
             }
         }
@@ -294,5 +372,24 @@ mod tests {
         let matches = SecretScanner::scan("DATABASE_PASSWORD=secretpass123");
         assert!(!matches.is_empty());
         assert!(matches[0].redacted.contains("DATABASE_PASSWORD"));
+    }
+
+    #[test]
+    fn test_injection_scanner_detects_high_entropy() {
+        // Base64-encoded payload (high entropy)
+        let base64_payload = "aW1wb3J0IHN5cztzeXMucGF0aC5hcHBlbmQoJy90bXAnKTtleGVjKG9wZW4oJ2ZsYWcudHh0JykucmVhZCgpKQ==";
+        let result = InjectionScanner::scan(base64_payload);
+        assert!(result.detected);
+        assert_eq!(result.pattern, Some("high_entropy_payload".to_string()));
+        assert_eq!(result.risk_level, Some(RiskLevel::High));
+    }
+
+    #[test]
+    fn test_injection_scanner_entropy_ignores_short_text() {
+        // Short high-entropy text should not trigger entropy check
+        let short = "!@#$%^&*(";
+        let result = InjectionScanner::scan(short);
+        // Only triggers if text.len() > 50, so this should pass
+        assert!(!result.detected);
     }
 }

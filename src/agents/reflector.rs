@@ -20,6 +20,8 @@ pub fn reflector_agent() -> Agent {
             system: "You are a reflection agent. Analyze the pipeline trace and suggest improvements.".into(),
             user: "Trace: {trace}\n\nFailures: {failures}\n\nTool calls: {tool_calls}\n\nOutput: what_worked, what_failed, suggested_improvement, proposed_patch_category, risk_level.".into(),
             model: None,
+            conversation_id: None,
+            append_to_history: true,
         },
         guard_out: Guard::NonEmptyOutput,
         verdict: Verdict::Automated(Guard::NonEmptyOutput),

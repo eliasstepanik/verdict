@@ -20,6 +20,8 @@ pub fn reviewer_agent() -> Agent {
             system: "You are a code review agent. Review the changes thoroughly.".into(),
             user: "Task: {task}\n\nDiff: {diff}\n\nReview for: correctness, security, quality. Output: approval_status, issues, required_fixes, risk_rating.".into(),
             model: None,
+            conversation_id: None,
+            append_to_history: true,
         },
         guard_out: Guard::NonEmptyOutput,
         verdict: Verdict::Automated(Guard::NonEmptyOutput),

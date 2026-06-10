@@ -48,37 +48,55 @@ impl FilesystemPolicy {
             }
         }
 
-        // Try to canonicalize both paths for comparison
-        let canonical_path = match std::fs::canonicalize(path) {
+        // Resolve the target path. For files that don't exist yet (e.g. write
+        // targets) canonicalize fails. In that case canonicalize the parent
+        // directory (which must exist) and re-join the filename, so we get the
+        // same long-name/UNC form that canonicalize(workspace_root) produces.
+        let resolved_path = match std::fs::canonicalize(path) {
             Ok(p) => p,
             Err(_) => {
-                // If we can't canonicalize (file doesn't exist yet), use the path as-is
-                // but ensure it's within workspace
-                let abs_path = if path.is_absolute() {
+                // Build an absolute path first.
+                let abs = if path.is_absolute() {
                     path.to_path_buf()
                 } else {
                     self.workspace_root.join(path)
                 };
-                abs_path
+                // Canonicalize the parent if possible to normalise drive
+                // letters / 8.3 aliases, then re-attach the file name.
+                match (abs.parent(), abs.file_name()) {
+                    (Some(parent), Some(name)) => {
+                        match std::fs::canonicalize(parent) {
+                            Ok(canon_parent) => canon_parent.join(name),
+                            Err(_) => abs,
+                        }
+                    }
+                    _ => abs,
+                }
             }
         };
 
-        let canonical_root = match std::fs::canonicalize(&self.workspace_root) {
+        // Resolve the workspace root the same way.
+        let resolved_root = match std::fs::canonicalize(&self.workspace_root) {
             Ok(p) => p,
             Err(_) => self.workspace_root.clone(),
         };
 
-        // Check if path is within workspace root
-        match canonical_path.canonicalize() {
-            Ok(p) => p.starts_with(&canonical_root),
-            Err(_) => {
-                // If path doesn't exist, check if the parent is within workspace
-                if let Some(parent) = canonical_path.parent() {
-                    parent.starts_with(&canonical_root)
-                } else {
-                    false
-                }
-            }
+        // Normalise both paths to the same form before comparing.  On Windows,
+        // canonicalize() returns a \\?\ UNC-prefixed path.  When the target file
+        // does not exist the fallback is a plain drive path (C:\...), so strip
+        // the \\?\ prefix from the root before the starts_with check.
+        let norm_path = strip_verbatim_prefix(&resolved_path);
+        let norm_root = strip_verbatim_prefix(&resolved_root);
+
+        if norm_path.starts_with(&norm_root) {
+            return true;
+        }
+        // Also allow if the parent directory is within the workspace (covers the
+        // case where the file itself does not yet exist).
+        if let Some(parent) = norm_path.parent() {
+            parent.starts_with(&norm_root)
+        } else {
+            false
         }
     }
 }
@@ -92,6 +110,18 @@ impl Default for FilesystemPolicy {
             forbidden_paths: vec![],
             workspace_isolation: WorkspaceIsolation::None,
         }
+    }
+}
+
+/// Strip the Windows verbatim (`\\?\`) prefix from a path so that plain and
+/// UNC-canonicalized paths compare equal with `starts_with`.
+/// On non-Windows platforms this is a no-op.
+fn strip_verbatim_prefix(path: &std::path::Path) -> std::path::PathBuf {
+    let s = path.to_string_lossy();
+    if s.starts_with(r"\\?\") {
+        std::path::PathBuf::from(&s[4..])
+    } else {
+        path.to_path_buf()
     }
 }
 
@@ -200,17 +230,34 @@ pub struct Agent {
 /// Client for executing steps on a remote agent endpoint
 pub struct RemoteAgentClient {
     client: reqwest::Client,
+    #[allow(dead_code)]
+    timeout_secs: u64,
 }
 
 impl RemoteAgentClient {
-    /// Create a new remote agent client
+    /// Create a new remote agent client with default 30-second timeout
     pub fn new() -> Self {
         Self {
-            client: reqwest::Client::new(),
+            client: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(30))
+                .build()
+                .unwrap_or_else(|_| reqwest::Client::new()),
+            timeout_secs: 30,
         }
     }
 
-    /// Execute a step on a remote agent
+    /// Create a new remote agent client with custom timeout
+    pub fn with_timeout(secs: u64) -> Self {
+        Self {
+            client: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(secs))
+                .build()
+                .unwrap_or_else(|_| reqwest::Client::new()),
+            timeout_secs: secs,
+        }
+    }
+
+    /// Execute a step on a remote agent with retry logic and exponential backoff
     pub async fn execute(
         &self,
         endpoint: &str,
@@ -223,28 +270,55 @@ impl RemoteAgentClient {
             agent_name
         );
 
-        let response = self
-            .client
-            .post(&url)
-            .json(&payload)
-            .send()
-            .await
-            .map_err(|e| crate::action::RemoteAgentError::NetworkError(e.to_string()))?;
+        let mut last_err: Option<Box<dyn std::error::Error + Send + Sync>> = None;
 
-        if !response.status().is_success() {
-            return Err(crate::action::RemoteAgentError::RequestFailed(format!(
-                "HTTP {}: {}",
-                response.status(),
-                response.text().await.unwrap_or_default()
-            )));
+        for attempt in 0u32..3 {
+            // Apply exponential backoff on retry (but not on first attempt)
+            if attempt > 0 {
+                let backoff_secs = 2u64.pow(attempt - 1);
+                tokio::time::sleep(std::time::Duration::from_secs(backoff_secs)).await;
+            }
+
+            match self.client.post(&url).json(&payload).send().await {
+                Ok(response) if response.status().is_success() => {
+                    // Successful response received
+                    match response.json::<serde_json::Value>().await {
+                        Ok(result) => return Ok(result),
+                        Err(e) => {
+                            last_err = Some(Box::new(e));
+                            continue;
+                        }
+                    }
+                }
+                Ok(response) => {
+                    // HTTP error response
+                    last_err = Some(Box::new(
+                        std::io::Error::new(
+                            std::io::ErrorKind::Other,
+                            format!("HTTP {}", response.status()),
+                        )
+                    ));
+                }
+                Err(e) => {
+                    // Network error
+                    last_err = Some(Box::new(e));
+                }
+            }
         }
 
-        let result = response
-            .json::<serde_json::Value>()
-            .await
-            .map_err(|e| crate::action::RemoteAgentError::InvalidResponse(e.to_string()))?;
-
-        Ok(result)
+        // All retries exhausted
+        if let Some(err) = last_err {
+            if let Some(timeout_err) = err.downcast_ref::<reqwest::Error>() {
+                if timeout_err.is_timeout() {
+                    return Err(crate::action::RemoteAgentError::Timeout);
+                }
+            }
+            Err(crate::action::RemoteAgentError::NetworkError(err.to_string()))
+        } else {
+            Err(crate::action::RemoteAgentError::NetworkError(
+                "max retries exceeded".to_string(),
+            ))
+        }
     }
 }
 
