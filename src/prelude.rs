@@ -21,3 +21,6 @@ pub use crate::runner::{GuardPhase, PipelineError, PipelineResult, PipelineRunne
 pub use crate::toolset::ToolSet;
 pub use crate::tools::{Tool, ToolContext, ToolError, ToolOutput, ToolSource, FunctionTool};
 pub use crate::verdict::{Verdict, VerdictEngine, VerdictError};
+pub use crate::agents::{
+    planner_agent, coder_agent, reviewer_agent, debugger_agent, reflector_agent, orchestrator_agent,
+};
