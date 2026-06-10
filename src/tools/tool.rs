@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 //! Core Tool trait and types
 
 use async_trait::async_trait;
@@ -55,6 +57,15 @@ pub struct ToolOutput {
     pub parsed: Option<Value>,
 }
 
+/// A chunk of output from a streaming tool call
+#[derive(Debug, Clone)]
+pub struct ToolChunk {
+    /// The incremental text delta in this chunk
+    pub delta: String,
+    /// Whether this is the final chunk
+    pub is_final: bool,
+}
+
 impl ToolOutput {
     /// Create a text-only output
     pub fn text(raw: String) -> Self {
@@ -107,4 +118,17 @@ pub trait Tool: Send + Sync {
 
     /// Execute the tool
     async fn call(&self, args: Value, ctx: ToolContext) -> Result<ToolOutput, ToolError>;
+
+    /// Stream output from a tool. Default impl wraps `call()` into a single final chunk.
+    async fn call_streaming(
+        &self,
+        args: Value,
+        ctx: ToolContext,
+    ) -> Result<Vec<ToolChunk>, ToolError> {
+        let output = self.call(args, ctx).await?;
+        Ok(vec![ToolChunk {
+            delta: output.raw,
+            is_final: true,
+        }])
+    }
 }

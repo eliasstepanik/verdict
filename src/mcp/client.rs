@@ -221,7 +221,9 @@ impl McpClient {
 
         // Increment ID counter
         let id = {
-            let mut id_ref = self.request_id.lock().unwrap();
+            let mut id_ref = self.request_id.lock().ok().ok_or_else(|| {
+                McpError::JsonRpc("failed to acquire request ID lock".to_string())
+            })?;
             *id_ref += 1;
             *id_ref
         };

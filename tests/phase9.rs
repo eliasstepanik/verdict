@@ -6,6 +6,7 @@ use verdict::agents;
 use verdict::context::{StepContext, PipelineTrace};
 use serde_json::json;
 use std::sync::{Arc, Mutex};
+use tokio::sync::Mutex as TokioMutex;
 
 #[test]
 fn test_dag_topological_sort_basic() {
@@ -17,6 +18,8 @@ fn test_dag_topological_sort_basic() {
             system: "test".into(),
             user: "test".into(),
             model: None,
+            conversation_id: None,
+            append_to_history: true,
         },
         guard_out: Guard::None,
         verdict: Verdict::Automated(Guard::None),
@@ -66,6 +69,8 @@ fn test_dag_circular_dependency_detection() {
             system: "test".into(),
             user: "test".into(),
             model: None,
+            conversation_id: None,
+            append_to_history: true,
         },
         guard_out: Guard::None,
         verdict: Verdict::Automated(Guard::None),
@@ -114,20 +119,19 @@ async fn test_branch_action_true_path() {
     // Create branch that checks for condition_text_present
     let action = StepAction::Branch {
         condition: "condition_text_present".to_string(),
-        if_true: Box::new(StepAction::LlmCall {
-            system: "True path".into(),
-            user: "Execute if condition matches".into(),
-            model: None,
-        }),
+        if_true: Box::new(StepAction::Custom(std::sync::Arc::new(|_ctx| {
+            Ok(StepOutput::new("true path executed".to_string()))
+        }))),
         if_false: None,
     };
 
     // Execute branch
-    let result = runner.execute_action(&action, &mut ctx).await;
+    let ctx_arc = Arc::new(TokioMutex::new(ctx));
+    let result = runner.execute_action(&action, ctx_arc).await;
     assert!(result.is_ok());
     let output = result.unwrap();
-    // Should execute if_true which is an LLM stub
-    assert!(output.raw.contains("stub") || output.raw.contains("LLM"));
+    // Should execute if_true path
+    assert!(output.raw.contains("true path executed"));
 }
 
 #[tokio::test]
@@ -148,20 +152,17 @@ async fn test_branch_action_false_path() {
     // Create branch that checks for non-existent condition
     let action = StepAction::Branch {
         condition: "condition_not_present".to_string(),
-        if_true: Box::new(StepAction::LlmCall {
-            system: "True path".into(),
-            user: "This should not execute".into(),
-            model: None,
-        }),
-        if_false: Some(Box::new(StepAction::LlmCall {
-            system: "False path".into(),
-            user: "This should execute".into(),
-            model: None,
-        })),
+        if_true: Box::new(StepAction::Custom(std::sync::Arc::new(|_ctx| {
+            Ok(StepOutput::new("true path should not execute".to_string()))
+        }))),
+        if_false: Some(Box::new(StepAction::Custom(std::sync::Arc::new(|_ctx| {
+            Ok(StepOutput::new("false path executed".to_string()))
+        })))),
     };
 
     // Execute branch - condition doesn't match
-    let result = runner.execute_action(&action, &mut ctx).await;
+    let ctx_arc = Arc::new(TokioMutex::new(ctx));
+    let result = runner.execute_action(&action, ctx_arc).await;
     assert!(result.is_ok());
 }
 
@@ -279,6 +280,8 @@ fn test_step_action_branch_variant() {
             system: "sys".into(),
             user: "user".into(),
             model: None,
+            conversation_id: None,
+            append_to_history: true,
         }),
         if_false: None,
     };
@@ -324,6 +327,8 @@ fn test_agent_step_has_dag_fields() {
             system: "test".into(),
             user: "test".into(),
             model: None,
+            conversation_id: None,
+            append_to_history: true,
         },
         guard_out: Guard::None,
         verdict: Verdict::Automated(Guard::None),
@@ -368,11 +373,9 @@ async fn test_pipeline_execution_with_dag_support() {
     let step1 = AgentStep {
         name: "first".into(),
         guard_in: Guard::None,
-        action: StepAction::LlmCall {
-            system: "Step 1".into(),
-            user: "".into(),
-            model: None,
-        },
+        action: StepAction::Custom(std::sync::Arc::new(|_ctx| {
+            Ok(StepOutput::new("step1 done".to_string()))
+        })),
         guard_out: Guard::NonEmptyOutput,
         verdict: Verdict::Automated(Guard::NonEmptyOutput),
         tools: ToolSet::None,

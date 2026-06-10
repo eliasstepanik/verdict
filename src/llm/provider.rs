@@ -1,9 +1,92 @@
 //! LLM provider trait and implementations.
 
 use async_trait::async_trait;
+use futures::FutureExt;
+use futures::stream::Stream;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use std::pin::Pin;
 use thiserror::Error;
+
+/// Role of a message in a conversation
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum ChatRole {
+    System,
+    User,
+    Assistant,
+    Tool,
+}
+
+/// A single message in a conversation history
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatMessage {
+    pub role: ChatRole,
+    pub content: String,
+}
+
+/// Conversation history for multi-turn LLM interactions
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct MessageHistory {
+    pub messages: Vec<ChatMessage>,
+    pub conversation_id: Option<String>,
+}
+
+impl MessageHistory {
+    /// Create a new empty message history
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Append a message to the history
+    pub fn push(&mut self, role: ChatRole, content: String) {
+        self.messages.push(ChatMessage { role, content });
+    }
+
+    /// Returns true if the history has no messages
+    pub fn is_empty(&self) -> bool {
+        self.messages.is_empty()
+    }
+}
+
+/// Registry for managing named conversations across multiple LLM calls.
+/// Enables multi-turn conversations within a single pipeline run.
+#[derive(Debug, Clone, Default)]
+pub struct ConversationRegistry {
+    conversations: std::collections::HashMap<String, MessageHistory>,
+}
+
+impl ConversationRegistry {
+    /// Create a new empty conversation registry
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Get or create a conversation by ID
+    pub fn get_or_create(&mut self, id: &str) -> &mut MessageHistory {
+        self.conversations
+            .entry(id.to_string())
+            .or_insert_with(MessageHistory::new)
+    }
+
+    /// Get a conversation by ID without creating it
+    pub fn get(&self, id: &str) -> Option<&MessageHistory> {
+        self.conversations.get(id)
+    }
+
+    /// Insert or replace a conversation
+    pub fn insert(&mut self, id: String, history: MessageHistory) {
+        self.conversations.insert(id, history);
+    }
+}
+
+/// A streaming chunk from an LLM provider
+#[derive(Debug, Clone)]
+pub struct LlmChunk {
+    /// The incremental text delta in this chunk
+    pub delta: String,
+    /// Reason the stream finished, if this is the final chunk
+    pub finish_reason: Option<String>,
+}
 
 /// Request to an LLM provider.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -12,6 +95,19 @@ pub struct LlmRequest {
     pub user: String,
     pub model: String,
     pub max_tokens: Option<u32>,
+    /// Optional conversation history for multi-turn interactions.
+    /// When present, messages are prepended before the current user turn.
+    pub history: Option<MessageHistory>,
+    /// Optional temperature for sampling (0.0 to 2.0).
+    /// Higher values = more creative, lower values = more deterministic.
+    pub temperature: Option<f32>,
+}
+
+/// A tool call extracted from LLM response
+#[derive(Debug, Clone)]
+pub struct ToolCall {
+    pub name: String,
+    pub arguments: serde_json::Value,
 }
 
 /// Response from an LLM provider.
@@ -20,6 +116,7 @@ pub struct LlmResponse {
     pub content: String,
     pub model: String,
     pub usage: Option<LlmUsage>,
+    pub tool_calls: Option<Vec<ToolCall>>,
 }
 
 /// Token usage statistics from LLM response.
@@ -66,6 +163,13 @@ pub trait LlmProvider: Send + Sync {
 
     /// Complete an LLM request.
     async fn complete(&self, req: LlmRequest) -> Result<LlmResponse, LlmError>;
+
+    /// Stream an LLM request, yielding chunks as they arrive.
+    /// For providers that don't natively support streaming, this calls `complete()` and wraps the result in a single-item stream.
+    fn stream(
+        &self,
+        request: LlmRequest,
+    ) -> Pin<Box<dyn Stream<Item = Result<LlmChunk, LlmError>> + Send>>;
 }
 
 /// OpenAI-compatible provider (e.g., OpenAI, local Ollama, etc.).
@@ -119,16 +223,37 @@ impl LlmProvider for OpenAiCompatibleProvider {
     }
 
     async fn complete(&self, req: LlmRequest) -> Result<LlmResponse, LlmError> {
+        // Build the messages array: system first, then history, then new user turn
+        let mut messages = vec![
+            serde_json::json!({"role": "system", "content": req.system}),
+        ];
+        if let Some(history) = &req.history {
+            for msg in &history.messages {
+                let role_str = match msg.role {
+                    ChatRole::System => "system",
+                    ChatRole::User => "user",
+                    ChatRole::Assistant => "assistant",
+                    ChatRole::Tool => "tool",
+                };
+                messages.push(serde_json::json!({"role": role_str, "content": msg.content}));
+            }
+        }
+        messages.push(serde_json::json!({"role": "user", "content": req.user}));
+
         // Build the request body
-        let body = serde_json::json!({
+        let mut body = serde_json::json!({
             "model": req.model,
-            "messages": [
-                {"role": "system", "content": req.system},
-                {"role": "user", "content": req.user}
-            ],
-            "max_tokens": req.max_tokens,
+            "messages": messages,
             "stream": false
         });
+        
+        // Add optional fields only if present
+        if let Some(max_tokens) = req.max_tokens {
+            body["max_tokens"] = serde_json::json!(max_tokens);
+        }
+        if let Some(temperature) = req.temperature {
+            body["temperature"] = serde_json::json!(temperature);
+        }
 
         // Construct the URL — strip any trailing /v1 from base_url to avoid double-path
         let base = self.base_url.trim_end_matches('/').trim_end_matches("/v1");
@@ -193,6 +318,44 @@ impl LlmProvider for OpenAiCompatibleProvider {
             content,
             model: api_response.model,
             usage,
+            tool_calls: None,
         })
+    }
+
+    fn stream(
+        &self,
+        request: LlmRequest,
+    ) -> Pin<Box<dyn Stream<Item = Result<LlmChunk, LlmError>> + Send>> {
+        // Fallback implementation: call complete() and yield the entire response as a single chunk.
+        // True HTTP streaming would require stream=true in the API request and SSE parsing.
+        use futures::stream::iter;
+        let api_key = self.api_key.clone();
+        let base_url = self.base_url.clone();
+        let default_model = self.default_model.clone();
+        let client = self.client.clone();
+
+        let response_future = async move {
+            let provider = OpenAiCompatibleProvider {
+                base_url,
+                api_key,
+                default_model,
+                client,
+            };
+            match provider.complete(request).await {
+                Ok(response) => {
+                    vec![Ok(LlmChunk {
+                        delta: response.content,
+                        finish_reason: Some("stop".to_string()),
+                    })]
+                }
+                Err(e) => vec![Err(e)],
+            }
+        };
+
+        Box::pin(
+            response_future
+                .map(|vec| iter(vec.into_iter()))
+                .flatten_stream(),
+        )
     }
 }

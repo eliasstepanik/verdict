@@ -35,7 +35,22 @@ impl LlmProvider for MockLlmProvider {
             content: self.expected_response.clone(),
             model: "mock".into(),
             usage: None,
+            tool_calls: None,
         })
+    }
+
+    fn stream(
+        &self,
+        request: LlmRequest,
+    ) -> std::pin::Pin<Box<dyn futures::stream::Stream<Item = Result<verdict::LlmChunk, verdict::LlmError>> + Send>> {
+        let response = self.expected_response.clone();
+        *self.captured_request.lock().unwrap() = Some(request);
+        Box::pin(futures::stream::once(async move {
+            Ok(verdict::LlmChunk {
+                delta: response,
+                finish_reason: Some("stop".to_string()),
+            })
+        }))
     }
 }
 
@@ -51,6 +66,8 @@ async fn test_llm_provider_trait_object_dispatch() {
         user: "usr".into(),
         model: "mock".into(),
         max_tokens: None,
+        history: None,
+        temperature: None,
     };
     let resp = provider.complete(req).await.unwrap();
     assert_eq!(resp.content, "hello");
@@ -301,6 +318,8 @@ async fn test_llm_call_without_client() {
                 system: "be helpful".into(),
                 user: "hello".into(),
                 model: None,
+                conversation_id: None,
+                append_to_history: true,
             },
             guard_out: Guard::None,
             verdict: Verdict::Automated(Guard::None),
@@ -349,6 +368,8 @@ async fn test_llm_call_with_mock_client() {
                 system: "be helpful".into(),
                 user: "hello".into(),
                 model: None,
+                conversation_id: None,
+                append_to_history: true,
             },
             guard_out: Guard::NonEmptyOutput,
             verdict: Verdict::Automated(Guard::NonEmptyOutput),

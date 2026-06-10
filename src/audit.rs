@@ -2,6 +2,25 @@ use chrono::{DateTime, Utc};
 use serde_json::{json, Value};
 use serde::{Deserialize, Serialize};
 
+/// Represents a node in the agent delegation call tree
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CallTreeNode {
+    pub agent_name: String,
+    pub depth: u32,
+    pub started_at: DateTime<Utc>,
+    pub completed_at: Option<DateTime<Utc>>,
+    pub status: CallTreeStatus,
+    pub children: Vec<CallTreeNode>,
+}
+
+/// Status of a call tree node
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum CallTreeStatus {
+    Running,
+    Completed,
+    Failed { reason: String },
+}
+
 /// Events that can be logged in an audit trail
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AuditEvent {
@@ -63,6 +82,11 @@ pub enum AuditEvent {
     AgentVersionCreated {
         agent_name: String,
         version: String,
+    },
+    /// Fallback pipeline triggered
+    FallbackTriggered {
+        step: String,
+        reason: String,
     },
 }
 
@@ -169,6 +193,9 @@ impl AuditLog {
                     }
                     AuditEvent::AgentVersionCreated { agent_name, version } => {
                         json!({ "type": "AgentVersionCreated", "agent_name": agent_name, "version": version })
+                    }
+                    AuditEvent::FallbackTriggered { step, reason } => {
+                        json!({ "type": "FallbackTriggered", "step": step, "reason": reason })
                     }
                 };
 
@@ -460,6 +487,116 @@ impl Default for AuditLog {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Build a call tree from audit log entries
+///
+/// This function traverses delegation events and reconstructs the hierarchical
+/// structure of agent calls, matching parent-child relationships by task_id.
+pub fn call_tree_from_audit_log(entries: &[AuditEntry]) -> Vec<CallTreeNode> {
+    use std::collections::HashMap;
+
+    // Map from (parent_agent, child_agent, depth) to node for quick lookup
+    let mut node_map: HashMap<(String, String, u32), CallTreeNode> = HashMap::new();
+    // Track which nodes are root (no parent)
+    let mut root_agents: HashMap<(String, u32), bool> = HashMap::new();
+    // Map to track parent relationships: child key -> parent key
+    let mut parent_map: HashMap<(String, String, u32), (String, String, u32)> = HashMap::new();
+
+    // First pass: identify all nodes and their statuses
+    for entry in entries {
+        match &entry.event {
+            AuditEvent::DelegationStarted {
+                parent_agent,
+                child_agent,
+                depth,
+            } => {
+                let key = (parent_agent.clone(), child_agent.clone(), *depth);
+                let node = CallTreeNode {
+                    agent_name: child_agent.clone(),
+                    depth: *depth,
+                    started_at: entry.timestamp,
+                    completed_at: None,
+                    status: CallTreeStatus::Running,
+                    children: Vec::new(),
+                };
+                node_map.insert(key.clone(), node);
+                parent_map.insert(
+                    (child_agent.clone(), parent_agent.clone(), *depth),
+                    (parent_agent.clone(), child_agent.clone(), *depth),
+                );
+                root_agents.insert((parent_agent.clone(), depth.saturating_sub(1)), true);
+            }
+            AuditEvent::DelegationCompleted {
+                parent_agent,
+                child_agent,
+                depth,
+            } => {
+                let key = (parent_agent.clone(), child_agent.clone(), *depth);
+                if let Some(node) = node_map.get_mut(&key) {
+                    node.status = CallTreeStatus::Completed;
+                    node.completed_at = Some(entry.timestamp);
+                }
+            }
+            AuditEvent::DelegationFailed {
+                parent_agent,
+                child_agent,
+                depth,
+                reason,
+            } => {
+                let key = (parent_agent.clone(), child_agent.clone(), *depth);
+                if let Some(node) = node_map.get_mut(&key) {
+                    node.status = CallTreeStatus::Failed {
+                        reason: reason.clone(),
+                    };
+                    node.completed_at = Some(entry.timestamp);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // Second pass: build the tree structure
+    let mut root_nodes = Vec::new();
+    let mut processed: std::collections::HashSet<(String, String, u32)> = std::collections::HashSet::new();
+
+    // Find all root nodes (those without parents in our map)
+    for (key, node) in &node_map {
+        if !parent_map.contains_key(&(node.agent_name.clone(), key.0.clone(), key.2)) {
+            if !processed.contains(&key) {
+                root_nodes.push((key.clone(), node.clone()));
+                processed.insert(key.clone());
+            }
+        }
+    }
+
+    // Recursively attach children to their parents
+    fn attach_children(
+        parent_node: &mut CallTreeNode,
+        parent_key: &(String, String, u32),
+        node_map: &HashMap<(String, String, u32), CallTreeNode>,
+        processed: &mut std::collections::HashSet<(String, String, u32)>,
+    ) {
+        // Find all children of this node
+        for (key, child_node) in node_map {
+            if key.0 == parent_key.1 && key.2 == parent_key.2 + 1 {
+                // This is a child of our parent node
+                let mut child_copy = child_node.clone();
+                attach_children(&mut child_copy, key, node_map, processed);
+                parent_node.children.push(child_copy);
+                processed.insert(key.clone());
+            }
+        }
+    }
+
+    // Attach children to root nodes
+    let mut final_roots = Vec::new();
+    for (key, mut node) in root_nodes {
+        attach_children(&mut node, &key, &node_map, &mut processed);
+        final_roots.push(node);
+    }
+
+    final_roots
 }
 
 /// Monitoring server for Web UI dashboard (Phase 9)

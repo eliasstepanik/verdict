@@ -16,19 +16,21 @@ fn simple_agent(name: &str) -> Agent {
             steps: vec![AgentStep {
                 name: "work".to_string(),
                 guard_in: Guard::None,
-                action: StepAction::LlmCall {
-                    system: "You are a helpful agent.".to_string(),
-                    user: "Do some work.".to_string(),
-                    model: None,
-                },
+                // Use Custom action so delegation tests don't require an LLM client.
+                action: StepAction::Custom(std::sync::Arc::new(|_ctx| {
+                    Ok(StepOutput {
+                        raw: "delegated work complete".to_string(),
+                        parsed: None,
+                    })
+                })),
                 guard_out: Guard::None,
                 verdict: Verdict::Automated(Guard::None),
                 tools: ToolSet::None,
                 injection_protection: InjectionProtection::None,
                 output_schema: None,
-            dependencies: Vec::new(),
-            parallel: false,
-        }],
+                dependencies: Vec::new(),
+                parallel: false,
+            }],
             on_failure: FailureMode::Abort,
             max_retries: 0,
         },

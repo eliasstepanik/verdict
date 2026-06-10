@@ -1,6 +1,8 @@
 //! LLM client for making completion requests.
 
-use crate::llm::provider::{LlmError, LlmProvider, LlmRequest, LlmResponse};
+use crate::llm::provider::{LlmChunk, LlmError, LlmProvider, LlmRequest, LlmResponse};
+use futures::stream::Stream;
+use std::pin::Pin;
 use std::sync::Arc;
 
 /// Client for making LLM requests.
@@ -17,6 +19,14 @@ impl LlmClient {
     /// Make a completion request to the LLM.
     pub async fn complete(&self, req: LlmRequest) -> Result<LlmResponse, LlmError> {
         self.provider.complete(req).await
+    }
+
+    /// Stream an LLM request, yielding chunks as they arrive.
+    pub fn stream(
+        &self,
+        request: LlmRequest,
+    ) -> Pin<Box<dyn Stream<Item = Result<LlmChunk, LlmError>> + Send>> {
+        self.provider.stream(request)
     }
 
     /// Create a client from environment variables.

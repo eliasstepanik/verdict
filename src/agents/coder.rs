@@ -20,6 +20,8 @@ pub fn coder_agent() -> Agent {
             system: "You are a coding agent. Implement the requested changes.".into(),
             user: "Plan: {plan}\n\nTask: {task}\n\nImplement the changes. Produce a diff.".into(),
             model: None,
+            conversation_id: None,
+            append_to_history: true,
         },
         guard_out: Guard::NonEmptyOutput,
         verdict: Verdict::Automated(Guard::NonEmptyOutput),

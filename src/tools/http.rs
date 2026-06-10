@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 //! HTTP tool support.
 
 use crate::agent::NetworkPolicy;
