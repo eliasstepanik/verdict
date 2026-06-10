@@ -1510,6 +1510,17 @@ pub struct StepContext {
 > - `Guard::DiffWithinScope` not added — not in the architecture's Guard enum.
 
 
+> **Phase 6 decisions:**
+> - Built-in agents live in `src/agents/` module as constructor functions returning `Agent`.
+> - Each agent has a single `LlmCall` step (stub — returns static string, no real LLM in Phase 6).
+> - `LlmCall` stub is sufficient for all Phase 6 tests since `Guard::NonEmptyOutput` checks non-empty string.
+> - `planner_agent`, `coder_agent`, `reviewer_agent`, `debugger_agent`, `reflector_agent`, `orchestrator_agent` exported from `prelude.rs`.
+> - Agent policies: planner/reviewer/reflector/orchestrator use `ToolSet::ReadOnly`; coder/debugger use `ToolSet::ReadWrite`.
+> - `orchestrator_agent` policy lists all 5 specialist agents in `allowed_agents`; `max_delegation_depth: 3`.
+> - All agents have `allow_self_update: false` by default.
+
+
+
 
 ---
 
@@ -1952,15 +1963,14 @@ Output:
   - [x] test writing
   - [x] refactoring
 
-## Phase 6 — Built-In Agents
+## Phase 6 — Built-In Agents ✅
 
-- [ ] Planner agent
-- [ ] Coder agent
-- [ ] Reviewer agent
-- [ ] Debugger agent
-- [ ] Reflector agent
-- [ ] Orchestrator agent
-
+- [x] Planner agent
+- [x] Coder agent
+- [x] Reviewer agent
+- [x] Debugger agent
+- [x] Reflector agent
+- [x] Orchestrator agent
 ## Phase 7 — Safety and Production
 
 - [ ] Prompt injection protection

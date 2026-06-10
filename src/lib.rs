@@ -4,6 +4,7 @@
 
 pub mod action;
 pub mod agent;
+pub mod agents;
 pub mod audit;
 pub mod budget;
 pub mod context;
