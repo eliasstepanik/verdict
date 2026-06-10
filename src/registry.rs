@@ -106,5 +106,5 @@ impl Default for ToolRegistry {
     }
 }
 
-/// Skill registry — Phase 5 stub
-pub struct SkillRegistry;
+/// Re-export SkillRegistry from skills module
+pub use crate::skills::registry::SkillRegistry;

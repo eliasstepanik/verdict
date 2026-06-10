@@ -1497,6 +1497,18 @@ pub struct StepContext {
 > - `run_with_delegation_depth` is a public `&mut self` method — the recursive child entry point; mirrors `run()` with depth/parent injected into context.
 > - `agents/` module subfiles (`coder.rs`, `debugger.rs`, etc.) deferred to Phase 6.
 
+> **Phase 5 decisions:**
+> - `SkillSet` moved from `agent.rs` stub to `skills/skill.rs` — same shape `{ skills: Vec<String> }`, re-exported via `skills::mod.rs`.
+> - `SkillRegistry` moved from `registry.rs` stub to `skills/registry.rs`; `registry.rs` re-exports it with `pub use crate::skills::registry::SkillRegistry`.
+> - `Skill` does not derive `Serialize/Deserialize` — `Guard` and `Pipeline` do not implement those traits.
+> - `SkillRegistry::get()` returns `Option<Skill>` (owned, cloned) to avoid lifetime complications in `execute_action(&self)`.
+> - `PipelineRunner` gains `pub skill_registry: Arc<SkillRegistry>` field alongside `tool_registry` and `agent_registry`; new constructor `with_skill_registry`.
+> - `UseSkill` with an unknown skill name returns `StepError::ActionFailed` (not `NotImplemented`).
+> - `SkillMode::Auto` behaves identically to `SkillMode::Pipeline` — chooses pipeline if available, else instructions.
+> - Built-in skills: `rust_debugging` has a pipeline; `code_review` and `api_design` are prompt-only.
+> - `test_writing` and `refactoring` built-in skills not implemented — not in module layout.
+> - `Guard::DiffWithinScope` not added — not in the architecture's Guard enum.
+
 
 
 ---
@@ -1922,18 +1934,18 @@ Output:
 - [x] Delegated output validation
 - [x] Delegation trace logging
 
-## Phase 5 — Skills
+## Phase 5 — Skills ✅
 
-- [ ] `Skill` type
-- [ ] `SkillRegistry`
-- [ ] `SkillSet`
-- [ ] `StepAction::UseSkill`
-- [ ] Prompt-only skills
-- [ ] Pipeline-backed skills
+- [x] `Skill` type
+- [x] `SkillRegistry`
+- [x] `SkillSet`
+- [x] `StepAction::UseSkill`
+- [x] Prompt-only skills
+- [x] Pipeline-backed skills
 - [ ] Built-in skills:
-  - [ ] Rust debugging
-  - [ ] code review
-  - [ ] API design
+  - [x] Rust debugging
+  - [x] code review
+  - [x] API design
   - [ ] test writing
   - [ ] refactoring
 
