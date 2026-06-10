@@ -127,4 +127,9 @@ impl StepContext {
             network_policy: NetworkPolicy::DenyAll,
         }
     }
+
+    /// Check if the trace has entries (for TraceAvailable guard)
+    pub fn has_trace(&self) -> bool {
+        !self.trace.entries.is_empty()
+    }
 }

@@ -54,6 +54,16 @@ pub enum AuditEvent {
     RateLimitHit {
         calls_this_minute: u32,
     },
+    /// Self-update proposal validated
+    SelfUpdateProposed {
+        agent_name: String,
+        risk_level: String,
+    },
+    /// Agent version created
+    AgentVersionCreated {
+        agent_name: String,
+        version: String,
+    },
 }
 
 /// A single audit log entry
@@ -153,6 +163,12 @@ impl AuditLog {
                     }
                     AuditEvent::RateLimitHit { calls_this_minute } => {
                         json!({ "type": "RateLimitHit", "calls_this_minute": calls_this_minute })
+                    }
+                    AuditEvent::SelfUpdateProposed { agent_name, risk_level } => {
+                        json!({ "type": "SelfUpdateProposed", "agent_name": agent_name, "risk_level": risk_level })
+                    }
+                    AuditEvent::AgentVersionCreated { agent_name, version } => {
+                        json!({ "type": "AgentVersionCreated", "agent_name": agent_name, "version": version })
                     }
                 };
 
@@ -395,6 +411,30 @@ impl AuditLog {
                                     .get("calls_this_minute")
                                     .and_then(|v| v.as_u64())
                                     .unwrap_or(0) as u32,
+                            },
+                            "SelfUpdateProposed" => AuditEvent::SelfUpdateProposed {
+                                agent_name: event_obj
+                                    .get("agent_name")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string(),
+                                risk_level: event_obj
+                                    .get("risk_level")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string(),
+                            },
+                            "AgentVersionCreated" => AuditEvent::AgentVersionCreated {
+                                agent_name: event_obj
+                                    .get("agent_name")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string(),
+                                version: event_obj
+                                    .get("version")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string(),
                             },
                             _ => continue,
                         }

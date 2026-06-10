@@ -1,5 +1,14 @@
 //! Prelude: commonly used types and traits
 
+// Phase 8: Self-Improvement
+pub use crate::eval::{
+    EvaluationSuite, EvaluationCase, EvaluationExpected, EvaluationResult, EvaluationSuiteResult,
+    EvaluationRunner, EvalError,
+};
+pub use crate::self_update::{
+    SelfUpdateConfig, SelfUpdateProposal, SelfUpdateResult, SelfUpdateEngine, SelfUpdateError,
+};
+
 // Phase 7: Safety and Production
 pub use crate::injection::{InjectionScanner, InjectionResult, SecretScanner, SecretMatch, RiskLevel};
 pub use crate::budget::{BudgetTracker, RateLimiter, BudgetError};
