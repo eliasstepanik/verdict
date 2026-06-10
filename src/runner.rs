@@ -437,7 +437,7 @@ impl PipelineRunner {
     }
 
     /// Execute a single step action
-    async fn execute_action(
+    pub async fn execute_action(
         &self,
         action: &StepAction,
         ctx: &mut StepContext,
@@ -1310,7 +1310,7 @@ impl PipelineRunner {
     }
 
     /// Topologically sort pipeline steps based on dependencies (Phase 9 DAG support)
-    fn topological_sort(pipeline: &Pipeline) -> Result<Vec<usize>, PipelineError> {
+    pub fn topological_sort(pipeline: &Pipeline) -> Result<Vec<usize>, PipelineError> {
         let n = pipeline.steps.len();
         let mut sorted = Vec::new();
         let mut visited = vec![false; n];

@@ -2,6 +2,8 @@
 //! Tests for DAG pipelines, branching, remote agents, plugins, hot-reload, and monitoring
 
 use verdict::prelude::*;
+use verdict::agents;
+use verdict::context::{StepContext, PipelineTrace};
 use serde_json::json;
 use std::sync::{Arc, Mutex};
 
@@ -97,7 +99,7 @@ fn test_dag_circular_dependency_detection() {
 #[tokio::test]
 async fn test_branch_action_true_path() {
     let mut runner = PipelineRunner::new();
-    let agent = crate::agents::planner_agent();
+    let agent = agents::planner_agent();
 
     // Setup context with output
     let mut ctx = StepContext::new(
@@ -131,7 +133,7 @@ async fn test_branch_action_true_path() {
 #[tokio::test]
 async fn test_branch_action_false_path() {
     let mut runner = PipelineRunner::new();
-    let agent = crate::agents::planner_agent();
+    let agent = agents::planner_agent();
 
     // Setup context with output
     let mut ctx = StepContext::new(
@@ -262,7 +264,7 @@ fn test_plugin_registry_add_plugin() {
 #[test]
 fn test_monitoring_server_construction() {
     let audit_log = AuditLog::new();
-    let trace = crate::context::PipelineTrace::new();
+    let trace = PipelineTrace::new();
     
     let _server = MonitoringServer::new(audit_log, trace);
     // Verify server can be created
@@ -392,7 +394,7 @@ async fn test_pipeline_execution_with_dag_support() {
     };
 
     let mut runner = PipelineRunner::new();
-    let agent = crate::agents::planner_agent();
+    let agent = agents::planner_agent();
 
     // Test that DAG execution works (falls back to regular execution)
     let result = runner.run_with_dag(&pipeline, &agent, json!({})).await;
@@ -418,3 +420,4 @@ fn test_prelude_exports() {
     };
     let _handle = HotReloadHandle::new(pipeline);
 }
+
