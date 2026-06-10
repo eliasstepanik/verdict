@@ -4,7 +4,7 @@
 
 [![Rust](https://img.shields.io/badge/rust-1.70+-orange.svg)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Status](https://img.shields.io/badge/status-All%20phases%20complete-brightgreen.svg)]()
+[![Status](https://img.shields.io/badge/status-10%20phases%20complete-brightgreen.svg)]()
 
 ---
 
@@ -157,69 +157,54 @@ This example:
 
 ## Using a Real LLM Provider
 
-Verdict's `StepAction::LlmCall` action is currently a Phase 1 stub that returns a static response. To use a real LLM provider (OpenAI, Anthropic, etc.), you'll implement the `LlmProvider` trait and wire it into your `PipelineRunner`.
+Verdict ships with a built-in OpenAI-compatible provider. Any endpoint that speaks the OpenAI chat completions API works — OpenAI, Anthropic via proxy, Ollama, LM Studio, etc.
 
-### The LlmProvider Trait (Phase 2+)
-
-Once the llm module is fully implemented, it will expose an `LlmProvider` trait. For now, here's how you'll use it:
-
-```rust
-// A custom provider implementing the LlmProvider trait
-struct OpenAiProvider {
-    api_key: String,
-    base_url: String,
-}
-
-impl LlmProvider for OpenAiProvider {
-    async fn call(&self, prompt: &str, system: &str) -> Result<String, LlmError> {
-        // Call OpenAI API with the system and user prompts
-        // Use environment variables: OPENAI_API_KEY, OPENAI_BASE_URL
-        todo!()
-    }
-}
-```
-
-### Example: Configuring an OpenAI-Compatible Provider
-
-Once the LLM module is ready, you'll configure a provider like this:
+### From environment variables
 
 ```rust
 use verdict::prelude::*;
-use std::env;
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Read from environment
-    let api_key = env::var("OPENAI_API_KEY")
-        .expect("OPENAI_API_KEY not set");
-    let base_url = env::var("OPENAI_BASE_URL")
-        .unwrap_or_else(|_| "https://api.openai.com/v1".to_string());
-
-    // Create a provider
-    let provider = OpenAiProvider {
-        api_key,
-        base_url,
-    };
-
-    // Pass it to the runner (Phase 2+ API)
-    let mut runner = PipelineRunner::new()
-        .with_llm_provider(Box::new(provider));
-
-    // Now LlmCall steps will use the real provider
-    let result = runner.run(&pipeline, input).await?;
-    Ok(())
-}
+// Reads OPENAI_API_KEY (required), OPENAI_BASE_URL, OPENAI_MODEL from env
+let client = LlmClient::from_env()?;
+let mut runner = PipelineRunner::new().with_llm_client(Arc::new(client));
 ```
 
-### Current Status
+### Hardcoded provider
 
-The `src/llm/` module is currently a **stub for Phase 2 and beyond**. Until the LLM provider system is fully implemented:
+```rust
+use verdict::prelude::*;
+use verdict::llm::OpenAiCompatibleProvider;
+use std::sync::Arc;
 
-- `StepAction::LlmCall` returns a static stub response
-- To test your pipelines now, use `Guard::NonEmptyOutput` to validate the stub
-- When Phase 2 is ready, you'll implement `LlmProvider` and inject it into `PipelineRunner`
+let provider = OpenAiCompatibleProvider::new(
+    "https://api.openai.com".into(),  // base URL (without /v1)
+    "sk-your-api-key".into(),
+    "gpt-4o".into(),                  // default model
+);
+let client = Arc::new(LlmClient::new(Arc::new(provider)));
+let mut runner = PipelineRunner::new().with_llm_client(client);
+```
 
-See `architecture.md` for the full Phase 2+ roadmap.
+### Per-step model routing
+
+Each `LlmCall` step can override the model — useful for routing easy tasks to a fast
+cheap model and hard tasks to a more capable one:
+
+```rust
+use verdict::action::ProviderSpec;
+
+AgentStep {
+    action: StepAction::LlmCall {
+        system: "You are an expert analyst.".into(),
+        user: "Analyse this in depth.".into(),
+        model: Some(ProviderSpec {
+            model: "claude-opus-4-7".into(),
+            provider: "openai-compatible".into(),
+        }),
+    },
+    // ...
+}
+```
 
 ---
 
@@ -601,7 +586,7 @@ See `src/guard.rs` for the full list (50+ variants).
 
 ## Phase Roadmap
 
-All 9 phases are **complete** ✅:
+All 10 phases are **complete** ✅:
 
 1. ✅ **Phase 1: Core Pipeline & Guards** — Basic execution, guard evaluation
 2. ✅ **Phase 2: Tool Registry & Audit** — Tool trait, built-in tools, audit logging
@@ -612,6 +597,7 @@ All 9 phases are **complete** ✅:
 7. ✅ **Phase 7: Safety & Production** — Injection detection, secret detection, enhanced guards
 8. ✅ **Phase 8: Self-Improvement** — EvaluationSuite, SelfUpdateEngine, agent versioning
 9. ✅ **Phase 9: Advanced Execution** — Plugin system, hot-reload, remote agents, monitoring server
+10. ✅ **Phase 10: Stub Completion** — Real LLM provider, HTTP tool, MCP JSON-RPC, TOML/YAML guard parsing
 
 ---
 
@@ -744,9 +730,57 @@ MIT (see LICENSE file for details)
 
 ---
 
+## Examples
+
+Two standalone example projects demonstrate Verdict in action:
+
+### [verdict-demo](https://github.com/eliasstepanik/verdict-demo)
+A showcase binary with 9 subcommands, each demonstrating a different feature of the framework:
+
+| Command | Demonstrates |
+|---------|-------------|
+| `pipeline` | Pipeline structure, guard enforcement, graceful LLM-absent failure |
+| `agents` | AgentRegistry, built-in agent introspection |
+| `guards` | All major guard types with real TOML/YAML/JSON/secrets parsing |
+| `tools` | FunctionTool, ToolRegistry, ToolSet scoping |
+| `audit` | AuditLog, InjectionScanner, SecretScanner |
+| `eval` | EvaluationSuite with Custom closure evaluation |
+| `budget` | BudgetTracker exhaustion, RateLimiter |
+| `monitor` | MonitoringServer on `http://127.0.0.1:9001` |
+| `live` | **Real 3-step LLM pipeline** — Haiku drafts → Sonnet refines → Opus critiques |
+
+```bash
+git clone https://github.com/eliasstepanik/verdict-demo
+cd verdict-demo
+cargo run -- guards    # no LLM needed
+cargo run -- live      # requires an OpenAI-compatible endpoint
+```
+
+---
+
+### [verdict-micro-agent](https://github.com/eliasstepanik/verdict-micro-agent)
+A Micro Agent implementation — give it a natural-language function description and it
+generates Python code using a TDD loop: generate tests → write code → run → fix → repeat.
+
+```bash
+git clone https://github.com/eliasstepanik/verdict-micro-agent
+cd verdict-micro-agent
+cargo run -- "Write a Python function that checks if a number is prime"
+```
+
+The agent routes across three models based on task difficulty:
+- **Claude Haiku** — fast first code attempt
+- **Claude Sonnet** — fixes on iterations 1–2
+- **Claude Opus** — deep debugging on iterations 3+
+
+Loop exits as soon as all tests pass. Typical run: 1–2 iterations.
+
+---
+
 ## References
 
 - **Architecture**: Read `architecture.md` for the full design and extended examples
+- **How-to guide**: Read `how_to.md` for a field-by-field reference of every `AgentStep` option
 - **API Docs**: `cargo doc --open` to browse generated Rust docs
 - **Tests**: See `tests/phase*.rs` for working examples of all features
 
