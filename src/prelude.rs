@@ -1,5 +1,9 @@
 //! Prelude: commonly used types and traits
 
+// Phase 7: Safety and Production
+pub use crate::injection::{InjectionScanner, InjectionResult, SecretScanner, SecretMatch, RiskLevel};
+pub use crate::budget::{BudgetTracker, RateLimiter, BudgetError};
+
 // Core types
 pub use crate::action::{
     DelegationPolicy, IterationFailureMode, ProviderSpec, SkillMode, StepAction, StepError,
