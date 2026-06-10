@@ -1,10 +1,54 @@
-# verdict
+r th# verdict
 
 **A Rust framework for building agents that actually complete their work through code-enforced structure, guarded execution, and composable pipelines.**
+
+![Social Preview](.github/social-preview.png)
 
 [![Rust](https://img.shields.io/badge/rust-1.70+-orange.svg)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Status](https://img.shields.io/badge/status-10%20phases%20complete-brightgreen.svg)]()
+
+## How It Works
+
+```
+User Task Input
+      │
+      ▼
+┌─────────────────────────────────────────────────────┐
+│                     Pipeline                         │
+│                                                      │
+│  Step 1: Generate Code                               │
+│  ┌──────────────────────────────────────────────┐   │
+│  │ guard_in:  Guard::None  ✓                    │   │
+│  │ action:    LlmCall { "write hello world" }   │   │
+│  │ guard_out: Guard::ValidRustSyntax            │   │
+│  │ verdict:   Automated(Guard::ValidRustSyntax) │   │
+│  └──────────────────────────────────────────────┘   │
+│         │ ✅ Guard passes → proceed                  │
+│         ▼                                            │
+│  Step 2: Run Tests (LoopUntil)                       │
+│  ┌──────────────────────────────────────────────┐   │
+│  │ body:      ToolCall { "cargo test" }         │   │
+│  │ condition: Guard::TestsPass                  │   │
+│  │ max_iter:  10                                │   │
+│  │ on_fail:   DelegateAgent("debugger")         │   │
+│  └──────────────────────────────────────────────┘   │
+│         │ ✅ Tests pass → proceed                    │
+│         ▼                                            │
+│  Step 3: User Review                                 │
+│  ┌──────────────────────────────────────────────┐   │
+│  │ action:  UserInput { "Approve this diff?" }  │   │
+│  │ verdict: UserApproval                        │   │
+│  └──────────────────────────────────────────────┘   │
+│         │ ✅ Approved → pipeline succeeds             │
+└─────────────────────────────────────────────────────┘
+      │
+      ▼
+  PipelineResult { success: true, cost: $0.002, ... }
+  AuditLog [GuardPass, LlmCall, ToolCall, UserApproval]
+```
+
+Every guard is **enforced in code** — not just hoped for in a prompt.
 
 ---
 
