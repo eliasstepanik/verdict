@@ -56,6 +56,7 @@ pub struct BudgetState {
     pub remaining_usd: Option<f64>,
     pub llm_calls_used: u32,
     pub tool_calls_used: u32,
+    pub start_time: std::time::Instant,
 }
 
 impl Default for BudgetState {
@@ -64,6 +65,7 @@ impl Default for BudgetState {
             remaining_usd: None,
             llm_calls_used: 0,
             tool_calls_used: 0,
+            start_time: std::time::Instant::now(),
         }
     }
 }

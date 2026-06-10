@@ -38,6 +38,51 @@ pub struct FilesystemPolicy {
     pub workspace_isolation: WorkspaceIsolation,
 }
 
+impl FilesystemPolicy {
+    /// Check if a path is allowed for access
+    pub fn is_path_allowed(&self, path: &std::path::Path) -> bool {
+        // Check if path is in forbidden list
+        for forbidden in &self.forbidden_paths {
+            if path.starts_with(forbidden) {
+                return false;
+            }
+        }
+
+        // Try to canonicalize both paths for comparison
+        let canonical_path = match std::fs::canonicalize(path) {
+            Ok(p) => p,
+            Err(_) => {
+                // If we can't canonicalize (file doesn't exist yet), use the path as-is
+                // but ensure it's within workspace
+                let abs_path = if path.is_absolute() {
+                    path.to_path_buf()
+                } else {
+                    self.workspace_root.join(path)
+                };
+                abs_path
+            }
+        };
+
+        let canonical_root = match std::fs::canonicalize(&self.workspace_root) {
+            Ok(p) => p,
+            Err(_) => self.workspace_root.clone(),
+        };
+
+        // Check if path is within workspace root
+        match canonical_path.canonicalize() {
+            Ok(p) => p.starts_with(&canonical_root),
+            Err(_) => {
+                // If path doesn't exist, check if the parent is within workspace
+                if let Some(parent) = canonical_path.parent() {
+                    parent.starts_with(&canonical_root)
+                } else {
+                    false
+                }
+            }
+        }
+    }
+}
+
 impl Default for FilesystemPolicy {
     fn default() -> Self {
         Self {

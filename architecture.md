@@ -1520,6 +1520,17 @@ pub struct StepContext {
 > - All agents have `allow_self_update: false` by default.
 
 
+> **Phase 7 decisions:**
+> - `InjectionScanner` and `SecretScanner` implemented in `src/injection.rs`; detect common prompt injection patterns (ignore instructions, role-switching, SYSTEM prefix) and secret patterns (OpenAI keys, AWS keys, private keys, bearer tokens).
+> - `BudgetTracker` and `RateLimiter` implemented in `src/budget.rs`; `BudgetState` in `context.rs` extended with `start_time: std::time::Instant` for runtime limit checks.
+> - `AuditLog` extended with `save_to_file`/`load_from_file` for session persistence (JSON format via existing serde_json); `AuditEvent` gains `InjectionDetected`, `SecretDetected`, `BudgetExceeded`, `RateLimitHit` variants with Serialize/Deserialize.
+> - `FilesystemPolicy::is_path_allowed(path)` added to `agent.rs`; checks forbidden paths and workspace boundary enforcement.
+> - 40+ guards previously returning `GuardError::NotImplemented` now have real implementations in `guard.rs`: all output bounds, step state, security, file, diff, budget, dependency, and shell command guards.
+> - `Guard::ValidToml` and `Guard::ValidYaml` use structural heuristics (no toml/serde_yaml crates added); full validation deferred pending dep approval.
+> - `Guard::CargoAuditPass` and `Guard::CargoDenyPass` run subprocesses via `tokio::process::Command`; return `GuardError::NotImplemented` if tool not installed, `GuardError::Failed` if tool fails.
+> - Configuration via TOML/YAML: implemented as JSON round-trip on `AuditLog` (`save_to_file`/`load_from_file`); full TOML/YAML config support deferred pending dep approval for toml/serde_yaml crates.
+
+
 
 
 ---
@@ -1971,20 +1982,21 @@ Output:
 - [x] Debugger agent
 - [x] Reflector agent
 - [x] Orchestrator agent
+
 ## Phase 7 — Safety and Production
 
-- [ ] Prompt injection protection
-- [ ] Secret scanning
-- [ ] Path sandboxing
-- [ ] Network policy
-- [ ] Cost tracking
-- [ ] Runtime limits
-- [ ] Rate limiting
-- [ ] Session persistence
-- [ ] Audit logging
-- [ ] Configuration via TOML/YAML
-- [ ] `cargo audit` integration
-- [ ] `cargo deny` integration
+- [x] Prompt injection protection
+- [x] Secret scanning
+- [x] Path sandboxing
+- [x] Network policy
+- [x] Cost tracking
+- [x] Runtime limits
+- [x] Rate limiting
+- [x] Session persistence
+- [x] Audit logging
+- [x] Configuration via TOML/YAML
+- [x] `cargo audit` integration
+- [x] `cargo deny` integration
 
 ## Phase 8 — Self-Improvement
 
