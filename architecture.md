@@ -1472,6 +1472,16 @@ pub struct StepContext {
 > - `FunctionTool` wraps any async Rust function as a `Tool` trait object.
 > - New `AuditEvent` variants: `ToolCallStarted`, `ToolCallCompleted`, `ToolCallFailed`.
 
+
+> **Phase 3 decisions:**
+> - MCP stdio transport uses `tokio::process::Command` to spawn child processes (e.g., `npx ...`) and communicates via newline-delimited JSON-RPC over stdin/stdout.
+> - `McpToolAdapter` wraps a `DiscoveredTool` definition into the `Tool` trait; tool calls send `tools/call` JSON-RPC requests to the spawned process.
+> - MCP tools are registered in `ToolRegistry` with server-namespaced names: `mcp.{server_name}.{tool_name}`.
+> - URL-based MCP servers (HTTP transport) are stubbed with `McpError::NotImplemented`; full support deferred to Phase 7+.
+> - Allowlist enforcement: `McpServerConfig::allowed_tools` empty = allow all discovered tools; non-empty = only listed tools are registered.
+> - MCP tool call audit logging flows through `ToolContext.audit_log` (same path as built-in tools) — no additional audit infrastructure needed.
+> - `McpError` enum defined in `src/mcp/client.rs`; re-exported from `src/mcp/mod.rs` and `prelude.rs`.
+
 ---
 
 # Updated PipelineRunner Behavior
@@ -1875,13 +1885,14 @@ Output:
 
 ## Phase 3 — MCP Support
 
-- [ ] MCP server config
-- [ ] MCP client
-- [ ] MCP tool discovery
-- [ ] MCP tool adapter
-- [ ] MCP tool allowlist
-- [ ] MCP output schema validation
-- [ ] MCP audit logging
+- [x] MCP server config
+- [x] MCP client
+- [x] MCP tool discovery
+- [x] MCP tool adapter
+- [x] MCP tool allowlist
+- [x] MCP output schema validation
+- [x] MCP audit logging
+
 
 ## Phase 4 — Agent Delegation
 

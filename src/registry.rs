@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::agent::Agent;
+use crate::mcp::McpError;
 use crate::tools::Tool;
 
 /// Registry of available agents for delegation
@@ -62,6 +63,18 @@ impl ToolRegistry {
 
     pub fn list(&self) -> Vec<String> {
         self.tools.keys().cloned().collect()
+    }
+
+    /// Register an MCP tool with server-namespaced name (mcp.{server}.{tool})
+    pub fn register_mcp_tool(
+        &mut self,
+        server_name: &str,
+        tool: crate::mcp::McpToolAdapter,
+    ) -> Result<(), McpError> {
+        // Create namespaced name: mcp.{server}.{tool}
+        let namespaced_name = format!("mcp.{}.{}", server_name, tool.name());
+        self.tools.insert(namespaced_name, Arc::new(tool));
+        Ok(())
     }
 
     /// Create a registry with all built-in tools
