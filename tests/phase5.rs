@@ -416,3 +416,34 @@ fn test_skill_eval_struct_fields() {
     assert_eq!(eval.criteria.len(), 2);
     assert_eq!(eval.min_score, 0.75);
 }
+
+/// Test 109: Built-in test_writing skill has correct name
+#[test]
+fn test_builtin_test_writing_skill_name() {
+    let skill = test_writing();
+    assert_eq!(skill.name, "test_writing");
+}
+
+/// Test 110: Built-in test_writing skill has non-empty instructions
+#[test]
+fn test_builtin_test_writing_has_instructions() {
+    let skill = test_writing();
+    assert!(!skill.instructions.is_empty());
+    assert!(skill.instructions.contains("test"));
+}
+
+/// Test 111: Built-in refactoring skill has correct name
+#[test]
+fn test_builtin_refactoring_skill_name() {
+    let skill = refactoring();
+    assert_eq!(skill.name, "refactoring");
+}
+
+/// Test 112: Built-in refactoring skill has non-empty instructions
+#[test]
+fn test_builtin_refactoring_has_instructions() {
+    let skill = refactoring();
+    assert!(!skill.instructions.is_empty());
+    assert!(skill.instructions.contains("test") || skill.instructions.contains("refactor"));
+}
+
