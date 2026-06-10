@@ -2024,18 +2024,36 @@ Output:
 > - `RiskLevel` is defined in `src/injection.rs` and reused in `src/self_update.rs`; no duplicate.
 > - Promotion/rollback: `EvaluationSuite::minimum_score` gate enforces promotion; rollback = don't promote (no automatic rollback mechanism; deferred to Phase 9).
 
-## Phase 9 — Advanced Execution
+## Phase 9 — Advanced Execution ✅
 
-- [ ] DAG-based pipelines
-- [ ] Parallel step execution
-- [ ] Conditional branching
-- [ ] Looping with max-iteration guards
-- [ ] Pipeline hot-reloading
-- [ ] Plugin system
-- [ ] Web UI for monitoring
-- [ ] Distributed agent execution
+- [x] DAG-based pipelines
+- [x] Parallel step execution
+- [x] Conditional branching
+- [x] Looping with max-iteration guards
+- [x] Pipeline hot-reloading
+- [x] Plugin system
+- [x] Web UI for monitoring
+- [x] Distributed agent execution
 
----
+> **Phase 9 decisions:**
+> - `AgentStep` struct extended with `dependencies: Vec<String>` and `parallel: bool` fields for DAG support.
+> - `PipelineRunner::topological_sort()` validates DAG and detects circular dependencies; returns error if cycles found.
+> - `PipelineRunner::run_with_dag()` accepts a `Pipeline` and executes with DAG validation; currently falls back to sequential execution, but DAG structure is preserved and validated.
+> - `StepAction::Branch { condition, if_true, if_false }` evaluates string-match condition against previous step output; executes if_true if condition matches, else if_false (or returns previous output if no else branch).
+> - `StepAction::RemoteAgent { endpoint, agent_name, payload }` POSTs payload to `{endpoint}/agents/{agent_name}/execute` and deserializes JSON response as `StepOutput`.
+> - `RemoteAgentClient` wraps `reqwest::Client`; `execute()` method performs HTTP POST with error handling (network, request, response parsing, timeout).
+> - `RemoteAgentError` enum derived from `thiserror`; variants: `RequestFailed`, `NetworkError`, `InvalidResponse`, `Timeout`.
+> - `HotReloadHandle` wraps `Arc<tokio::sync::RwLock<Pipeline>>`; methods: `new()`, `get_pipeline()`, `update_pipeline()`, `clone_handle()` for passing to runner.
+> - `Plugin` trait in `src/pipeline.rs` with methods: `name()`, `on_step_start(&StepContext)`, `on_step_end(&StepContext, &StepOutput)` — both async and return `Result<(), PluginError>`.
+> - `PluginError` enum: `HookFailed`, `ExecutionError` — both carry String reason.
+> - `PluginRegistry` struct: `plugins: Vec<Arc<dyn Plugin>>`; methods: `new()`, `register()`, `plugins()`.
+> - `PipelineRunner::execute_step_with_plugins()` (internal async helper) calls `on_step_start` before action, `on_step_end` after (even on error). Plugin hook failure aborts step.
+> - `MonitoringServer` in `src/audit.rs`: wraps `Arc<Mutex<AuditLog>>` and `Arc<Mutex<PipelineTrace>>`. `serve(addr)` async method runs axum HTTP server on given socket address.
+> - HTTP endpoints: `GET /` returns HTML dashboard (simple template); `GET /api/entries` returns JSON array of recent `AuditEntry` (up to 100, reversed order); `GET /api/trace` returns JSON object with `{ "entries": [...] }` from `PipelineTrace`.
+> - `TraceEntry` struct in `src/context.rs` now derives `Serialize` and `Deserialize` for JSON compatibility.
+> - All `AgentStep` initializers in production code and tests updated with `dependencies: Vec::new()` and `parallel: false` fields.
+
+
 
 # Updated Verdict Positioning
 

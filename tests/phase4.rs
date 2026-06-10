@@ -26,7 +26,9 @@ fn simple_agent(name: &str) -> Agent {
                 tools: ToolSet::None,
                 injection_protection: InjectionProtection::None,
                 output_schema: None,
-            }],
+            dependencies: Vec::new(),
+            parallel: false,
+        }],
             on_failure: FailureMode::Abort,
             max_retries: 0,
         },
@@ -60,6 +62,8 @@ fn orchestrator_pipeline(child_agent: &str) -> Pipeline {
             tools: ToolSet::None,
             injection_protection: InjectionProtection::None,
             output_schema: None,
+            dependencies: Vec::new(),
+            parallel: false,
         }],
         on_failure: FailureMode::Abort,
         max_retries: 0,
@@ -202,6 +206,8 @@ async fn test_delegate_agent_depth_limit_enforced() {
             tools: ToolSet::None,
             injection_protection: InjectionProtection::None,
             output_schema: None,
+            dependencies: Vec::new(),
+            parallel: false,
         }],
         on_failure: FailureMode::Abort,
         max_retries: 0,
@@ -259,6 +265,8 @@ async fn test_delegate_agent_allowlist_enforced() {
             tools: ToolSet::None,
             injection_protection: InjectionProtection::None,
             output_schema: None,
+            dependencies: Vec::new(),
+            parallel: false,
         }],
         on_failure: FailureMode::Abort,
         max_retries: 0,
@@ -317,6 +325,8 @@ async fn test_delegate_agent_empty_allowlist_allows_all() {
             tools: ToolSet::None,
             injection_protection: InjectionProtection::None,
             output_schema: None,
+            dependencies: Vec::new(),
+            parallel: false,
         }],
         on_failure: FailureMode::Abort,
         max_retries: 0,
@@ -477,7 +487,9 @@ async fn test_multi_step_pipeline_with_delegation() {
                 tools: ToolSet::None,
                 injection_protection: InjectionProtection::None,
                 output_schema: None,
-            },
+            dependencies: Vec::new(),
+            parallel: false,
+        },
             // Step 2: delegate to reviewer
             AgentStep {
                 name: "review".to_string(),
@@ -500,7 +512,9 @@ async fn test_multi_step_pipeline_with_delegation() {
                 tools: ToolSet::None,
                 injection_protection: InjectionProtection::None,
                 output_schema: None,
-            },
+            dependencies: Vec::new(),
+            parallel: false,
+        },
             // Step 3: custom action after delegation
             AgentStep {
                 name: "finalize".to_string(),
@@ -513,7 +527,9 @@ async fn test_multi_step_pipeline_with_delegation() {
                 tools: ToolSet::None,
                 injection_protection: InjectionProtection::None,
                 output_schema: None,
-            },
+            dependencies: Vec::new(),
+            parallel: false,
+        },
         ],
         on_failure: FailureMode::Abort,
         max_retries: 0,
@@ -613,6 +629,8 @@ async fn test_delegation_inherit_tool_scope_false() {
             tools: ToolSet::None,
             injection_protection: InjectionProtection::None,
             output_schema: None,
+            dependencies: Vec::new(),
+            parallel: false,
         }],
         on_failure: FailureMode::Abort,
         max_retries: 0,
@@ -671,3 +689,4 @@ fn test_agent_registry_overwrite() {
     let retrieved = registry.get("worker").unwrap();
     assert_eq!(retrieved.description, "Version 2");
 }
+

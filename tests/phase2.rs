@@ -339,6 +339,8 @@ async fn test_pipeline_with_function_tool_call() {
             tools: ToolSet::Allow(vec!["greet".to_string()]),
             injection_protection: InjectionProtection::Strict,
             output_schema: None,
+            dependencies: Vec::new(),
+            parallel: false,
         }],
         on_failure: FailureMode::Abort,
         max_retries: 0,
@@ -405,6 +407,8 @@ async fn test_audit_log_records_pipeline_events() {
             tools: ToolSet::Allow(vec!["audit_test".to_string()]),
             injection_protection: InjectionProtection::Strict,
             output_schema: None,
+            dependencies: Vec::new(),
+            parallel: false,
         }],
         on_failure: FailureMode::Abort,
         max_retries: 0,
@@ -448,3 +452,4 @@ async fn test_audit_log_records_pipeline_events() {
     assert!(has_pipeline_completed, "Audit log should contain PipelineCompleted event");
     assert!(has_step_started, "Audit log should contain StepStarted event");
 }
+

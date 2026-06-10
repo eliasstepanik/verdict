@@ -24,6 +24,8 @@ fn skill_pipeline(skill_name: &str, mode: SkillMode) -> Pipeline {
             tools: ToolSet::Full,
             injection_protection: InjectionProtection::None,
             output_schema: None,
+            dependencies: Vec::new(),
+            parallel: false,
         }],
         on_failure: FailureMode::Abort,
         max_retries: 0,
@@ -241,6 +243,8 @@ async fn test_use_skill_pipeline_mode_with_pipeline_executes_it() {
             tools: ToolSet::None,
             injection_protection: InjectionProtection::None,
             output_schema: None,
+            dependencies: Vec::new(),
+            parallel: false,
         }],
         on_failure: FailureMode::Abort,
         max_retries: 0,
@@ -446,4 +450,5 @@ fn test_builtin_refactoring_has_instructions() {
     assert!(!skill.instructions.is_empty());
     assert!(skill.instructions.contains("test") || skill.instructions.contains("refactor"));
 }
+
 
