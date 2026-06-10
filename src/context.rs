@@ -5,7 +5,8 @@ use std::sync::Arc;
 
 use crate::action::StepOutput;
 use crate::agent::{FilesystemPolicy, NetworkPolicy};
-use crate::registry::{AgentRegistry, ToolRegistry, SkillRegistry};
+use crate::registry::{AgentRegistry, ToolRegistry};
+use crate::skills::registry::SkillRegistry;
 use crate::toolset::ToolSet;
 
 /// Output from a step action
@@ -113,7 +114,7 @@ impl StepContext {
             step_results: HashMap::new(),
             agent_registry: Arc::new(AgentRegistry::new()),
             tool_registry: Arc::new(ToolRegistry::with_builtins()),
-            skill_registry: Arc::new(SkillRegistry),
+            skill_registry: Arc::new(SkillRegistry::new()),
             delegation_depth: 0,
             parent_agent: None,
             allowed_tools: ToolSet::Full,

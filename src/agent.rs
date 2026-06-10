@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 use crate::pipeline::Pipeline;
+use crate::skills::skill::SkillSet;
 use crate::toolset::ToolSet;
 
 /// Workspace isolation strategy for task execution
@@ -123,31 +124,6 @@ impl Default for AgentPolicy {
             allowed_skills: vec![],
             network_policy: NetworkPolicy::DenyAll,
             filesystem_policy: FilesystemPolicy::default(),
-        }
-    }
-}
-
-/// A skill set — names of available skills
-///
-/// Phase 1 stub: just a list of skill names.
-/// Full skill support with registries comes in Phase 5.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SkillSet {
-    pub skills: Vec<String>,
-}
-
-impl Default for SkillSet {
-    fn default() -> Self {
-        Self {
-            skills: vec![],
-        }
-    }
-}
-
-impl From<Vec<&str>> for SkillSet {
-    fn from(skills: Vec<&str>) -> Self {
-        Self {
-            skills: skills.into_iter().map(|s| s.to_string()).collect(),
         }
     }
 }

@@ -4,7 +4,7 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use thiserror::Error;
 
-use crate::action::{StepAction, StepError, StepOutput, IterationFailureMode};
+use crate::action::{StepAction, StepError, StepOutput, IterationFailureMode, SkillMode};
 use crate::agent::Agent;
 use crate::audit::{AuditEntry, AuditEvent, AuditLog};
 use crate::context::{StepContext, StepResult, TraceEntry};
@@ -68,6 +68,7 @@ pub struct PipelineRunner {
     pub audit_log: AuditLog,
     pub tool_registry: Arc<ToolRegistry>,
     pub agent_registry: Arc<AgentRegistry>,
+    pub skill_registry: Arc<crate::skills::registry::SkillRegistry>,
 }
 
 impl PipelineRunner {
@@ -76,6 +77,7 @@ impl PipelineRunner {
             audit_log: AuditLog::new(),
             tool_registry: Arc::new(ToolRegistry::with_builtins()),
             agent_registry: Arc::new(AgentRegistry::new()),
+            skill_registry: Arc::new(crate::skills::registry::SkillRegistry::new()),
         }
     }
 
@@ -84,6 +86,7 @@ impl PipelineRunner {
             audit_log: AuditLog::new(),
             tool_registry,
             agent_registry: Arc::new(AgentRegistry::new()),
+            skill_registry: Arc::new(crate::skills::registry::SkillRegistry::new()),
         }
     }
 
@@ -93,6 +96,7 @@ impl PipelineRunner {
             audit_log: AuditLog::new(),
             tool_registry: Arc::new(ToolRegistry::with_builtins()),
             agent_registry,
+            skill_registry: Arc::new(crate::skills::registry::SkillRegistry::new()),
         }
     }
 
@@ -105,6 +109,19 @@ impl PipelineRunner {
             audit_log: AuditLog::new(),
             tool_registry,
             agent_registry,
+            skill_registry: Arc::new(crate::skills::registry::SkillRegistry::new()),
+        }
+    }
+
+    /// Create a runner with a skill registry for skill support
+    pub fn with_skill_registry(
+        skill_registry: Arc<crate::skills::registry::SkillRegistry>,
+    ) -> Self {
+        Self {
+            audit_log: AuditLog::new(),
+            tool_registry: Arc::new(ToolRegistry::with_builtins()),
+            agent_registry: Arc::new(AgentRegistry::new()),
+            skill_registry,
         }
     }
 
@@ -133,6 +150,7 @@ impl PipelineRunner {
         ctx.network_policy = agent.policy.network_policy.clone();
         ctx.agent_registry = self.agent_registry.clone();
         ctx.tool_registry = self.tool_registry.clone();
+        ctx.skill_registry = self.skill_registry.clone();
 
         let mut steps_passed = Vec::new();
         let mut steps_failed = Vec::new();
@@ -551,9 +569,55 @@ impl PipelineRunner {
                 )))
             }
 
-            StepAction::UseSkill { .. } => Err(StepError::NotImplemented(
-                "UseSkill — Phase 5".to_string(),
-            )),
+            StepAction::UseSkill { skill, input: _skill_input, mode } => {
+                // Look up the skill in the registry
+                let skill_def = match ctx.skill_registry.get(skill) {
+                    Some(s) => s,
+                    None => {
+                        return Err(StepError::ActionFailed {
+                            reason: format!("Skill '{}' not found in registry", skill),
+                        })
+                    }
+                };
+
+                // Track active skill usage
+                ctx.active_skills.push(skill.clone());
+
+                // Execute based on mode
+                match mode {
+                    SkillMode::PromptOnly => {
+                        // Return the skill's instructions as output
+                        Ok(StepOutput::new(skill_def.instructions.clone()))
+                    }
+                    SkillMode::Pipeline => {
+                        // Run skill's pipeline if available, else fall back to instructions
+                        if let Some(pipeline) = skill_def.pipeline.clone() {
+                            // Execute the sub-pipeline with Box::pin for async recursion
+                            let sub_action = StepAction::SubPipeline(Box::new(pipeline));
+                            let sub_future = self.execute_action(&sub_action, ctx);
+                            match Pin::from(Box::new(sub_future)).await {
+                                Ok(output) => Ok(output),
+                                Err(e) => Err(e),
+                            }
+                        } else {
+                            Ok(StepOutput::new(skill_def.instructions.clone()))
+                        }
+                    }
+                    SkillMode::Auto => {
+                        // If pipeline available, run it; else prompt-only
+                        if let Some(pipeline) = skill_def.pipeline.clone() {
+                            let sub_action = StepAction::SubPipeline(Box::new(pipeline));
+                            let sub_future = self.execute_action(&sub_action, ctx);
+                            match Pin::from(Box::new(sub_future)).await {
+                                Ok(output) => Ok(output),
+                                Err(e) => Err(e),
+                            }
+                        } else {
+                            Ok(StepOutput::new(skill_def.instructions.clone()))
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -935,6 +999,7 @@ impl PipelineRunner {
         ctx.network_policy = agent.policy.network_policy.clone();
         ctx.agent_registry = self.agent_registry.clone();
         ctx.tool_registry = self.tool_registry.clone();
+        ctx.skill_registry = self.skill_registry.clone();
         ctx.delegation_depth = delegation_depth;
         ctx.parent_agent = parent_agent;
 
