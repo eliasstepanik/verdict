@@ -12,6 +12,7 @@ pub use crate::agent::{
 pub use crate::audit::{AuditEntry, AuditEvent, AuditLog};
 pub use crate::context::{BudgetState, PipelineTrace, StepContext, StepResult, TraceEntry};
 pub use crate::guard::{Guard, GuardEngine, GuardError, TestRunner};
+pub use crate::mcp::{McpClient, McpError, McpServerConfig, McpToolAdapter, DiscoveredTool};
 pub use crate::pipeline::{AgentStep, FailureMode, InjectionProtection, Pipeline};
 pub use crate::registry::{AgentRegistry, SkillRegistry, ToolRegistry};
 pub use crate::runner::{GuardPhase, PipelineError, PipelineResult, PipelineRunner};
