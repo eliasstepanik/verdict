@@ -49,6 +49,8 @@ fn rust_debugging_pipeline() -> Pipeline {
                 tools: ToolSet::Allow(vec!["shell.cargo_check".to_string()]),
                 injection_protection: InjectionProtection::None,
                 output_schema: None,
+                dependencies: Vec::new(),
+                parallel: false,
             },
             AgentStep {
                 name: "run_tests".to_string(),
@@ -62,6 +64,8 @@ fn rust_debugging_pipeline() -> Pipeline {
                 tools: ToolSet::Allow(vec!["shell.cargo_test".to_string()]),
                 injection_protection: InjectionProtection::None,
                 output_schema: None,
+                dependencies: Vec::new(),
+                parallel: false,
             },
         ],
         max_retries: 2,

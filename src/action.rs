@@ -37,6 +37,22 @@ pub enum IterationFailureMode {
     Abort,
 }
 
+/// Error from remote agent execution
+#[derive(Error, Debug)]
+pub enum RemoteAgentError {
+    #[error("request failed: {0}")]
+    RequestFailed(String),
+
+    #[error("invalid response: {0}")]
+    InvalidResponse(String),
+
+    #[error("network error: {0}")]
+    NetworkError(String),
+
+    #[error("timeout")]
+    Timeout,
+}
+
 /// Skill execution mode
 #[derive(Debug, Clone)]
 pub enum SkillMode {
@@ -123,6 +139,20 @@ pub enum StepAction {
         input: Value,
         mode: SkillMode,
     },
+
+    /// Conditional branching: evaluate condition against previous output
+    Branch {
+        condition: String,
+        if_true: Box<StepAction>,
+        if_false: Option<Box<StepAction>>,
+    },
+
+    /// Execute a step on a remote agent endpoint
+    RemoteAgent {
+        endpoint: String,
+        agent_name: String,
+        payload: Value,
+    },
 }
 
 impl std::fmt::Debug for StepAction {
@@ -178,6 +208,26 @@ impl std::fmt::Debug for StepAction {
                 .field("skill", skill)
                 .field("input", input)
                 .field("mode", mode)
+                .finish(),
+            StepAction::Branch {
+                condition,
+                if_true: _,
+                if_false: _,
+            } => f
+                .debug_struct("Branch")
+                .field("condition", condition)
+                .field("if_true", &"<action>")
+                .field("if_false", &"<action?>")
+                .finish(),
+            StepAction::RemoteAgent {
+                endpoint,
+                agent_name,
+                payload,
+            } => f
+                .debug_struct("RemoteAgent")
+                .field("endpoint", endpoint)
+                .field("agent_name", agent_name)
+                .field("payload", payload)
                 .finish(),
         }
     }

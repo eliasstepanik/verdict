@@ -26,6 +26,8 @@ pub fn coder_agent() -> Agent {
         tools: ToolSet::ReadWrite,
         injection_protection: InjectionProtection::None,
         output_schema: None,
+        dependencies: Vec::new(),
+        parallel: false,
     };
 
     let pipeline = Pipeline {

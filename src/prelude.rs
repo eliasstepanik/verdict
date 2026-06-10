@@ -1,5 +1,11 @@
 //! Prelude: commonly used types and traits
 
+// Phase 9: Advanced Execution
+pub use crate::action::RemoteAgentError;
+pub use crate::agent::RemoteAgentClient;
+pub use crate::pipeline::{HotReloadHandle, Plugin, PluginError, PluginRegistry};
+pub use crate::audit::MonitoringServer;
+
 // Phase 8: Self-Improvement
 pub use crate::eval::{
     EvaluationSuite, EvaluationCase, EvaluationExpected, EvaluationResult, EvaluationSuiteResult,

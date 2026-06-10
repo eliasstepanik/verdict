@@ -195,3 +195,61 @@ pub struct Agent {
     pub skills: SkillSet,
     pub policy: AgentPolicy,
 }
+
+
+/// Client for executing steps on a remote agent endpoint
+pub struct RemoteAgentClient {
+    client: reqwest::Client,
+}
+
+impl RemoteAgentClient {
+    /// Create a new remote agent client
+    pub fn new() -> Self {
+        Self {
+            client: reqwest::Client::new(),
+        }
+    }
+
+    /// Execute a step on a remote agent
+    pub async fn execute(
+        &self,
+        endpoint: &str,
+        agent_name: &str,
+        payload: serde_json::Value,
+    ) -> Result<serde_json::Value, crate::action::RemoteAgentError> {
+        let url = format!(
+            "{}/agents/{}/execute",
+            endpoint.trim_end_matches('/'),
+            agent_name
+        );
+
+        let response = self
+            .client
+            .post(&url)
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|e| crate::action::RemoteAgentError::NetworkError(e.to_string()))?;
+
+        if !response.status().is_success() {
+            return Err(crate::action::RemoteAgentError::RequestFailed(format!(
+                "HTTP {}: {}",
+                response.status(),
+                response.text().await.unwrap_or_default()
+            )));
+        }
+
+        let result = response
+            .json::<serde_json::Value>()
+            .await
+            .map_err(|e| crate::action::RemoteAgentError::InvalidResponse(e.to_string()))?;
+
+        Ok(result)
+    }
+}
+
+impl Default for RemoteAgentClient {
+    fn default() -> Self {
+        Self::new()
+    }
+}

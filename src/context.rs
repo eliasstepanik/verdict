@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde_json::Value;
+use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -19,7 +20,7 @@ pub struct StepResult {
 }
 
 /// A trace entry for a single step execution
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TraceEntry {
     pub step_name: String,
     pub status: String,

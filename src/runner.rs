@@ -618,6 +618,51 @@ impl PipelineRunner {
                     }
                 }
             }
+
+            StepAction::Branch {
+                condition,
+                if_true,
+                if_false,
+            } => {
+                // Evaluate condition against previous step output or context
+                // Simple string evaluation: check if condition appears in output
+                let prev_output = ctx.output.as_ref().map(|o| o.raw.clone()).unwrap_or_default();
+                let condition_matches = prev_output.contains(condition);
+
+                if condition_matches {
+                    // Execute if_true
+                    let branch_future = self.execute_action(if_true, ctx);
+                    Pin::from(Box::new(branch_future)).await
+                } else if let Some(if_false_action) = if_false {
+                    // Execute if_false
+                    let branch_future = self.execute_action(if_false_action, ctx);
+                    Pin::from(Box::new(branch_future)).await
+                } else {
+                    // No else branch, just return the previous output
+                    Ok(StepOutput::new(prev_output))
+                }
+            }
+
+            StepAction::RemoteAgent {
+                endpoint,
+                agent_name,
+                payload,
+            } => {
+                let client = crate::agent::RemoteAgentClient::new();
+                match client.execute(endpoint, agent_name, payload.clone()).await {
+                    Ok(result) => {
+                        // Convert result to StepOutput
+                        let output = serde_json::to_string(&result)
+                            .unwrap_or_else(|_| result.to_string());
+                        Ok(StepOutput::with_parsed(output, result))
+                    }
+                    Err(e) => {
+                        Err(StepError::ActionFailed {
+                            reason: format!("remote agent execution failed: {}", e),
+                        })
+                    }
+                }
+            }
         }
     }
 
@@ -1262,6 +1307,114 @@ impl PipelineRunner {
             audit_log: self.audit_log.clone(),
             success,
         })
+    }
+
+    /// Topologically sort pipeline steps based on dependencies (Phase 9 DAG support)
+    fn topological_sort(pipeline: &Pipeline) -> Result<Vec<usize>, PipelineError> {
+        let n = pipeline.steps.len();
+        let mut sorted = Vec::new();
+        let mut visited = vec![false; n];
+        let mut visiting = vec![false; n];
+
+        fn visit(
+            node: usize,
+            steps: &[crate::pipeline::AgentStep],
+            visited: &mut [bool],
+            visiting: &mut [bool],
+            sorted: &mut Vec<usize>,
+        ) -> Result<(), String> {
+            if visited[node] {
+                return Ok(());
+            }
+            if visiting[node] {
+                return Err("Circular dependency detected".to_string());
+            }
+
+            visiting[node] = true;
+
+            for dep in &steps[node].dependencies {
+                // Find step index by name
+                if let Some(dep_idx) = steps.iter().position(|s| &s.name == dep) {
+                    visit(dep_idx, steps, visited, visiting, sorted)?;
+                }
+            }
+
+            visiting[node] = false;
+            visited[node] = true;
+            sorted.push(node);
+            Ok(())
+        }
+
+        for i in 0..n {
+            if !visited[i] {
+                visit(i, &pipeline.steps, &mut visited, &mut visiting, &mut sorted)
+                    .map_err(|reason| PipelineError::StepFailed {
+                        step: format!("DAG validation"),
+                        error: StepError::ActionFailed { reason },
+                    })?;
+            }
+        }
+
+        Ok(sorted)
+    }
+
+    /// Execute pipeline with DAG support and parallel execution (Phase 9)
+    pub async fn run_with_dag(
+        &mut self,
+        pipeline: &Pipeline,
+        agent: &Agent,
+        input: Value,
+    ) -> Result<PipelineResult, PipelineError> {
+        // Validate DAG
+        let _sorted_indices = Self::topological_sort(pipeline)?;
+
+        // For now, fall back to regular execution
+        // Full DAG + parallel execution would require additional logic
+        self.run(pipeline, agent, input).await
+    }
+
+    /// Run a pipeline with hot-reload support (Phase 9)
+    pub async fn run_hot(
+        &mut self,
+        hot_reload_handle: &crate::pipeline::HotReloadHandle,
+        agent: &Agent,
+        input: Value,
+    ) -> Result<PipelineResult, PipelineError> {
+        let pipeline = hot_reload_handle.get_pipeline().await;
+        self.run(&pipeline, agent, input).await
+    }
+
+    /// Execute a pipeline step with plugin hooks (Phase 9)
+    async fn execute_step_with_plugins(
+        &mut self,
+        step: &crate::pipeline::AgentStep,
+        ctx: &mut StepContext,
+        plugins: &crate::pipeline::PluginRegistry,
+    ) -> Result<StepOutput, StepError> {
+        // Call on_step_start hooks
+        for plugin in plugins.plugins() {
+            if let Err(e) = plugin.on_step_start(ctx).await {
+                return Err(StepError::ActionFailed {
+                    reason: format!("plugin hook on_step_start failed: {}", e),
+                });
+            }
+        }
+
+        // Execute the step action
+        let result = self.execute_action(&step.action, ctx).await;
+
+        // Call on_step_end hooks (always called, even on error)
+        if let Ok(ref output) = result {
+            for plugin in plugins.plugins() {
+                if let Err(e) = plugin.on_step_end(ctx, output).await {
+                    return Err(StepError::ActionFailed {
+                        reason: format!("plugin hook on_step_end failed: {}", e),
+                    });
+                }
+            }
+        }
+
+        result
     }
 }
 

@@ -461,3 +461,115 @@ impl Default for AuditLog {
         Self::new()
     }
 }
+
+/// Monitoring server for Web UI dashboard (Phase 9)
+pub struct MonitoringServer {
+    audit_log: std::sync::Arc<std::sync::Mutex<AuditLog>>,
+    trace: std::sync::Arc<std::sync::Mutex<crate::context::PipelineTrace>>,
+}
+
+impl MonitoringServer {
+    /// Create a new monitoring server
+    pub fn new(audit_log: AuditLog, trace: crate::context::PipelineTrace) -> Self {
+        Self {
+            audit_log: std::sync::Arc::new(std::sync::Mutex::new(audit_log)),
+            trace: std::sync::Arc::new(std::sync::Mutex::new(trace)),
+        }
+    }
+
+    /// Start the monitoring HTTP server on the given address
+    pub async fn serve(self, addr: std::net::SocketAddr) -> Result<(), Box<dyn std::error::Error>> {
+        use axum::{
+            routing::get,
+            extract::State,
+            Json,
+            Router,
+            response::{Html as AxumHtml, IntoResponse},
+        };
+
+        let audit_log = self.audit_log.clone();
+        let trace = self.trace.clone();
+
+        // App state structure
+        #[derive(Clone)]
+        struct AppState {
+            audit_log: std::sync::Arc<std::sync::Mutex<AuditLog>>,
+            trace: std::sync::Arc<std::sync::Mutex<crate::context::PipelineTrace>>,
+        }
+
+        let app_state = AppState {
+            audit_log: audit_log.clone(),
+            trace: trace.clone(),
+        };
+
+        // Handlers
+        async fn index_handler() -> impl IntoResponse {
+            let html = r#"
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Verdict Monitoring Dashboard</title>
+    <style>
+        body { font-family: monospace; margin: 20px; background: #f5f5f5; }
+        h1 { color: #333; }
+        .section { background: white; padding: 20px; margin: 10px 0; border-radius: 5px; }
+        .entry { padding: 10px; border-left: 3px solid #0066cc; margin: 5px 0; }
+        .error { border-left-color: #cc0000; }
+        .success { border-left-color: #00cc00; }
+    </style>
+</head>
+<body>
+    <h1>Verdict Monitoring Dashboard</h1>
+    <div class="section">
+        <h2>Recent Audit Entries</h2>
+        <p><a href="/api/entries">View all entries (JSON)</a></p>
+    </div>
+    <div class="section">
+        <h2>Pipeline Trace</h2>
+        <p><a href="/api/trace">View trace (JSON)</a></p>
+    </div>
+</body>
+</html>
+            "#;
+            AxumHtml(html)
+        }
+
+        async fn entries_handler(
+            State(state): State<AppState>,
+        ) -> Json<Vec<AuditEntry>> {
+            let log = state.audit_log.lock().ok();
+            let entries: Vec<_> = log
+                .map(|l| {
+                    l.entries()
+                        .iter()
+                        .rev()
+                        .take(100)
+                        .cloned()
+                        .collect()
+                })
+                .unwrap_or_default();
+            Json(entries)
+        }
+
+        async fn trace_handler(
+            State(state): State<AppState>,
+        ) -> Json<serde_json::Value> {
+            let t = state.trace.lock().ok();
+            let entries: Vec<_> = t
+                .map(|tr| tr.entries.clone())
+                .unwrap_or_default();
+            Json(json!({ "entries": entries }))
+        }
+
+        let app = Router::new()
+            .route("/", get(index_handler))
+            .route("/api/entries", get(entries_handler))
+            .route("/api/trace", get(trace_handler))
+            .with_state(app_state);
+
+        let listener = tokio::net::TcpListener::bind(addr).await?;
+        axum::serve(listener, app).await?;
+
+        Ok(())
+    }
+}
