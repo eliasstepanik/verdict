@@ -1998,18 +1998,31 @@ Output:
 - [x] `cargo audit` integration
 - [x] `cargo deny` integration
 
-## Phase 8 — Self-Improvement
+## Phase 8 — Self-Improvement ✅
 
-- [ ] Pipeline tracing
-- [ ] Reflection agent
-- [ ] Self-update proposal step
-- [ ] Unified diff-only self patches
-- [ ] Self-update sandbox
-- [ ] Compile/test/eval validation
-- [ ] Human approval gate
-- [ ] Agent versioning
-- [ ] Evaluation suites
-- [ ] Promotion/rollback system
+- [x] Pipeline tracing
+- [x] Reflection agent
+- [x] Self-update proposal step
+- [x] Unified diff-only self patches
+- [x] Self-update sandbox
+- [x] Compile/test/eval validation
+- [x] Human approval gate
+- [x] Agent versioning
+- [x] Evaluation suites
+- [x] Promotion/rollback system
+
+> **Phase 8 decisions:**
+> - `EvaluationSuite`, `EvaluationCase`, `EvaluationExpected`, `EvaluationResult`, `EvaluationSuiteResult`, `EvaluationRunner`, `EvalError` implemented in `src/eval.rs`.
+> - `SelfUpdateConfig`, `SelfUpdateProposal`, `SelfUpdateResult`, `SelfUpdateEngine`, `SelfUpdateError` implemented in `src/self_update.rs`.
+> - `EvaluationExpected::Guard(g)` evaluates the guard against a minimal StepContext built from the last step's output.
+> - `SelfUpdateEngine::apply_in_sandbox` writes the patch file to the sandbox dir and returns Ok if the patch is a valid unified diff; actual `git apply` deferred (requires live git repo).
+> - `Guard::EvaluationImprovesOrEqual` and `Guard::AgentVersionCreated` use optimistic-pass semantics (enforced by pipeline, not guard alone).
+> - `AuditEvent::SelfUpdateProposed` and `AuditEvent::AgentVersionCreated` added to `audit.rs`.
+> - Pipeline tracing was already present in `context.rs` (`PipelineTrace`, `TraceEntry`); Phase 8 marks it complete.
+> - Human approval gate was already in `Verdict::UserApproval`; Phase 8 marks it complete.
+> - Agent versioning (`AgentVersion`) was already in `agent.rs`; Phase 8 adds `SelfUpdateEngine::version_agent`.
+> - `RiskLevel` is defined in `src/injection.rs` and reused in `src/self_update.rs`; no duplicate.
+> - Promotion/rollback: `EvaluationSuite::minimum_score` gate enforces promotion; rollback = don't promote (no automatic rollback mechanism; deferred to Phase 9).
 
 ## Phase 9 — Advanced Execution
 

@@ -11,6 +11,17 @@ pub enum RiskLevel {
     Critical,
 }
 
+impl std::fmt::Display for RiskLevel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RiskLevel::Low => write!(f, "Low"),
+            RiskLevel::Medium => write!(f, "Medium"),
+            RiskLevel::High => write!(f, "High"),
+            RiskLevel::Critical => write!(f, "Critical"),
+        }
+    }
+}
+
 /// Result of injection scanning
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InjectionResult {
