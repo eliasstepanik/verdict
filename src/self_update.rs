@@ -87,6 +87,9 @@ pub enum SelfUpdateError {
     #[error("patch application failed: {reason}")]
     PatchFailed { reason: String },
 
+    #[error("patch apply failed: {0}")]
+    PatchApplyFailed(String),
+
     #[error("compile validation failed: {reason}")]
     CompileFailed { reason: String },
 
@@ -148,17 +151,37 @@ impl SelfUpdateEngine {
         }
 
         // Write the patch to a file in the sandbox
-        let patch_file = sandbox_dir.join("proposed.patch");
-        std::fs::write(&patch_file, patch).map_err(|e| SelfUpdateError::Io(e.to_string()))?;
-
-        // For testing, just validate the patch is written correctly
-        let written_patch = std::fs::read_to_string(&patch_file)
+        let patch_path = sandbox_dir.join("patch.diff");
+        tokio::fs::write(&patch_path, patch)
+            .await
             .map_err(|e| SelfUpdateError::Io(e.to_string()))?;
 
-        if written_patch.trim() != patch.trim() {
-            return Err(SelfUpdateError::PatchFailed {
-                reason: "patch file content mismatch".to_string(),
-            });
+        // Step 1: git apply --check (dry run)
+        let check = tokio::process::Command::new("git")
+            .args(["apply", "--check", patch_path.to_str().unwrap()])
+            .current_dir(sandbox_dir)
+            .output()
+            .await
+            .map_err(|e| SelfUpdateError::Io(e.to_string()))?;
+
+        if !check.status.success() {
+            return Err(SelfUpdateError::PatchApplyFailed(
+                String::from_utf8_lossy(&check.stderr).into_owned(),
+            ));
+        }
+
+        // Step 2: git apply
+        let apply = tokio::process::Command::new("git")
+            .args(["apply", patch_path.to_str().unwrap()])
+            .current_dir(sandbox_dir)
+            .output()
+            .await
+            .map_err(|e| SelfUpdateError::Io(e.to_string()))?;
+
+        if !apply.status.success() {
+            return Err(SelfUpdateError::PatchApplyFailed(
+                String::from_utf8_lossy(&apply.stderr).into_owned(),
+            ));
         }
 
         Ok(())

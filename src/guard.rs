@@ -391,6 +391,16 @@ pub enum GuardError {
     ParseError(String),
 }
 
+/// Extract dependencies table from TOML content
+fn extract_deps_from_toml(s: &str) -> std::collections::HashMap<String, toml::Value> {
+    toml::from_str::<toml::Value>(s)
+        .ok()
+        .and_then(|v| v.get("dependencies").cloned())
+        .and_then(|d| d.as_table().cloned())
+        .map(|t| t.into_iter().collect())
+        .unwrap_or_default()
+}
+
 /// Engine for evaluating guards
 pub struct GuardEngine;
 
@@ -658,14 +668,12 @@ impl GuardEngine {
             Guard::ValidToml => {
                 if let Some(output) = &ctx.output {
                     let text = &output.raw;
-                    // Simple heuristic: valid TOML should have at least one `key = value` pattern
-                    if !text.is_empty() && text.contains('=') {
-                        Ok(())
-                    } else {
-                        Err(GuardError::Failed {
+                    match toml::from_str::<toml::Value>(text) {
+                        Ok(_) => Ok(()),
+                        Err(e) => Err(GuardError::Failed {
                             guard: "ValidToml".to_string(),
-                            reason: "output does not look like valid TOML (no '=' found)".to_string(),
-                        })
+                            reason: format!("invalid TOML: {}", e),
+                        }),
                     }
                 } else {
                     Err(GuardError::Failed {
@@ -678,14 +686,12 @@ impl GuardEngine {
             Guard::ValidYaml => {
                 if let Some(output) = &ctx.output {
                     let text = &output.raw;
-                    // Simple heuristic: valid YAML should start with --- or contain `: ` patterns
-                    if !text.is_empty() && (text.starts_with("---") || text.contains(": ")) {
-                        Ok(())
-                    } else {
-                        Err(GuardError::Failed {
+                    match serde_yaml::from_str::<serde_yaml::Value>(text) {
+                        Ok(_) => Ok(()),
+                        Err(e) => Err(GuardError::Failed {
                             guard: "ValidYaml".to_string(),
-                            reason: "output does not look like valid YAML".to_string(),
-                        })
+                            reason: format!("invalid YAML: {}", e),
+                        }),
                     }
                 } else {
                     Err(GuardError::Failed {
@@ -975,12 +981,19 @@ impl GuardEngine {
             Guard::NoNewDependencies => {
                 if let Some(output) = &ctx.output {
                     let text = &output.raw;
-                    // Check if output contains Cargo.toml changes with new dependencies
-                    if text.contains("[dependencies]") && text.contains("+") {
-                        Err(GuardError::Failed {
-                            guard: "NoNewDependencies".to_string(),
-                            reason: "output adds new dependencies to Cargo.toml".to_string(),
-                        })
+                    // Try to parse as TOML and check for dependencies
+                    if text.contains("[dependencies]") {
+                        // Extract the current dependencies from the TOML
+                        let deps = extract_deps_from_toml(text);
+                        // If there are any dependencies in the output, it's adding new ones
+                        if !deps.is_empty() && (text.contains("+") || text.contains("new")) {
+                            Err(GuardError::Failed {
+                                guard: "NoNewDependencies".to_string(),
+                                reason: format!("output adds new dependencies: {:?}", deps.keys().collect::<Vec<_>>()),
+                            })
+                        } else {
+                            Ok(())
+                        }
                     } else {
                         Ok(())
                     }

@@ -54,6 +54,7 @@ pub enum PipelineError {
 }
 
 /// Result of running a pipeline
+#[derive(Debug)]
 pub struct PipelineResult {
     pub pipeline_name: String,
     pub steps_passed: Vec<String>,
@@ -64,11 +65,13 @@ pub struct PipelineResult {
 }
 
 /// Executor for pipelines with guards, verdicts, and audit logging
+#[derive(Clone)]
 pub struct PipelineRunner {
     pub audit_log: AuditLog,
     pub tool_registry: Arc<ToolRegistry>,
     pub agent_registry: Arc<AgentRegistry>,
     pub skill_registry: Arc<crate::skills::registry::SkillRegistry>,
+    pub llm_client: Option<Arc<crate::llm::LlmClient>>,
 }
 
 impl PipelineRunner {
@@ -78,6 +81,7 @@ impl PipelineRunner {
             tool_registry: Arc::new(ToolRegistry::with_builtins()),
             agent_registry: Arc::new(AgentRegistry::new()),
             skill_registry: Arc::new(crate::skills::registry::SkillRegistry::new()),
+            llm_client: None,
         }
     }
 
@@ -87,6 +91,7 @@ impl PipelineRunner {
             tool_registry,
             agent_registry: Arc::new(AgentRegistry::new()),
             skill_registry: Arc::new(crate::skills::registry::SkillRegistry::new()),
+            llm_client: None,
         }
     }
 
@@ -97,6 +102,7 @@ impl PipelineRunner {
             tool_registry: Arc::new(ToolRegistry::with_builtins()),
             agent_registry,
             skill_registry: Arc::new(crate::skills::registry::SkillRegistry::new()),
+            llm_client: None,
         }
     }
 
@@ -110,6 +116,7 @@ impl PipelineRunner {
             tool_registry,
             agent_registry,
             skill_registry: Arc::new(crate::skills::registry::SkillRegistry::new()),
+            llm_client: None,
         }
     }
 
@@ -122,7 +129,14 @@ impl PipelineRunner {
             tool_registry: Arc::new(ToolRegistry::with_builtins()),
             agent_registry: Arc::new(AgentRegistry::new()),
             skill_registry,
+            llm_client: None,
         }
+    }
+
+    /// Add an LLM client to this runner
+    pub fn with_llm_client(mut self, client: Arc<crate::llm::LlmClient>) -> Self {
+        self.llm_client = Some(client);
+        self
     }
 
     /// Execute a pipeline with an agent
@@ -443,11 +457,30 @@ impl PipelineRunner {
         ctx: &mut StepContext,
     ) -> Result<StepOutput, StepError> {
         match action {
-            StepAction::LlmCall { system: _, user: _, model: _ } => {
-                // Phase 1 stub: return static response
-                Ok(StepOutput::new(
-                    "[LLM stub: no provider configured in Phase 1]".to_string(),
-                ))
+            StepAction::LlmCall { system, user, model } => {
+                let client = self.llm_client.as_ref()
+                    .ok_or_else(|| StepError::ActionFailed {
+                        reason: "no LLM client configured".into(),
+                    })?;
+
+                let model_str = match model {
+                    Some(spec) => spec.model.clone(),
+                    None => "gpt-4o".into(),
+                };
+
+                let req = crate::llm::LlmRequest {
+                    system: system.clone(),
+                    user: user.clone(),
+                    model: model_str,
+                    max_tokens: None,
+                };
+
+                let resp = client.complete(req).await
+                    .map_err(|e| StepError::ActionFailed {
+                        reason: e.to_string(),
+                    })?;
+
+                Ok(StepOutput::new(resp.content))
             }
 
             StepAction::ToolCall { tool, args } => {
@@ -468,13 +501,56 @@ impl PipelineRunner {
                 Ok(StepOutput::new(input.trim().to_string()))
             }
 
-            StepAction::DelegateAgent { .. } => {
-                // DelegateAgent is handled in run()/run_with_delegation_depth() before
-                // execute_action is called, so this branch should never be reached.
-                // If it is reached (e.g., nested in LoopUntil), return a clear error.
-                Err(StepError::NotImplemented(
-                    "DelegateAgent nested in LoopUntil/SubPipeline — not yet supported".to_string(),
-                ))
+            StepAction::DelegateAgent {
+                agent: agent_name,
+                input,
+                expected_output_schema: _expected_output_schema,
+                delegation_policy: _delegation_policy,
+            } => {
+                // For DelegateAgent nested in LoopUntil/SubPipeline:
+                // Since we're in execute_action (&self), we can't call execute_delegation (&mut self).
+                // Instead, look up the agent and execute its pipeline directly.
+                
+                let child_agent = ctx.agent_registry.get(agent_name)
+                    .ok_or_else(|| StepError::ActionFailed {
+                        reason: format!("agent '{}' not found in registry", agent_name),
+                    })?;
+
+                // Create a new runner with shared registries
+                let mut child_runner = PipelineRunner::with_registries(
+                    self.tool_registry.clone(),
+                    ctx.agent_registry.clone(),
+                );
+                child_runner.skill_registry = self.skill_registry.clone();
+                
+                // Copy llm_client if present
+                if let Some(llm_client) = &self.llm_client {
+                    child_runner = child_runner.with_llm_client(llm_client.clone());
+                }
+
+                // Execute child agent's pipeline
+                let child_input = input.clone();
+                let run_future = child_runner.run(&child_agent.pipeline, &child_agent, child_input);
+                match Pin::from(Box::new(run_future)).await {
+                    Ok(result) => {
+                        // Merge results back into context
+                        ctx.step_results.extend(result.step_results);
+                        ctx.trace.entries.extend(result.audit_log.entries().iter().map(|e| {
+                            crate::context::TraceEntry {
+                                step_name: format!("{}.{}", agent_name, e.step_name),
+                                status: format!("{:?}", e.event),
+                                timestamp: e.timestamp,
+                            }
+                        }));
+
+                        Ok(StepOutput::new(
+                            format!("DelegateAgent '{}' completed: {}", agent_name, result.success),
+                        ))
+                    }
+                    Err(e) => Err(StepError::ActionFailed {
+                        reason: format!("DelegateAgent '{}' failed: {}", agent_name, e),
+                    }),
+                }
             }
 
             StepAction::SubPipeline(pipeline) => {
@@ -1385,6 +1461,7 @@ impl PipelineRunner {
     }
 
     /// Execute a pipeline step with plugin hooks (Phase 9)
+    #[allow(dead_code)]
     async fn execute_step_with_plugins(
         &mut self,
         step: &crate::pipeline::AgentStep,

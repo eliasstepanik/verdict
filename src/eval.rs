@@ -94,12 +94,12 @@ impl EvaluationRunner {
                     reason: format!("pipeline execution failed: {}", e),
                 })?;
 
-            // Check if pipeline had output
+            // Check if pipeline had output (get the last step result)
             let last_output = pipeline_result
                 .step_results
-                .iter()
+                .values()
                 .last()
-                .map(|(_, result)| result.output.clone());
+                .map(|result| result.output.clone());
 
             // Evaluate the case
             let (passed, reason) = match &case.expected {
@@ -167,7 +167,7 @@ impl EvaluationRunner {
                 EvaluationExpected::Guard(guard) => {
                     if let Some(output) = &last_output {
                         // Build a minimal context from the output
-                        let mut ctx = StepContext {
+                        let ctx = StepContext {
                             agent_name: agent.name.clone(),
                             pipeline_name: pipeline.name.clone(),
                             step_name: "eval_step".to_string(),
@@ -201,9 +201,10 @@ impl EvaluationRunner {
                 }
 
                 EvaluationExpected::Custom(f) => {
-                    // For custom functions, we need PipelineResult which we don't have yet
-                    // For now, just pass optimistically
-                    (true, None)
+                    match f(&pipeline_result) {
+                        Ok(()) => (true, None),
+                        Err(e) => (false, Some(e.to_string())),
+                    }
                 }
             };
 

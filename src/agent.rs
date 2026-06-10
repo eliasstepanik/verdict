@@ -96,7 +96,7 @@ impl Default for FilesystemPolicy {
 }
 
 /// Network access policy for agents
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum NetworkPolicy {
     /// No network access allowed
     DenyAll,

@@ -1689,6 +1689,17 @@ fn coder_pipeline() -> Pipeline {
                     },
                 },
                 guard_out: Guard::MatchesSchema(plan_schema()),
+                verdict: Verdict::Automated(Guard::MatchesSchema(plan_schema())),
+                tools: ToolSet::ReadOnly,
+                injection_protection: InjectionProtection::Strict,
+            },
+        ],
+        on_failure: FailureMode::Abort,
+        max_retries: 0,
+    }
+}
+```
+
                 verdict: Verdict::UserApproval {
                     prompt: "Approve plan?",
                     show_diff: false,
@@ -2049,9 +2060,59 @@ Output:
 > - `PluginRegistry` struct: `plugins: Vec<Arc<dyn Plugin>>`; methods: `new()`, `register()`, `plugins()`.
 > - `PipelineRunner::execute_step_with_plugins()` (internal async helper) calls `on_step_start` before action, `on_step_end` after (even on error). Plugin hook failure aborts step.
 > - `MonitoringServer` in `src/audit.rs`: wraps `Arc<Mutex<AuditLog>>` and `Arc<Mutex<PipelineTrace>>`. `serve(addr)` async method runs axum HTTP server on given socket address.
-> - HTTP endpoints: `GET /` returns HTML dashboard (simple template); `GET /api/entries` returns JSON array of recent `AuditEntry` (up to 100, reversed order); `GET /api/trace` returns JSON object with `{ "entries": [...] }` from `PipelineTrace`.
+> - HTTP endpoints: `GET /` returns HTML dashboard (simple template); `GET /api/entries` returns JSON array of recent `AuditEntry` (up to 100, reversed order); `GET /api/trace` returns JSON object with `{ "entries": [...] }` from `PipelineTrace`.         
 > - `TraceEntry` struct in `src/context.rs` now derives `Serialize` and `Deserialize` for JSON compatibility.
 > - All `AgentStep` initializers in production code and tests updated with `dependencies: Vec::new()` and `parallel: false` fields.
+
+
+## Phase 10 — Stub Completion (COMPLETE)
+
+All stubs and incomplete implementations from Phases 1–9 have been resolved.
+
+### Resolved in Phase 10
+
+- `src/llm/provider.rs` — `LlmProvider` trait, `LlmRequest/LlmResponse/LlmUsage/LlmError/ProviderSpec`, `OpenAiCompatibleProvider`
+- `src/llm/client.rs` — `LlmClient::new()`, `LlmClient::from_env()`, `complete()` dispatch
+- `src/llm/mod.rs` — wired up; re-exports added to `prelude.rs`
+- `src/tools/http.rs` — `HttpTool` with `allowed_paths` and `NetworkPolicy` checks
+- `src/runner.rs` — `StepAction::LlmCall` dispatch via `LlmClient`; `PipelineRunner.llm_client` field; `with_llm_client()` builder method
+- `src/runner.rs` — `DelegateAgent` nested in `LoopUntil`/`SubPipeline` routed to agent registry lookup and direct pipeline execution
+- `src/mcp/client.rs` — `discover_tools()` via JSON-RPC stdio `tools/list` with full request/response parsing
+- `src/mcp/client.rs` — `call_tool()` via JSON-RPC stdio `tools/call` with atomic ID counter
+- `src/eval.rs` — `EvaluationExpected::Custom(f)` executes the closure and propagates result
+- `src/self_update.rs` — `apply_in_sandbox()` runs `git apply --check` then `git apply` with proper error handling; added `PatchApplyFailed(String)` variant
+- `src/guard.rs` — `Guard::ValidToml` uses `toml` crate real parsing; `Guard::ValidYaml` uses `serde_yaml` real parsing; `Guard::NoNewDependencies` uses TOML parsing with helper function
+- `tests/phase10.rs` — integration tests for LLM provider/client, HTTP tool, evaluation closures, self-update, and guard functions
+
+### Phase 10 Decisions
+
+> **Phase 10 decisions:**
+> - `LlmProvider` is an `async_trait` in `src/llm/provider.rs`; `LlmRequest/LlmResponse/LlmUsage/LlmError` and `ProviderSpec` enum defined there
+> - `LlmClient::from_env()` reads `OPENAI_API_KEY` (required), `OPENAI_BASE_URL` (default: "https://api.openai.com"), `OPENAI_MODEL` (default: "gpt-4o")
+> - `OpenAiCompatibleProvider` POSTs to `{base_url}/v1/chat/completions`; parses `choices[0].message.content` and `usage` fields
+> - `PipelineRunner` gains `llm_client: Option<Arc<LlmClient>>` field and `with_llm_client()` builder method; field initialized to `None` in all constructors
+> - `StepAction::LlmCall` with no client → `StepError::ActionFailed("no LLM client configured")`; model defaults to "gpt-4o" when not specified
+> - `HttpTool`: call args `{method, path, body?, headers?}`; checks `allowed_paths` and `NetworkPolicy`; returns `{status, body}`
+> - MCP `discover_tools()` sends JSON-RPC `tools/list`; reads newline-delimited response; applies `allowed_tools` filter
+> - MCP `call_tool()` sends JSON-RPC `tools/call`; per-client `AtomicU64` ID counter; extracts `result.content`
+> - `EvaluationExpected::Custom(f)` now calls `f(pipeline_result)` and propagates `Err` as failure
+> - `SelfUpdateEngine::apply_in_sandbox()` runs `git apply --check` (dry-run validation) then `git apply` (actual application)
+> - `Guard::ValidToml` and `Guard::ValidYaml` use real TOML/YAML parsing via `toml::from_str` and `serde_yaml::from_str`
+> - `Guard::NoNewDependencies` uses helper function `extract_deps_from_toml()` to parse TOML and detect new dependencies
+> - New Cargo deps: `toml = "0.8"`, `serde_yaml = "0.9"`, `mockito` (dev-dep for tests)
+> - `DelegateAgent` nested in `LoopUntil`/`SubPipeline` routes through agent registry lookup and creates new runner with shared registries
+
+### Updates to Prior Phase Decisions
+
+> **Phase 1 decisions (updated):**
+> - `StepAction::LlmCall` stub resolved in Phase 10 — now dispatches to real `LlmClient` (see `src/llm/provider.rs` and `src/runner.rs`)
+
+> **Phase 3 decisions (updated):**
+> - MCP `discover_tools()` and `call_tool()` stubs resolved in Phase 10 — full JSON-RPC stdio implementation complete
+
+> **Phase 8 decisions (updated):**
+> - `SelfUpdateEngine::apply_in_sandbox()` stub resolved in Phase 10 — now runs real `git apply --check` and `git apply` commands
+
 
 
 
