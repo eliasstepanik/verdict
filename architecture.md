@@ -1482,6 +1482,23 @@ pub struct StepContext {
 > - MCP tool call audit logging flows through `ToolContext.audit_log` (same path as built-in tools) — no additional audit infrastructure needed.
 > - `McpError` enum defined in `src/mcp/client.rs`; re-exported from `src/mcp/mod.rs` and `prelude.rs`.
 
+> **Phase 4 decisions:**
+> - `AgentRegistry` already existed in `registry.rs`; no new struct needed — enhanced with no API changes.
+> - `PipelineRunner` gains `agent_registry: Arc<AgentRegistry>` field; new constructors: `with_agent_registry`, `with_registries`.
+> - `DelegateAgent` is handled as a special case in `run()` and `run_with_delegation_depth()` **before** `execute_action()` is called. This gives `&mut self` access to the audit log. `execute_action()` remains `&self`.
+> - `execute_delegation` is an `&mut self` method on `PipelineRunner` — not standalone — for audit log write access.
+> - Child context: `delegation_depth = parent_depth + 1`, `parent_agent = Some(parent_name)`, both registries cloned from parent runner.
+> - Child tool scope: `inherit_tool_scope=true` clones parent `tool_registry` into child; `false` gives child empty `ToolRegistry`.
+> - Child step results merged into parent context under namespaced keys `"{agent_name}.{step_name}"`.
+> - Child trace entries merged into `ctx.trace` with the same namespacing.
+> - New `PipelineError::DelegationFailed` variant added for delegation-specific errors.
+> - New `AuditEvent` variants: `DelegationStarted`, `DelegationCompleted`, `DelegationFailed` — written to `self.audit_log` in `execute_delegation`.
+> - `DelegationFailed` is logged for: depth exceeded, allowlist rejection, agent not found in registry, and child pipeline failure.
+> - `run_with_delegation_depth` is a public `&mut self` method — the recursive child entry point; mirrors `run()` with depth/parent injected into context.
+> - `agents/` module subfiles (`coder.rs`, `debugger.rs`, etc.) deferred to Phase 6.
+
+
+
 ---
 
 # Updated PipelineRunner Behavior
@@ -1894,15 +1911,16 @@ Output:
 - [x] MCP audit logging
 
 
-## Phase 4 — Agent Delegation
 
-- [ ] `AgentRegistry`
-- [ ] `StepAction::DelegateAgent`
-- [ ] Delegation depth limits
-- [ ] Delegation policies
-- [ ] Child context creation
-- [ ] Delegated output validation
-- [ ] Delegation trace logging
+## Phase 4 — Agent Delegation ✅
+
+- [x] `AgentRegistry`
+- [x] `StepAction::DelegateAgent`
+- [x] Delegation depth limits
+- [x] Delegation policies
+- [x] Child context creation
+- [x] Delegated output validation
+- [x] Delegation trace logging
 
 ## Phase 5 — Skills
 

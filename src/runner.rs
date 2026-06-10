@@ -10,7 +10,7 @@ use crate::audit::{AuditEntry, AuditEvent, AuditLog};
 use crate::context::{StepContext, StepResult, TraceEntry};
 use crate::guard::{GuardEngine, GuardError};
 use crate::pipeline::{FailureMode, Pipeline};
-use crate::registry::ToolRegistry;
+use crate::registry::{AgentRegistry, ToolRegistry};
 use crate::tools::ToolContext;
 use crate::verdict::{VerdictEngine, VerdictError};
 use chrono::Utc;
@@ -44,6 +44,13 @@ pub enum PipelineError {
 
     #[error("awaiting approval at step '{step}': {prompt}")]
     AwaitingApproval { step: String, prompt: &'static str },
+
+    #[error("delegation failed at step '{step}' (agent '{agent}'): {reason}")]
+    DelegationFailed {
+        step: String,
+        agent: String,
+        reason: String,
+    },
 }
 
 /// Result of running a pipeline
@@ -60,6 +67,7 @@ pub struct PipelineResult {
 pub struct PipelineRunner {
     pub audit_log: AuditLog,
     pub tool_registry: Arc<ToolRegistry>,
+    pub agent_registry: Arc<AgentRegistry>,
 }
 
 impl PipelineRunner {
@@ -67,6 +75,7 @@ impl PipelineRunner {
         Self {
             audit_log: AuditLog::new(),
             tool_registry: Arc::new(ToolRegistry::with_builtins()),
+            agent_registry: Arc::new(AgentRegistry::new()),
         }
     }
 
@@ -74,6 +83,28 @@ impl PipelineRunner {
         Self {
             audit_log: AuditLog::new(),
             tool_registry,
+            agent_registry: Arc::new(AgentRegistry::new()),
+        }
+    }
+
+    /// Create a runner with an agent registry for delegation support
+    pub fn with_agent_registry(agent_registry: Arc<AgentRegistry>) -> Self {
+        Self {
+            audit_log: AuditLog::new(),
+            tool_registry: Arc::new(ToolRegistry::with_builtins()),
+            agent_registry,
+        }
+    }
+
+    /// Create a runner with both tool and agent registries
+    pub fn with_registries(
+        tool_registry: Arc<ToolRegistry>,
+        agent_registry: Arc<AgentRegistry>,
+    ) -> Self {
+        Self {
+            audit_log: AuditLog::new(),
+            tool_registry,
+            agent_registry,
         }
     }
 
@@ -100,6 +131,8 @@ impl PipelineRunner {
             agent.policy.filesystem_policy.clone(),
         );
         ctx.network_policy = agent.policy.network_policy.clone();
+        ctx.agent_registry = self.agent_registry.clone();
+        ctx.tool_registry = self.tool_registry.clone();
 
         let mut steps_passed = Vec::new();
         let mut steps_failed = Vec::new();
@@ -155,7 +188,28 @@ impl PipelineRunner {
                 });
 
                 // 5. Execute action
-                match self.execute_action(&step.action, &mut ctx).await {
+                // DelegateAgent is handled here (not in execute_action) so we have
+                // &mut self and can write delegation audit events to self.audit_log.
+                let action_result = if let StepAction::DelegateAgent {
+                    agent: ref agent_name,
+                    ref input,
+                    ref expected_output_schema,
+                    ref delegation_policy,
+                } = step.action
+                {
+                    self.execute_delegation(
+                        agent_name,
+                        input,
+                        expected_output_schema.as_ref(),
+                        delegation_policy,
+                        &mut ctx,
+                    )
+                    .await
+                } else {
+                    self.execute_action(&step.action, &mut ctx).await
+                };
+
+                match action_result {
                     Ok(output) => {
                         ctx.output = Some(output);
                     }
@@ -397,8 +451,11 @@ impl PipelineRunner {
             }
 
             StepAction::DelegateAgent { .. } => {
+                // DelegateAgent is handled in run()/run_with_delegation_depth() before
+                // execute_action is called, so this branch should never be reached.
+                // If it is reached (e.g., nested in LoopUntil), return a clear error.
                 Err(StepError::NotImplemented(
-                    "DelegateAgent — Phase 4".to_string(),
+                    "DelegateAgent nested in LoopUntil/SubPipeline — not yet supported".to_string(),
                 ))
             }
 
@@ -609,6 +666,537 @@ impl PipelineRunner {
                 })
             }
         }
+    }
+
+    /// Execute delegation to a named agent — Phase 4
+    ///
+    /// Follows the 8-step delegation protocol from architecture.md:
+    /// 1. Check delegation policy
+    /// 2. Check max delegation depth
+    /// 3. Check allowed agent list
+    /// 4. Create child context
+    /// 5. Restrict child tools
+    /// 6. Run child agent pipeline
+    /// 7. Validate child output schema
+    /// 8. Return child result to parent
+    async fn execute_delegation(
+        &mut self,
+        agent_name: &str,
+        delegate_input: &Value,
+        expected_output_schema: Option<&Value>,
+        delegation_policy: &crate::action::DelegationPolicy,
+        ctx: &mut StepContext,
+    ) -> Result<StepOutput, StepError> {
+        let current_depth = ctx.delegation_depth;
+        let parent_agent = ctx.agent_name.clone();
+
+        // Step 1+2: Check max delegation depth
+        if current_depth >= delegation_policy.max_depth {
+            self.audit_log.append(AuditEntry {
+                timestamp: Utc::now(),
+                pipeline_name: ctx.pipeline_name.clone(),
+                step_name: ctx.step_name.clone(),
+                event: AuditEvent::DelegationFailed {
+                    parent_agent: parent_agent.clone(),
+                    child_agent: agent_name.to_string(),
+                    depth: current_depth,
+                    reason: format!(
+                        "max delegation depth {} exceeded (current depth: {})",
+                        delegation_policy.max_depth, current_depth
+                    ),
+                },
+            });
+            return Err(StepError::ActionFailed {
+                reason: format!(
+                    "delegation depth limit reached: max={}, current={}",
+                    delegation_policy.max_depth, current_depth
+                ),
+            });
+        }
+
+        // Step 3: Check allowed agent list (empty list = allow all)
+        if !delegation_policy.allowed_agents.is_empty()
+            && !delegation_policy
+                .allowed_agents
+                .iter()
+                .any(|a| a == agent_name)
+        {
+            self.audit_log.append(AuditEntry {
+                timestamp: Utc::now(),
+                pipeline_name: ctx.pipeline_name.clone(),
+                step_name: ctx.step_name.clone(),
+                event: AuditEvent::DelegationFailed {
+                    parent_agent: parent_agent.clone(),
+                    child_agent: agent_name.to_string(),
+                    depth: current_depth,
+                    reason: format!(
+                        "agent '{}' not in allowed_agents list",
+                        agent_name
+                    ),
+                },
+            });
+            return Err(StepError::ActionFailed {
+                reason: format!(
+                    "agent '{}' not in allowed_agents: {:?}",
+                    agent_name, delegation_policy.allowed_agents
+                ),
+            });
+        }
+
+        // Resolve the child agent from the registry
+        let child_agent = match ctx.agent_registry.get(agent_name) {
+            Some(a) => a,
+            None => {
+                let reason = format!("agent '{}' not found in registry", agent_name);
+                self.audit_log.append(AuditEntry {
+                    timestamp: Utc::now(),
+                    pipeline_name: ctx.pipeline_name.clone(),
+                    step_name: ctx.step_name.clone(),
+                    event: AuditEvent::DelegationFailed {
+                        parent_agent: parent_agent.clone(),
+                        child_agent: agent_name.to_string(),
+                        depth: current_depth,
+                        reason: reason.clone(),
+                    },
+                });
+                return Err(StepError::ActionFailed { reason });
+            }
+        };
+
+        // Log delegation started
+        self.audit_log.append(AuditEntry {
+            timestamp: Utc::now(),
+            pipeline_name: ctx.pipeline_name.clone(),
+            step_name: ctx.step_name.clone(),
+            event: AuditEvent::DelegationStarted {
+                parent_agent: parent_agent.clone(),
+                child_agent: agent_name.to_string(),
+                depth: current_depth,
+            },
+        });
+
+        // Step 4+5: Create child runner with shared registries, restricted tools
+        let child_tool_registry = if delegation_policy.inherit_tool_scope {
+            self.tool_registry.clone()
+        } else {
+            Arc::new(ToolRegistry::new())
+        };
+
+        let mut child_runner = PipelineRunner::with_registries(
+            child_tool_registry,
+            ctx.agent_registry.clone(),
+        );
+
+        // Step 6: Run child agent pipeline
+        // Build a temporary child agent with incremented delegation depth
+        let mut child_policy = child_agent.policy.clone();
+        // Inherit budget tracking if requested
+        if delegation_policy.inherit_budget {
+            child_policy.max_cost_usd = child_policy
+                .max_cost_usd
+                .or(ctx.budget.remaining_usd);
+        }
+
+        let child_agent_instance = crate::agent::Agent {
+            name: child_agent.name.clone(),
+            description: child_agent.description.clone(),
+            pipeline: child_agent.pipeline.clone(),
+            tools: child_agent.tools.clone(),
+            skills: child_agent.skills.clone(),
+            policy: child_policy,
+        };
+
+        let child_result = Box::pin(
+            child_runner.run_with_delegation_depth(
+                &child_agent_instance.pipeline.clone(),
+                &child_agent_instance,
+                delegate_input.clone(),
+                current_depth + 1,
+                Some(parent_agent.clone()),
+            )
+        )
+        .await;
+
+        match child_result {
+            Ok(result) => {
+                // Merge child trace entries into parent context
+                ctx.trace.entries.extend(
+                    result.audit_log.entries().iter().map(|e| TraceEntry {
+                        step_name: format!("{}.{}", agent_name, e.step_name),
+                        status: format!("{:?}", e.event),
+                        timestamp: e.timestamp,
+                    }),
+                );
+
+                // Merge child step results under namespaced keys
+                for (k, v) in result.step_results {
+                    ctx.step_results
+                        .insert(format!("{}.{}", agent_name, k), v);
+                }
+
+                // Step 7: Validate child output schema if required
+                if delegation_policy.require_output_schema {
+                    if let Some(schema) = expected_output_schema {
+                        // Get the last step output from the child
+                        if let Some(last_step) = result.steps_passed.last() {
+                            let key = format!("{}.{}", agent_name, last_step);
+                            if let Some(step_result) = ctx.step_results.get(&key) {
+                                // Try to parse output as JSON for schema validation
+                                if let Ok(output_value) =
+                                    serde_json::from_str::<Value>(&step_result.output.raw)
+                                {
+                                    if let Ok(validator) =
+                                        jsonschema::JSONSchema::compile(schema)
+                                    {
+                                        if let Err(errors) =
+                                            validator.validate(&output_value)
+                                        {
+                                            let msgs: Vec<String> =
+                                                errors.map(|e| e.to_string()).collect();
+                                            return Err(StepError::ActionFailed {
+                                                reason: format!(
+                                                    "delegated agent '{}' output failed schema validation: {}",
+                                                    agent_name,
+                                                    msgs.join("; ")
+                                                ),
+                                            });
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Step 8: Log delegation completed, return result
+                self.audit_log.append(AuditEntry {
+                    timestamp: Utc::now(),
+                    pipeline_name: ctx.pipeline_name.clone(),
+                    step_name: ctx.step_name.clone(),
+                    event: AuditEvent::DelegationCompleted {
+                        parent_agent: parent_agent.clone(),
+                        child_agent: agent_name.to_string(),
+                        depth: current_depth,
+                    },
+                });
+
+                // Build summary output from child result
+                let summary = format!(
+                    "Delegation to '{}' completed: {} steps passed, {} steps failed",
+                    agent_name,
+                    result.steps_passed.len(),
+                    result.steps_failed.len()
+                );
+                Ok(StepOutput::new(summary))
+            }
+            Err(e) => {
+                self.audit_log.append(AuditEntry {
+                    timestamp: Utc::now(),
+                    pipeline_name: ctx.pipeline_name.clone(),
+                    step_name: ctx.step_name.clone(),
+                    event: AuditEvent::DelegationFailed {
+                        parent_agent: parent_agent.clone(),
+                        child_agent: agent_name.to_string(),
+                        depth: current_depth,
+                        reason: e.to_string(),
+                    },
+                });
+                Err(StepError::ActionFailed {
+                    reason: format!("delegation to '{}' failed: {}", agent_name, e),
+                })
+            }
+        }
+    }
+
+    /// Run a pipeline with an explicit delegation depth (used for child agents)
+    pub async fn run_with_delegation_depth(
+        &mut self,
+        pipeline: &Pipeline,
+        agent: &Agent,
+        input: Value,
+        delegation_depth: u32,
+        parent_agent: Option<String>,
+    ) -> Result<PipelineResult, PipelineError> {
+        // Start pipeline
+        self.audit_log.append(AuditEntry {
+            timestamp: Utc::now(),
+            pipeline_name: pipeline.name.clone(),
+            step_name: String::new(),
+            event: AuditEvent::PipelineStarted,
+        });
+
+        let mut ctx = StepContext::new(
+            agent.name.clone(),
+            pipeline.name.clone(),
+            String::new(),
+            input.clone(),
+            agent.policy.filesystem_policy.clone(),
+        );
+        ctx.network_policy = agent.policy.network_policy.clone();
+        ctx.agent_registry = self.agent_registry.clone();
+        ctx.tool_registry = self.tool_registry.clone();
+        ctx.delegation_depth = delegation_depth;
+        ctx.parent_agent = parent_agent;
+
+        let mut steps_passed = Vec::new();
+        let mut steps_failed = Vec::new();
+
+        for step in &pipeline.steps {
+            let mut retry_count = 0;
+            let max_retries = pipeline.max_retries;
+            let mut step_success = false;
+
+            while retry_count <= max_retries && !step_success {
+                ctx.step_name = step.name.clone();
+                ctx.input = input.clone();
+                ctx.allowed_tools = step.tools.clone();
+
+                self.audit_log.append(AuditEntry {
+                    timestamp: Utc::now(),
+                    pipeline_name: pipeline.name.clone(),
+                    step_name: step.name.clone(),
+                    event: AuditEvent::StepStarted,
+                });
+
+                // Run guard_in
+                if let Err(e) = GuardEngine::evaluate(&step.guard_in, &ctx).await {
+                    self.audit_log.append(AuditEntry {
+                        timestamp: Utc::now(),
+                        pipeline_name: pipeline.name.clone(),
+                        step_name: step.name.clone(),
+                        event: AuditEvent::GuardFailed {
+                            guard: format!("{:?}", step.guard_in),
+                            reason: e.to_string(),
+                        },
+                    });
+                    return Err(PipelineError::GuardFailed {
+                        step: step.name.clone(),
+                        phase: GuardPhase::In,
+                        error: e,
+                    });
+                }
+
+                self.audit_log.append(AuditEntry {
+                    timestamp: Utc::now(),
+                    pipeline_name: pipeline.name.clone(),
+                    step_name: step.name.clone(),
+                    event: AuditEvent::GuardPassed {
+                        guard: format!("{:?}", step.guard_in),
+                    },
+                });
+
+                // Execute action — DelegateAgent handled separately for &mut self access
+                let action_result_d = if let StepAction::DelegateAgent {
+                    agent: ref agent_name,
+                    ref input,
+                    ref expected_output_schema,
+                    ref delegation_policy,
+                } = step.action
+                {
+                    self.execute_delegation(
+                        agent_name,
+                        input,
+                        expected_output_schema.as_ref(),
+                        delegation_policy,
+                        &mut ctx,
+                    )
+                    .await
+                } else {
+                    self.execute_action(&step.action, &mut ctx).await
+                };
+
+                match action_result_d {
+                    Ok(output) => {
+                        ctx.output = Some(output);
+                    }
+                    Err(e) => {
+                        self.audit_log.append(AuditEntry {
+                            timestamp: Utc::now(),
+                            pipeline_name: pipeline.name.clone(),
+                            step_name: step.name.clone(),
+                            event: AuditEvent::StepFailed {
+                                error: e.to_string(),
+                            },
+                        });
+                        match &pipeline.on_failure {
+                            FailureMode::Abort => {
+                                steps_failed.push(step.name.clone());
+                                return Err(PipelineError::StepFailed {
+                                    step: step.name.clone(),
+                                    error: e,
+                                });
+                            }
+                            FailureMode::Retry => {
+                                retry_count += 1;
+                                if retry_count > max_retries {
+                                    steps_failed.push(step.name.clone());
+                                    return Err(PipelineError::MaxRetriesExceeded {
+                                        step: step.name.clone(),
+                                    });
+                                }
+                                continue;
+                            }
+                            FailureMode::Skip => {
+                                steps_failed.push(step.name.clone());
+                                break;
+                            }
+                            FailureMode::Fallback(_) => {
+                                steps_failed.push(step.name.clone());
+                                return Err(PipelineError::StepFailed {
+                                    step: step.name.clone(),
+                                    error: e,
+                                });
+                            }
+                        }
+                    }
+                }
+
+                ctx.trace.append(TraceEntry {
+                    step_name: step.name.clone(),
+                    status: "executed".to_string(),
+                    timestamp: Utc::now(),
+                });
+
+                // Run guard_out
+                if let Err(e) = GuardEngine::evaluate(&step.guard_out, &ctx).await {
+                    self.audit_log.append(AuditEntry {
+                        timestamp: Utc::now(),
+                        pipeline_name: pipeline.name.clone(),
+                        step_name: step.name.clone(),
+                        event: AuditEvent::GuardFailed {
+                            guard: format!("{:?}", step.guard_out),
+                            reason: e.to_string(),
+                        },
+                    });
+                    return Err(PipelineError::GuardFailed {
+                        step: step.name.clone(),
+                        phase: GuardPhase::Out,
+                        error: e,
+                    });
+                }
+
+                self.audit_log.append(AuditEntry {
+                    timestamp: Utc::now(),
+                    pipeline_name: pipeline.name.clone(),
+                    step_name: step.name.clone(),
+                    event: AuditEvent::GuardPassed {
+                        guard: format!("{:?}", step.guard_out),
+                    },
+                });
+
+                // Run verdict
+                match VerdictEngine::evaluate(&step.verdict, &ctx).await {
+                    Ok(_) => {
+                        self.audit_log.append(AuditEntry {
+                            timestamp: Utc::now(),
+                            pipeline_name: pipeline.name.clone(),
+                            step_name: step.name.clone(),
+                            event: AuditEvent::VerdictPassed {
+                                verdict: format!("{:?}", step.verdict),
+                            },
+                        });
+
+                        let result = StepResult {
+                            step_name: step.name.clone(),
+                            output: ctx.output.clone().unwrap_or_else(|| {
+                                StepOutput::new("(no output)".to_string())
+                            }),
+                            verdict_passed: true,
+                            error: None,
+                        };
+                        ctx.step_results.insert(step.name.clone(), result);
+                        steps_passed.push(step.name.clone());
+                        step_success = true;
+
+                        self.audit_log.append(AuditEntry {
+                            timestamp: Utc::now(),
+                            pipeline_name: pipeline.name.clone(),
+                            step_name: step.name.clone(),
+                            event: AuditEvent::StepCompleted { verdict_passed: true },
+                        });
+                    }
+                    Err(VerdictError::UserApprovalRequired { prompt }) => {
+                        return Err(PipelineError::AwaitingApproval {
+                            step: step.name.clone(),
+                            prompt,
+                        });
+                    }
+                    Err(e) => {
+                        self.audit_log.append(AuditEntry {
+                            timestamp: Utc::now(),
+                            pipeline_name: pipeline.name.clone(),
+                            step_name: step.name.clone(),
+                            event: AuditEvent::VerdictFailed {
+                                verdict: format!("{:?}", step.verdict),
+                                reason: e.to_string(),
+                            },
+                        });
+                        match &pipeline.on_failure {
+                            FailureMode::Abort => {
+                                steps_failed.push(step.name.clone());
+                                return Err(PipelineError::VerdictFailed {
+                                    step: step.name.clone(),
+                                    error: e,
+                                });
+                            }
+                            FailureMode::Retry => {
+                                retry_count += 1;
+                                if retry_count > max_retries {
+                                    steps_failed.push(step.name.clone());
+                                    return Err(PipelineError::MaxRetriesExceeded {
+                                        step: step.name.clone(),
+                                    });
+                                }
+                                continue;
+                            }
+                            FailureMode::Skip => {
+                                steps_failed.push(step.name.clone());
+                                self.audit_log.append(AuditEntry {
+                                    timestamp: Utc::now(),
+                                    pipeline_name: pipeline.name.clone(),
+                                    step_name: step.name.clone(),
+                                    event: AuditEvent::StepCompleted { verdict_passed: false },
+                                });
+                                break;
+                            }
+                            FailureMode::Fallback(_) => {
+                                steps_failed.push(step.name.clone());
+                                return Err(PipelineError::VerdictFailed {
+                                    step: step.name.clone(),
+                                    error: e,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let success = steps_failed.is_empty();
+        self.audit_log.append(AuditEntry {
+            timestamp: Utc::now(),
+            pipeline_name: pipeline.name.clone(),
+            step_name: String::new(),
+            event: if success {
+                AuditEvent::PipelineCompleted {
+                    steps_passed: steps_passed.len() as u32,
+                    steps_failed: steps_failed.len() as u32,
+                }
+            } else {
+                AuditEvent::PipelineFailed {
+                    reason: format!("Failed steps: {:?}", steps_failed),
+                }
+            },
+        });
+
+        Ok(PipelineResult {
+            pipeline_name: pipeline.name.clone(),
+            steps_passed,
+            steps_failed,
+            step_results: ctx.step_results,
+            audit_log: self.audit_log.clone(),
+            success,
+        })
     }
 }
 
