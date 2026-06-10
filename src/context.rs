@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use crate::action::StepOutput;
 use crate::agent::{FilesystemPolicy, NetworkPolicy};
+use crate::registry::{AgentRegistry, ToolRegistry, SkillRegistry};
 use crate::toolset::ToolSet;
 
 /// Output from a step action
@@ -66,11 +67,6 @@ impl Default for BudgetState {
     }
 }
 
-/// Placeholder registries (real implementations in later phases)
-pub struct AgentRegistry;
-pub struct ToolRegistry;
-pub struct SkillRegistry;
-
 /// Context passed to guard, verdict, and action evaluations
 pub struct StepContext {
     pub agent_name: String,
@@ -115,8 +111,8 @@ impl StepContext {
             input: Value::Null,
             output: None,
             step_results: HashMap::new(),
-            agent_registry: Arc::new(AgentRegistry),
-            tool_registry: Arc::new(ToolRegistry),
+            agent_registry: Arc::new(AgentRegistry::new()),
+            tool_registry: Arc::new(ToolRegistry::with_builtins()),
             skill_registry: Arc::new(SkillRegistry),
             delegation_depth: 0,
             parent_agent: None,

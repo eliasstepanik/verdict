@@ -47,10 +47,11 @@ impl ToolSet {
         match self {
             ToolSet::None => false,
             ToolSet::ReadOnly => {
-                // Stub: assume tool names starting with "fs.read", "dir.", "search." are read-only
-                tool_name.starts_with("fs.read")
-                    || tool_name.starts_with("dir.")
-                    || tool_name.starts_with("search.")
+                // Allow only read and search operations
+                matches!(
+                    tool_name,
+                    "fs.read" | "fs.list" | "search.files" | "search.grep"
+                )
             }
             ToolSet::ReadWrite => true,
             ToolSet::Full => true,

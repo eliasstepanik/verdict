@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::io::{self, BufRead, Write};
 use std::pin::Pin;
+use std::sync::{Arc, Mutex};
 use thiserror::Error;
 
 use crate::action::{StepAction, StepError, StepOutput, IterationFailureMode};
@@ -9,6 +10,8 @@ use crate::audit::{AuditEntry, AuditEvent, AuditLog};
 use crate::context::{StepContext, StepResult, TraceEntry};
 use crate::guard::{GuardEngine, GuardError};
 use crate::pipeline::{FailureMode, Pipeline};
+use crate::registry::ToolRegistry;
+use crate::tools::ToolContext;
 use crate::verdict::{VerdictEngine, VerdictError};
 use chrono::Utc;
 use serde_json::Value;
@@ -56,12 +59,21 @@ pub struct PipelineResult {
 /// Executor for pipelines with guards, verdicts, and audit logging
 pub struct PipelineRunner {
     pub audit_log: AuditLog,
+    pub tool_registry: Arc<ToolRegistry>,
 }
 
 impl PipelineRunner {
     pub fn new() -> Self {
         Self {
             audit_log: AuditLog::new(),
+            tool_registry: Arc::new(ToolRegistry::with_builtins()),
+        }
+    }
+
+    pub fn with_tool_registry(tool_registry: Arc<ToolRegistry>) -> Self {
+        Self {
+            audit_log: AuditLog::new(),
+            tool_registry,
         }
     }
 
@@ -366,9 +378,8 @@ impl PipelineRunner {
                 ))
             }
 
-            StepAction::ToolCall { tool: _, args: _ } => {
-                // Phase 1 stub: return static response
-                Ok(StepOutput::new("[Tool stub: Phase 2]".to_string()))
+            StepAction::ToolCall { tool, args } => {
+                self.execute_tool_call(tool, args, ctx).await
             }
 
             StepAction::Custom(f) => f(ctx),
@@ -486,6 +497,117 @@ impl PipelineRunner {
             StepAction::UseSkill { .. } => Err(StepError::NotImplemented(
                 "UseSkill — Phase 5".to_string(),
             )),
+        }
+    }
+
+    /// Execute a tool call with full 8-step protocol
+    async fn execute_tool_call(
+        &self,
+        tool_name: &str,
+        args: &Value,
+        ctx: &mut StepContext,
+    ) -> Result<StepOutput, StepError> {
+        let audit_log = Arc::new(Mutex::new(self.audit_log.clone()));
+
+        // Step 1: Check tool is registered
+        let tool = self
+            .tool_registry
+            .get(tool_name)
+            .ok_or_else(|| StepError::ActionFailed {
+                reason: format!("tool '{}' not found in registry", tool_name),
+            })?;
+
+        // Step 2: Check tool is allowed for this step
+        if !ctx.allowed_tools.contains(tool_name) {
+            return Err(StepError::ActionFailed {
+                reason: format!(
+                    "tool '{}' not allowed in this step (allowed: {:?})",
+                    tool_name, ctx.allowed_tools
+                ),
+            });
+        }
+
+        // Step 3: Validate args against tool schema
+        let schema = tool.schema();
+        if let Ok(validator) = jsonschema::JSONSchema::compile(&schema) {
+            if let Err(e) = validator.validate(args) {
+                let mut error_msgs = Vec::new();
+                for error in e {
+                    error_msgs.push(error.to_string());
+                }
+                return Err(StepError::ActionFailed {
+                    reason: format!("schema validation failed: {}", error_msgs.join("; ")),
+                });
+            }
+        }
+
+        // Step 4: Apply tool-specific guards (stub for Phase 2)
+
+        // Step 5: Record audit log — tool call started
+        let audit_log_mutex = audit_log.clone();
+        audit_log_mutex.lock().ok().map(|mut log| {
+            log.append(AuditEntry {
+                timestamp: Utc::now(),
+                pipeline_name: ctx.pipeline_name.clone(),
+                step_name: ctx.step_name.clone(),
+                event: AuditEvent::ToolCallStarted {
+                    tool: tool_name.to_string(),
+                    args: args.to_string(),
+                },
+            });
+        });
+
+        // Step 6: Run tool
+        let tool_context = ToolContext {
+            filesystem_policy: ctx.filesystem_policy.clone(),
+            network_policy: ctx.network_policy.clone(),
+            allowed_tools: ctx.allowed_tools.clone(),
+            audit_log: audit_log.clone(),
+        };
+
+        let tool_result = tool.call(args.clone(), tool_context).await;
+
+        // Step 7: Handle result and record audit log
+        match tool_result {
+            Ok(output) => {
+                let output_bytes = output.raw.len();
+
+                // Record successful tool call
+                audit_log_mutex.lock().ok().map(|mut log| {
+                    log.append(AuditEntry {
+                        timestamp: Utc::now(),
+                        pipeline_name: ctx.pipeline_name.clone(),
+                        step_name: ctx.step_name.clone(),
+                        event: AuditEvent::ToolCallCompleted {
+                            tool: tool_name.to_string(),
+                            output_bytes,
+                        },
+                    });
+                });
+
+                // Step 8: Sanitize output (stub — pass through)
+                // Step 9: Validate output schema (stub — pass through)
+
+                Ok(StepOutput::new(output.raw))
+            }
+            Err(e) => {
+                // Record failed tool call
+                audit_log_mutex.lock().ok().map(|mut log| {
+                    log.append(AuditEntry {
+                        timestamp: Utc::now(),
+                        pipeline_name: ctx.pipeline_name.clone(),
+                        step_name: ctx.step_name.clone(),
+                        event: AuditEvent::ToolCallFailed {
+                            tool: tool_name.to_string(),
+                            reason: e.to_string(),
+                        },
+                    });
+                });
+
+                Err(StepError::ActionFailed {
+                    reason: format!("tool '{}' execution failed: {}", tool_name, e),
+                })
+            }
         }
     }
 }
