@@ -1,2 +1,7 @@
 /target
 .tokensave
+AGENTS.md
+AUDIT_REPORT.md
+graphify-out/
+memory/
+tasks/
