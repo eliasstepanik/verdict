@@ -1626,17 +1626,44 @@ impl GuardEngine {
             }
 
             Guard::SemanticCheck(description) => {
-                // Optimistic pass: real semantic checker integration deferred.
-                // A real impl would invoke an external checker tool and compare output.
-                if let Some(output) = &ctx.output {
-                    if output.raw.trim().is_empty() {
-                        return Err(GuardError::Failed {
-                            guard: "SemanticCheck".to_string(),
-                            reason: format!("SemanticCheck({}): empty output", description),
-                        });
-                    }
+                let output = ctx.output.as_ref().ok_or_else(|| GuardError::Failed {
+                    guard: "SemanticCheck".to_string(),
+                    reason: "no output to evaluate".to_string(),
+                })?;
+
+                let llm_client = ctx.llm_client.as_ref().ok_or_else(|| GuardError::Failed {
+                    guard: "SemanticCheck".to_string(),
+                    reason: "SemanticCheck requires an LLM client; none configured on StepContext".to_string(),
+                })?;
+
+                // Build the default model from the client
+                let model = llm_client.default_model().to_string();
+
+                let req = crate::llm::LlmRequest {
+                    system: "You are a semantic quality judge. \
+                             Reply PASS if the output satisfies the assertion, \
+                             otherwise reply FAIL followed by a short reason on the same line.".to_string(),
+                    user: format!("Assertion: {description}\n\nOutput:\n{}", output.raw),
+                    model,
+                    max_tokens: Some(64),
+                    history: None,
+                    temperature: Some(0.0),
+                    tools: None,
+                };
+
+                let response = llm_client.complete(req).await.map_err(|e| GuardError::Failed {
+                    guard: "SemanticCheck".to_string(),
+                    reason: format!("LLM judge call failed: {e}"),
+                })?;
+
+                if response.content.to_uppercase().contains("PASS") {
+                    Ok(())
+                } else {
+                    Err(GuardError::Failed {
+                        guard: "SemanticCheck".to_string(),
+                        reason: format!("LLM judged FAIL — {}", response.content),
+                    })
                 }
-                Ok(())
             }
         }
     }

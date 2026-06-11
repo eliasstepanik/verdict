@@ -230,3 +230,108 @@ impl StepContext {
         }
     }
 }
+
+/// Error type for ContextStore operations.
+#[derive(Debug, thiserror::Error)]
+pub enum ContextStoreError {
+    #[error("I/O error: {0}")]
+    Io(String),
+    #[error("serialization error: {0}")]
+    Serialization(String),
+    #[error("snapshot not found: {0}")]
+    NotFound(String),
+}
+
+/// Persists and retrieves StepContext snapshots to/from disk as JSON.
+/// Each snapshot is stored as `{dir}/{pipeline_name}_{step_name}.json`.
+pub struct ContextStore {
+    dir: std::path::PathBuf,
+}
+
+impl ContextStore {
+    /// Create a new ContextStore rooted at `dir`.
+    pub fn new(dir: std::path::PathBuf) -> Self {
+        Self { dir }
+    }
+
+    fn snapshot_path(&self, pipeline_name: &str, step_name: &str) -> std::path::PathBuf {
+        let safe_pipeline = pipeline_name.replace(['/', '\\', ' ', ':'], "_");
+        let safe_step = step_name.replace(['/', '\\', ' ', ':'], "_");
+        self.dir.join(format!("{}_{}.json", safe_pipeline, safe_step))
+    }
+
+    /// Save a StepContext snapshot to disk.
+    pub async fn save(&self, ctx: &StepContext) -> Result<(), ContextStoreError> {
+        tokio::fs::create_dir_all(&self.dir)
+            .await
+            .map_err(|e| ContextStoreError::Io(e.to_string()))?;
+        let serializable = ctx.to_serializable(ctx.step_name.clone());
+        let json = serde_json::to_string_pretty(&serializable)
+            .map_err(|e| ContextStoreError::Serialization(e.to_string()))?;
+        let path = self.snapshot_path(&ctx.pipeline_name, &ctx.step_name);
+        tokio::fs::write(&path, json)
+            .await
+            .map_err(|e| ContextStoreError::Io(e.to_string()))
+    }
+
+    /// Load a saved snapshot by pipeline and step name.
+    pub async fn load(
+        &self,
+        pipeline_name: &str,
+        step_name: &str,
+    ) -> Result<SerializableStepContext, ContextStoreError> {
+        let path = self.snapshot_path(pipeline_name, step_name);
+        let bytes = tokio::fs::read(&path).await.map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                ContextStoreError::NotFound(path.display().to_string())
+            } else {
+                ContextStoreError::Io(e.to_string())
+            }
+        })?;
+        serde_json::from_slice(&bytes)
+            .map_err(|e| ContextStoreError::Serialization(e.to_string()))
+    }
+
+    /// List all snapshot filenames for a given pipeline.
+    pub async fn list_snapshots(
+        &self,
+        pipeline_name: &str,
+    ) -> Result<Vec<String>, ContextStoreError> {
+        let safe_pipeline = pipeline_name.replace(['/', '\\', ' ', ':'], "_");
+        let prefix = format!("{}_", safe_pipeline);
+        let mut entries = tokio::fs::read_dir(&self.dir)
+            .await
+            .map_err(|e| ContextStoreError::Io(e.to_string()))?;
+        let mut names = Vec::new();
+        loop {
+            match entries.next_entry().await {
+                Ok(Some(entry)) => {
+                    let name = entry.file_name().to_string_lossy().into_owned();
+                    if name.starts_with(&prefix) && name.ends_with(".json") {
+                        names.push(name);
+                    }
+                }
+                Ok(None) => break,
+                Err(e) => return Err(ContextStoreError::Io(e.to_string())),
+            }
+        }
+        Ok(names)
+    }
+
+    /// Delete a saved snapshot.
+    pub async fn delete(
+        &self,
+        pipeline_name: &str,
+        step_name: &str,
+    ) -> Result<(), ContextStoreError> {
+        let path = self.snapshot_path(pipeline_name, step_name);
+        tokio::fs::remove_file(&path).await.map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                ContextStoreError::NotFound(path.display().to_string())
+            } else {
+                ContextStoreError::Io(e.to_string())
+            }
+        })
+    }
+}
+

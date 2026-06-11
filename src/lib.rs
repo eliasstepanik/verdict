@@ -24,3 +24,4 @@ pub mod tools;
 pub mod verdict;
 
 pub use prelude::*;
+pub use context::{ContextStore, ContextStoreError};

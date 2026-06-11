@@ -2,12 +2,21 @@
 
 use crate::llm::provider::{LlmChunk, LlmError, LlmProvider, LlmRequest, LlmResponse};
 use futures::stream::Stream;
+use std::fmt;
 use std::pin::Pin;
 use std::sync::Arc;
 
 /// Client for making LLM requests.
 pub struct LlmClient {
     provider: Arc<dyn LlmProvider>,
+}
+
+impl fmt::Debug for LlmClient {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("LlmClient")
+            .field("provider", &self.provider.name())
+            .finish()
+    }
 }
 
 impl LlmClient {
@@ -27,6 +36,11 @@ impl LlmClient {
         request: LlmRequest,
     ) -> Pin<Box<dyn Stream<Item = Result<LlmChunk, LlmError>> + Send>> {
         self.provider.stream(request)
+    }
+
+    /// Get the default model name for this client's provider.
+    pub fn default_model(&self) -> &str {
+        self.provider.default_model()
     }
 
     /// Create a client from environment variables.

@@ -1,4 +1,5 @@
 //! MCP client for connecting to MCP servers and discovering tools
+use reqwest::Client as ReqwestClient;
 use serde_json::{json, Value};
 use std::process::Stdio;
 use std::sync::{Arc, Mutex};
@@ -56,19 +57,26 @@ pub struct DiscoveredTool {
 pub struct McpClient {
     config: McpServerConfig,
     process: Option<Child>,
+    http_client: Option<ReqwestClient>,
+    base_url: Option<String>,
     request_id: Arc<Mutex<u64>>,
 }
 
 impl McpClient {
     /// Connect to an MCP server
     /// For command-based servers, spawns the process immediately.
-    /// For URL-based servers, returns NotImplemented (Phase 7+).
+    /// For URL-based servers, stores the URL for HTTP communication.
     pub async fn connect(config: McpServerConfig) -> Result<Self, McpError> {
-        // URL-based servers not supported in Phase 3
+        // Handle URL-only servers (HTTP transport in Phase 12)
         if config.url.is_some() && config.command.is_none() {
-            return Err(McpError::NotImplemented(
-                "URL-based MCP servers are not yet supported (Phase 7+)".to_string(),
-            ));
+            let url = config.url.clone().unwrap();
+            return Ok(Self {
+                config,
+                process: None,
+                http_client: Some(ReqwestClient::new()),
+                base_url: Some(url),
+                request_id: Arc::new(Mutex::new(0)),
+            });
         }
 
         // Spawn the command if present
@@ -103,12 +111,54 @@ impl McpClient {
         Ok(Self {
             config,
             process,
+            http_client: None,
+            base_url: None,
             request_id: Arc::new(Mutex::new(0)),
         })
     }
 
     /// Discover tools available from the MCP server
     pub async fn discover_tools(&mut self) -> Result<Vec<DiscoveredTool>, McpError> {
+        // Handle HTTP-based servers (Phase 12)
+        if let (Some(http_client), Some(base_url)) = (&self.http_client, &self.base_url) {
+            let req_body = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}});
+            let response: Value = http_client
+                .post(format!("{}/tools/list", base_url.trim_end_matches('/')))
+                .header("Content-Type", "application/json")
+                .json(&req_body)
+                .send()
+                .await
+                .map_err(|e| McpError::Io(e.to_string()))?
+                .json()
+                .await
+                .map_err(|e| McpError::JsonRpc(e.to_string()))?;
+            
+            let tools_arr = response.get("result")
+                .and_then(|r| r.get("tools"))
+                .and_then(|t| t.as_array())
+                .ok_or_else(|| McpError::JsonRpc("missing 'result.tools'".into()))?;
+            
+            let mut discovered = Vec::new();
+            for tool_def in tools_arr {
+                let name = tool_def.get("name")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| McpError::InvalidToolDef("missing 'name'".into()))?
+                    .to_string();
+                let description = tool_def.get("description")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let input_schema = tool_def.get("inputSchema")
+                    .cloned()
+                    .unwrap_or_else(|| json!({}));
+                
+                if self.config.allowed_tools.is_empty() || self.config.allowed_tools.contains(&name) {
+                    discovered.push(DiscoveredTool { name, description, input_schema });
+                }
+            }
+            return Ok(discovered);
+        }
+
         // Check that child process is running
         if self.process.is_none() {
             return Err(McpError::NotRunning);
@@ -214,6 +264,45 @@ impl McpClient {
         tool_name: &str,
         arguments: Value,
     ) -> Result<Value, McpError> {
+        // Handle HTTP-based servers (Phase 12)
+        if let (Some(http_client), Some(base_url)) = (&self.http_client, &self.base_url) {
+            let id = {
+                let mut id_ref = self.request_id.lock().map_err(|_| McpError::JsonRpc("lock poisoned".to_string()))?;
+                *id_ref += 1;
+                *id_ref
+            };
+            
+            let req_body = json!({
+                "jsonrpc": "2.0", "id": id, "method": "tools/call",
+                "params": {"name": tool_name, "arguments": arguments}
+            });
+            
+            let response: Value = http_client
+                .post(format!("{}/tools/call", base_url.trim_end_matches('/')))
+                .header("Content-Type", "application/json")
+                .json(&req_body)
+                .send()
+                .await
+                .map_err(|e| McpError::Io(e.to_string()))?
+                .json()
+                .await
+                .map_err(|e| McpError::JsonRpc(e.to_string()))?;
+            
+            if let Some(error) = response.get("error") {
+                let msg = error.get("message")
+                    .and_then(|m| m.as_str())
+                    .unwrap_or("unknown error");
+                return Err(McpError::JsonRpc(format!("tool call failed: {}", msg)));
+            }
+            
+            let content = response.get("result")
+                .and_then(|r| r.get("content"))
+                .cloned()
+                .ok_or_else(|| McpError::JsonRpc("missing 'result.content'".into()))?;
+            
+            return Ok(content);
+        }
+
         // Check that child process is running
         if self.process.is_none() {
             return Err(McpError::NotRunning);
@@ -302,16 +391,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_mcp_client_connect_url_only_not_implemented() {
+    async fn test_mcp_client_connect_url_only_now_works() {
         let config = McpServerConfig::new("http_server").with_url("http://localhost:8080");
 
         let result = McpClient::connect(config).await;
-        assert!(result.is_err());
-        if let Err(McpError::NotImplemented(_)) = result {
-            // Expected
-        } else {
-            panic!("Expected NotImplemented error");
-        }
+        // Phase 12: URL-only servers are now supported
+        assert!(result.is_ok(), "URL-only connect should succeed in Phase 12");
     }
 
     #[tokio::test]

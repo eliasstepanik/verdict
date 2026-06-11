@@ -1,12 +1,11 @@
+use async_recursion::async_recursion;
+use futures::stream::StreamExt;
 use std::collections::HashMap;
 use std::io::{self, BufRead, Write};
 use std::pin::Pin;
 use std::sync::Arc;
 use thiserror::Error;
-use futures::stream::StreamExt;
 use tokio::sync::Mutex as TokioMutex;
-use async_recursion::async_recursion;
-
 
 /// Resolve template placeholders in a prompt string.
 ///
@@ -40,7 +39,9 @@ fn resolve_template(template: &str, ctx: &crate::context::StepContext) -> String
     result
 }
 
-use crate::action::{StepAction, StepError, StepOutput, IterationFailureMode, SkillMode, StopCondition};
+use crate::action::{
+    IterationFailureMode, SkillMode, StepAction, StepError, StepOutput, StopCondition,
+};
 use crate::agent::Agent;
 use crate::audit::{AuditEntry, AuditEvent, AuditLog};
 use crate::context::{StepContext, StepResult, TraceEntry};
@@ -106,7 +107,11 @@ pub enum OutputEvent {
     /// A chunk of LLM output (for streaming)
     LlmChunk { step: String, delta: String },
     /// A tool produced a chunk of output
-    ToolChunk { step: String, tool: String, delta: String },
+    ToolChunk {
+        step: String,
+        tool: String,
+        delta: String,
+    },
     /// A step completed
     StepCompleted { step: String, output: StepOutput },
     /// The pipeline completed
@@ -130,6 +135,7 @@ pub struct PipelineRunner {
     pub llm_client: Option<Arc<crate::llm::LlmClient>>,
     pub output_sink: Option<Arc<dyn OutputSink>>,
     pub conversation_registry: Arc<std::sync::Mutex<crate::llm::ConversationRegistry>>,
+    pub context_store: Option<std::sync::Arc<crate::context::ContextStore>>,
 }
 
 impl PipelineRunner {
@@ -139,6 +145,7 @@ impl PipelineRunner {
             tool_registry: Arc::new(ToolRegistry::with_builtins()),
             agent_registry: Arc::new(AgentRegistry::new()),
             skill_registry: Arc::new(crate::skills::registry::SkillRegistry::new()),
+            context_store: None,
             llm_client: None,
             output_sink: None,
             conversation_registry: Arc::new(std::sync::Mutex::new(
@@ -158,6 +165,7 @@ impl PipelineRunner {
             conversation_registry: Arc::new(std::sync::Mutex::new(
                 crate::llm::ConversationRegistry::new(),
             )),
+            context_store: None,
         }
     }
 
@@ -173,6 +181,7 @@ impl PipelineRunner {
             conversation_registry: Arc::new(std::sync::Mutex::new(
                 crate::llm::ConversationRegistry::new(),
             )),
+            context_store: None,
         }
     }
 
@@ -191,6 +200,7 @@ impl PipelineRunner {
             conversation_registry: Arc::new(std::sync::Mutex::new(
                 crate::llm::ConversationRegistry::new(),
             )),
+            context_store: None,
         }
     }
 
@@ -208,6 +218,7 @@ impl PipelineRunner {
             conversation_registry: Arc::new(std::sync::Mutex::new(
                 crate::llm::ConversationRegistry::new(),
             )),
+            context_store: None,
         }
     }
 
@@ -220,6 +231,12 @@ impl PipelineRunner {
     /// Add an output sink for streaming events
     pub fn with_output_sink(mut self, sink: Arc<dyn OutputSink>) -> Self {
         self.output_sink = Some(sink);
+        self
+    }
+
+    /// Add a ContextStore for step context persistence
+    pub fn with_context_store(mut self, dir: std::path::PathBuf) -> Self {
+        self.context_store = Some(std::sync::Arc::new(crate::context::ContextStore::new(dir)));
         self
     }
 
@@ -257,7 +274,7 @@ impl PipelineRunner {
         let mut step_idx = 0;
         while step_idx < pipeline.steps.len() {
             let step = &pipeline.steps[step_idx];
-            
+
             // Check if this is a parallel step — if so, collect all consecutive parallel steps
             if step.parallel {
                 // Collect all consecutive parallel steps starting from step_idx
@@ -270,8 +287,9 @@ impl PipelineRunner {
 
                 // Execute parallel steps with true tokio::task::spawn concurrency
                 use tokio::task::JoinSet;
-                
-                let mut join_set: JoinSet<(String, Result<(StepContext, StepOutput), String>)> = JoinSet::new();
+
+                let mut join_set: JoinSet<(String, Result<(StepContext, StepOutput), String>)> =
+                    JoinSet::new();
 
                 for &idx in &parallel_batch_indices {
                     let step_def = pipeline.steps[idx].clone();
@@ -279,9 +297,9 @@ impl PipelineRunner {
                     local_ctx.step_name = step_def.name.clone();
                     local_ctx.input = input.clone();
                     local_ctx.allowed_tools = step_def.tools.clone();
-                    
+
                     let ctx_arc = Arc::new(TokioMutex::new(local_ctx));
-                    
+
                     // Clone runner and step info for spawn closure
                     let runner = self.clone();
                     let step_name = step_def.name.clone();
@@ -289,7 +307,7 @@ impl PipelineRunner {
                     let guard_in = step_def.guard_in.clone();
                     let guard_out = step_def.guard_out.clone();
                     let verdict = step_def.verdict.clone();
-                    
+
                     join_set.spawn(async move {
                         // guard_in check
                         {
@@ -298,30 +316,32 @@ impl PipelineRunner {
                                 return (step_name, Err(format!("guard_in: {}", e)));
                             }
                         }
-                        
+
                         // Execute action
                         let action_result = runner.execute_action(&action, ctx_arc.clone()).await;
-                        
+
                         match action_result {
                             Ok(output) => {
                                 // Lock context to update output and check guard_out
                                 let mut ctx_guard = ctx_arc.lock().await;
                                 ctx_guard.output = Some(output.clone());
-                                
+
                                 // guard_out check
-                                if let Err(e) = GuardEngine::evaluate(&guard_out, &*ctx_guard).await {
+                                if let Err(e) = GuardEngine::evaluate(&guard_out, &*ctx_guard).await
+                                {
                                     return (step_name, Err(format!("guard_out: {}", e)));
                                 }
-                                
+
                                 // verdict check
-                                if let Err(e) = VerdictEngine::evaluate(&verdict, &*ctx_guard).await {
+                                if let Err(e) = VerdictEngine::evaluate(&verdict, &*ctx_guard).await
+                                {
                                     return (step_name, Err(format!("verdict: {}", e)));
                                 }
-                                
+
                                 // Extract final context for return (clone to avoid holding lock)
                                 let final_ctx = ctx_guard.clone();
                                 drop(ctx_guard);
-                                
+
                                 (step_name, Ok((final_ctx, output)))
                             }
                             Err(e) => (step_name, Err(format!("action: {}", e.to_string()))),
@@ -342,6 +362,13 @@ impl PipelineRunner {
                                 error: None,
                             };
                             ctx.step_results.insert(step_name.clone(), sr);
+
+                            // Auto-save context after parallel step succeeds
+                            if let Some(store) = &self.context_store {
+                                if let Err(e) = store.save(&ctx).await {
+                                    eprintln!("[verdict] warning: ContextStore::save failed: {e}");
+                                }
+                            }
                             // Merge trace entries
                             ctx.trace.entries.extend(step_ctx.trace.entries);
                             steps_passed.push(step_name);
@@ -379,7 +406,8 @@ impl PipelineRunner {
                             });
                         }
                         FailureMode::Skip => { /* continue */ }
-                        FailureMode::Retry => { /* treat as sequential retry is not applicable for parallel */ }
+                        FailureMode::Retry => { /* treat as sequential retry is not applicable for parallel */
+                        }
                         FailureMode::Fallback(fallback_pipeline) => {
                             let fallback = fallback_pipeline.as_ref().clone();
                             let _ = Box::pin(self.run(&fallback, agent, ctx.input.clone())).await;
@@ -390,7 +418,7 @@ impl PipelineRunner {
                 step_idx += parallel_batch_indices.len();
                 continue;
             }
-            
+
             // Sequential step execution
             // Step execution loop
             let mut retry_count = 0;
@@ -514,7 +542,7 @@ impl PipelineRunner {
                             FailureMode::Fallback(fallback_pipeline) => {
                                 steps_failed.push(step.name.clone());
                                 let fallback = fallback_pipeline.as_ref().clone();
-                                
+
                                 self.audit_log.append(AuditEntry {
                                     timestamp: Utc::now(),
                                     pipeline_name: pipeline.name.clone(),
@@ -524,11 +552,12 @@ impl PipelineRunner {
                                         reason: e.to_string(),
                                     },
                                 });
-                                
+
                                 let mut fallback_ctx = ctx.clone();
                                 fallback_ctx.step_results.clear();
-                                
-                                match Box::pin(self.run(&fallback, agent, ctx.input.clone())).await {
+
+                                match Box::pin(self.run(&fallback, agent, ctx.input.clone())).await
+                                {
                                     Ok(_fallback_result) => {
                                         // Fallback succeeded; step failed but pipeline continues
                                         break;
@@ -595,13 +624,21 @@ impl PipelineRunner {
                         // 9. Commit output
                         let result = StepResult {
                             step_name: step.name.clone(),
-                            output: ctx.output.clone().unwrap_or_else(|| {
-                                StepOutput::new("(no output)".to_string())
-                            }),
+                            output: ctx
+                                .output
+                                .clone()
+                                .unwrap_or_else(|| StepOutput::new("(no output)".to_string())),
                             verdict_passed: true,
                             error: None,
                         };
                         ctx.step_results.insert(step.name.clone(), result);
+
+                        // Auto-save context to ContextStore if enabled
+                        if let Some(store) = &self.context_store {
+                            if let Err(e) = store.save(&ctx).await {
+                                eprintln!("[verdict] warning: ContextStore::save failed: {e}");
+                            }
+                        }
 
                         steps_passed.push(step.name.clone());
                         step_success = true;
@@ -619,10 +656,12 @@ impl PipelineRunner {
                         if let Some(sink) = &self.output_sink {
                             sink.emit(OutputEvent::StepCompleted {
                                 step: step.name.clone(),
-                                output: ctx.output.clone().unwrap_or_else(|| {
-                                    StepOutput::new("(no output)".to_string())
-                                }),
-                            }).await;
+                                output: ctx
+                                    .output
+                                    .clone()
+                                    .unwrap_or_else(|| StepOutput::new("(no output)".to_string())),
+                            })
+                            .await;
                         }
                     }
                     Err(VerdictError::UserApprovalRequired { prompt }) => {
@@ -679,14 +718,15 @@ impl PipelineRunner {
                                         output: ctx.output.clone().unwrap_or_else(|| {
                                             StepOutput::new("(no output)".to_string())
                                         }),
-                                    }).await;
+                                    })
+                                    .await;
                                 }
                                 break;
                             }
                             FailureMode::Fallback(fallback_pipeline) => {
                                 steps_failed.push(step.name.clone());
                                 let fallback = fallback_pipeline.as_ref().clone();
-                                
+
                                 self.audit_log.append(AuditEntry {
                                     timestamp: Utc::now(),
                                     pipeline_name: pipeline.name.clone(),
@@ -696,11 +736,12 @@ impl PipelineRunner {
                                         reason: format!("user denied approval"),
                                     },
                                 });
-                                
+
                                 let mut fallback_ctx = ctx.clone();
                                 fallback_ctx.step_results.clear();
-                                
-                                match Box::pin(self.run(&fallback, agent, ctx.input.clone())).await {
+
+                                match Box::pin(self.run(&fallback, agent, ctx.input.clone())).await
+                                {
                                     Ok(_fallback_result) => {
                                         // Fallback succeeded; step failed but pipeline continues
                                         break;
@@ -763,14 +804,15 @@ impl PipelineRunner {
                                         output: ctx.output.clone().unwrap_or_else(|| {
                                             StepOutput::new("(no output)".to_string())
                                         }),
-                                    }).await;
+                                    })
+                                    .await;
                                 }
                                 break;
                             }
                             FailureMode::Fallback(fallback_pipeline) => {
                                 steps_failed.push(step.name.clone());
                                 let fallback = fallback_pipeline.as_ref().clone();
-                                
+
                                 self.audit_log.append(AuditEntry {
                                     timestamp: Utc::now(),
                                     pipeline_name: pipeline.name.clone(),
@@ -780,11 +822,12 @@ impl PipelineRunner {
                                         reason: e.to_string(),
                                     },
                                 });
-                                
+
                                 let mut fallback_ctx = ctx.clone();
                                 fallback_ctx.step_results.clear();
-                                
-                                match Box::pin(self.run(&fallback, agent, ctx.input.clone())).await {
+
+                                match Box::pin(self.run(&fallback, agent, ctx.input.clone())).await
+                                {
                                     Ok(_fallback_result) => {
                                         // Fallback succeeded; step failed but pipeline continues
                                         break;
@@ -833,12 +876,12 @@ impl PipelineRunner {
             success,
         };
 
-
         // Emit pipeline completion event to output sink
         if let Some(sink) = &self.output_sink {
             sink.emit(OutputEvent::PipelineCompleted {
                 result: pipeline_result.clone(),
-            }).await;
+            })
+            .await;
         }
 
         Ok(pipeline_result)
@@ -852,12 +895,19 @@ impl PipelineRunner {
         ctx: Arc<TokioMutex<StepContext>>,
     ) -> Result<StepOutput, StepError> {
         match action {
-            StepAction::LlmCall { system, user, model, conversation_id, append_to_history } => {
-                let client = self.llm_client.as_ref()
+            StepAction::LlmCall {
+                system,
+                user,
+                model,
+                conversation_id,
+                append_to_history,
+            } => {
+                let client = self
+                    .llm_client
+                    .as_ref()
                     .ok_or_else(|| StepError::ActionFailed {
                         reason: "no LLM client configured".into(),
                     })?;
-
 
                 let model_str = match model {
                     Some(spec) => spec.model.clone(),
@@ -883,7 +933,6 @@ impl PipelineRunner {
                     (sys, usr, hist)
                 };
 
-
                 let req = crate::llm::LlmRequest {
                     system: resolved_system.clone(),
                     user: resolved_user.clone(),
@@ -894,9 +943,9 @@ impl PipelineRunner {
                     tools: None,
                 };
 
-
-
-                let resp = client.complete(req).await
+                let resp = client
+                    .complete(req)
+                    .await
                     .map_err(|e| StepError::ActionFailed {
                         reason: e.to_string(),
                     })?;
@@ -906,13 +955,14 @@ impl PipelineRunner {
                     let mut ctx_lock = ctx.lock().await;
                     ctx_lock.budget.llm_calls_used += 1;
                     if let Some(usage) = &resp.usage {
-                        let cost = ((usage.completion_tokens as f64) * 2.0 + (usage.prompt_tokens as f64)) * 0.000001;
+                        let cost = ((usage.completion_tokens as f64) * 2.0
+                            + (usage.prompt_tokens as f64))
+                            * 0.000001;
                         if let Some(remaining) = ctx_lock.budget.remaining_usd {
                             ctx_lock.budget.remaining_usd = Some((remaining - cost).max(0.0));
                         }
                     }
                 }
-
 
                 // Append to conversation history (both named registry and per-step)
                 if *append_to_history {
@@ -921,16 +971,23 @@ impl PipelineRunner {
                         let mut reg = self.conversation_registry.lock().unwrap();
                         let history = reg.get_or_create(conv_id);
                         history.push(crate::llm::provider::ChatRole::User, resolved_user.clone());
-                        history.push(crate::llm::provider::ChatRole::Assistant, resp.content.clone());
+                        history.push(
+                            crate::llm::provider::ChatRole::Assistant,
+                            resp.content.clone(),
+                        );
                     }
                     // Also update per-step conversation history
                     {
                         let mut ctx_lock = ctx.lock().await;
-                        ctx_lock.conversation_history.push(crate::llm::provider::ChatRole::User, resolved_user.clone());
-                        ctx_lock.conversation_history.push(crate::llm::provider::ChatRole::Assistant, resp.content.clone());
+                        ctx_lock
+                            .conversation_history
+                            .push(crate::llm::provider::ChatRole::User, resolved_user.clone());
+                        ctx_lock.conversation_history.push(
+                            crate::llm::provider::ChatRole::Assistant,
+                            resp.content.clone(),
+                        );
                     }
                 }
-
 
                 Ok(StepOutput::new(resp.content))
             }
@@ -966,23 +1023,22 @@ impl PipelineRunner {
                 // For DelegateAgent nested in LoopUntil/SubPipeline:
                 // Since we're in execute_action (&self), we can't call execute_delegation (&mut self).
                 // Instead, look up the agent and execute its pipeline directly.
-                
+
                 let (child_agent, agent_registry) = {
                     let ctx_lock = ctx.lock().await;
-                    let child_agent = ctx_lock.agent_registry.get(agent_name)
-                        .ok_or_else(|| StepError::ActionFailed {
+                    let child_agent = ctx_lock.agent_registry.get(agent_name).ok_or_else(|| {
+                        StepError::ActionFailed {
                             reason: format!("agent '{}' not found in registry", agent_name),
-                        })?;
+                        }
+                    })?;
                     (child_agent, ctx_lock.agent_registry.clone())
                 };
 
                 // Create a new runner with shared registries
-                let mut child_runner = PipelineRunner::with_registries(
-                    self.tool_registry.clone(),
-                    agent_registry,
-                );
+                let mut child_runner =
+                    PipelineRunner::with_registries(self.tool_registry.clone(), agent_registry);
                 child_runner.skill_registry = self.skill_registry.clone();
-                
+
                 // Copy llm_client if present
                 if let Some(llm_client) = &self.llm_client {
                     child_runner = child_runner.with_llm_client(llm_client.clone());
@@ -997,18 +1053,22 @@ impl PipelineRunner {
                         {
                             let mut ctx_lock = ctx.lock().await;
                             ctx_lock.step_results.extend(result.step_results);
-                            ctx_lock.trace.entries.extend(result.audit_log.entries().iter().map(|e| {
-                                crate::context::TraceEntry {
-                                    step_name: format!("{}.{}", agent_name, e.step_name),
-                                    status: format!("{:?}", e.event),
-                                    timestamp: e.timestamp,
-                                }
-                            }));
+                            ctx_lock
+                                .trace
+                                .entries
+                                .extend(result.audit_log.entries().iter().map(|e| {
+                                    crate::context::TraceEntry {
+                                        step_name: format!("{}.{}", agent_name, e.step_name),
+                                        status: format!("{:?}", e.event),
+                                        timestamp: e.timestamp,
+                                    }
+                                }));
                         }
 
-                        Ok(StepOutput::new(
-                            format!("DelegateAgent '{}' completed: {}", agent_name, result.success),
-                        ))
+                        Ok(StepOutput::new(format!(
+                            "DelegateAgent '{}' completed: {}",
+                            agent_name, result.success
+                        )))
                     }
                     Err(e) => Err(StepError::ActionFailed {
                         reason: format!("DelegateAgent '{}' failed: {}", agent_name, e),
@@ -1020,9 +1080,13 @@ impl PipelineRunner {
                 // Recursively execute sub-pipeline with Box::pin to handle async recursion
                 let (agent_name, allowed_tools, input) = {
                     let ctx_lock = ctx.lock().await;
-                    (ctx_lock.agent_name.clone(), ctx_lock.allowed_tools.clone(), ctx_lock.input.clone())
+                    (
+                        ctx_lock.agent_name.clone(),
+                        ctx_lock.allowed_tools.clone(),
+                        ctx_lock.input.clone(),
+                    )
                 };
-                
+
                 let agent = crate::agent::Agent {
                     name: agent_name,
                     description: String::new(),
@@ -1040,18 +1104,22 @@ impl PipelineRunner {
                         {
                             let mut ctx_lock = ctx.lock().await;
                             ctx_lock.step_results.extend(result.step_results);
-                            ctx_lock.trace.entries.extend(result.audit_log.entries().iter().map(|e| {
-                                crate::context::TraceEntry {
-                                    step_name: e.step_name.clone(),
-                                    status: format!("{:?}", e.event),
-                                    timestamp: e.timestamp,
-                                }
-                            }));
+                            ctx_lock
+                                .trace
+                                .entries
+                                .extend(result.audit_log.entries().iter().map(|e| {
+                                    crate::context::TraceEntry {
+                                        step_name: e.step_name.clone(),
+                                        status: format!("{:?}", e.event),
+                                        timestamp: e.timestamp,
+                                    }
+                                }));
                         }
 
-                        Ok(StepOutput::new(
-                            format!("SubPipeline completed: {}", result.success),
-                        ))
+                        Ok(StepOutput::new(format!(
+                            "SubPipeline completed: {}",
+                            result.success
+                        )))
                     }
                     Err(e) => Err(StepError::ActionFailed {
                         reason: format!("SubPipeline failed: {}", e),
@@ -1077,21 +1145,19 @@ impl PipelineRunner {
                             let mut ctx_lock = ctx.lock().await;
                             ctx_lock.output = Some(output);
                         }
-                        Err(e) => {
-                            match on_iteration_failure {
-                                IterationFailureMode::Retry => {
-                                    iteration += 1;
-                                    continue;
-                                }
-                                IterationFailureMode::Skip => {
-                                    iteration += 1;
-                                    continue;
-                                }
-                                IterationFailureMode::Abort => {
-                                    return Err(e);
-                                }
+                        Err(e) => match on_iteration_failure {
+                            IterationFailureMode::Retry => {
+                                iteration += 1;
+                                continue;
                             }
-                        }
+                            IterationFailureMode::Skip => {
+                                iteration += 1;
+                                continue;
+                            }
+                            IterationFailureMode::Abort => {
+                                return Err(e);
+                            }
+                        },
                     }
 
                     // Check condition
@@ -1119,7 +1185,11 @@ impl PipelineRunner {
                 )))
             }
 
-            StepAction::UseSkill { skill, input: _skill_input, mode } => {
+            StepAction::UseSkill {
+                skill,
+                input: _skill_input,
+                mode,
+            } => {
                 // Look up the skill in the registry
                 let skill_def = {
                     let ctx_lock = ctx.lock().await;
@@ -1182,7 +1252,11 @@ impl PipelineRunner {
                 // Simple string evaluation: check if condition appears in output
                 let prev_output = {
                     let ctx_lock = ctx.lock().await;
-                    ctx_lock.output.as_ref().map(|o| o.raw.clone()).unwrap_or_default()
+                    ctx_lock
+                        .output
+                        .as_ref()
+                        .map(|o| o.raw.clone())
+                        .unwrap_or_default()
                 };
                 let condition_matches = prev_output.contains(condition);
 
@@ -1207,26 +1281,29 @@ impl PipelineRunner {
                 match client.execute(endpoint, agent_name, payload.clone()).await {
                     Ok(result) => {
                         // Convert result to StepOutput
-                        let output = serde_json::to_string(&result)
-                            .unwrap_or_else(|_| result.to_string());
+                        let output =
+                            serde_json::to_string(&result).unwrap_or_else(|_| result.to_string());
                         Ok(StepOutput::with_parsed(output, result))
                     }
-                    Err(e) => {
-                        Err(StepError::ActionFailed {
-                            reason: format!("remote agent execution failed: {}", e),
-                        })
-                    }
+                    Err(e) => Err(StepError::ActionFailed {
+                        reason: format!("remote agent execution failed: {}", e),
+                    }),
                 }
             }
 
-            StepAction::LlmCallStreaming { system, user, model } => {
+            StepAction::LlmCallStreaming {
+                system,
+                user,
+                model,
+            } => {
                 // Stream the LLM response, emitting each chunk via OutputSink as it arrives.
                 // Guards and verdicts run on the fully assembled response after streaming completes.
-                let client = self.llm_client.as_ref()
+                let client = self
+                    .llm_client
+                    .as_ref()
                     .ok_or_else(|| StepError::ActionFailed {
                         reason: "no LLM client configured".into(),
                     })?;
-
 
                 let model_str = match model {
                     Some(spec) => spec.model.clone(),
@@ -1246,7 +1323,6 @@ impl PipelineRunner {
                     (sys, usr, hist)
                 };
 
-
                 let req = crate::llm::LlmRequest {
                     system: resolved_system.clone(),
                     user: resolved_user.clone(),
@@ -1257,18 +1333,17 @@ impl PipelineRunner {
                     tools: None,
                 };
 
-
-
                 // Call the provider's stream method to get chunks
                 let mut stream = client.stream(req);
                 let mut full_response = String::new();
 
                 // Consume the stream, emitting each chunk to the sink
                 while let Some(chunk_result) = stream.next().await {
-                    let chunk = chunk_result
-                        .map_err(|e: crate::llm::provider::LlmError| StepError::ActionFailed {
+                    let chunk = chunk_result.map_err(|e: crate::llm::provider::LlmError| {
+                        StepError::ActionFailed {
                             reason: e.to_string(),
-                        })?;
+                        }
+                    })?;
 
                     // Append this chunk's delta to the assembled response
                     full_response.push_str(&chunk.delta);
@@ -1282,7 +1357,8 @@ impl PipelineRunner {
                         sink.emit(OutputEvent::LlmChunk {
                             step: step_name,
                             delta: chunk.delta.clone(),
-                        }).await;
+                        })
+                        .await;
                     }
                 }
 
@@ -1297,17 +1373,14 @@ impl PipelineRunner {
                         ctx_lock.budget.remaining_usd = Some((remaining - cost).max(0.0));
                     }
 
-
                     // Append resolved prompts to conversation history
-                    ctx_lock.conversation_history.push(
-                        crate::llm::provider::ChatRole::User,
-                        resolved_user.clone(),
-                    );
+                    ctx_lock
+                        .conversation_history
+                        .push(crate::llm::provider::ChatRole::User, resolved_user.clone());
                     ctx_lock.conversation_history.push(
                         crate::llm::provider::ChatRole::Assistant,
                         full_response.clone(),
                     );
-
                 }
 
                 Ok(StepOutput::new(full_response))
@@ -1329,7 +1402,9 @@ impl PipelineRunner {
                 //   3. Append each tool result as a `tool` role message.
                 //   4. Loop back to step 1 with updated history.
                 //   5. Stop when LLM returns text-only (no tool_calls), or max_rounds reached.
-                let client = self.llm_client.as_ref()
+                let client = self
+                    .llm_client
+                    .as_ref()
                     .ok_or_else(|| StepError::ActionFailed {
                         reason: "no LLM client configured".into(),
                     })?;
@@ -1337,9 +1412,11 @@ impl PipelineRunner {
                 // Resolve template placeholders once at the start
                 let (resolved_system, resolved_user_initial) = {
                     let ctx_lock = ctx.lock().await;
-                    (resolve_template(system, &ctx_lock), resolve_template(user, &ctx_lock))
+                    (
+                        resolve_template(system, &ctx_lock),
+                        resolve_template(user, &ctx_lock),
+                    )
                 };
-
 
                 // Build tool schemas from the registry for the declared tool names.
                 let tool_schemas: Vec<crate::llm::provider::ToolSchema> = _allowed_tools
@@ -1351,8 +1428,6 @@ impl PipelineRunner {
                         parameters: t.schema(),
                     })
                     .collect();
-
-
 
                 let mut history = crate::llm::provider::MessageHistory {
                     messages: vec![],
@@ -1382,13 +1457,20 @@ impl PipelineRunner {
                             None
                         },
                         temperature: None,
-                        tools: if !tool_schemas.is_empty() { Some(tool_schemas.clone()) } else { None },
+                        tools: if !tool_schemas.is_empty() {
+                            Some(tool_schemas.clone())
+                        } else {
+                            None
+                        },
                     };
 
-                    let response = client.complete(req).await
-                        .map_err(|e| StepError::ActionFailed {
-                            reason: e.to_string(),
-                        })?;
+                    let response =
+                        client
+                            .complete(req)
+                            .await
+                            .map_err(|e| StepError::ActionFailed {
+                                reason: e.to_string(),
+                            })?;
                     llm_calls += 1;
 
                     // Append assistant turn to history
@@ -1400,9 +1482,9 @@ impl PipelineRunner {
                     }
                     final_response = response.content.clone();
 
-
                     // Check if LLM returned tool calls; if not, stop the loop
-                    let has_tool_calls = response.tool_calls
+                    let has_tool_calls = response
+                        .tool_calls
                         .as_ref()
                         .map(|v| !v.is_empty())
                         .unwrap_or(false);
@@ -1415,88 +1497,91 @@ impl PipelineRunner {
                     // Dispatch all tool calls in parallel
                     let tool_calls = response.tool_calls.unwrap();
 
-                            // Dispatch all tool calls in parallel
-                            use tokio::task::JoinSet;
-                            let mut join_set: JoinSet<(String, String, Result<String, String>)> = JoinSet::new();
+                    // Dispatch all tool calls in parallel
+                    use tokio::task::JoinSet;
+                    let mut join_set: JoinSet<(String, String, Result<String, String>)> =
+                        JoinSet::new();
 
-                            for tc in tool_calls {
-                                let tool_name = tc.name.clone();
-                                let tool_args = tc.arguments.clone();
-                                let call_id = format!("call_{}", tool_name);
-                                let runner_clone = self.clone();
-                                let ctx_clone = ctx.clone();
+                    for tc in tool_calls {
+                        let tool_name = tc.name.clone();
+                        let tool_args = tc.arguments.clone();
+                        let call_id = format!("call_{}", tool_name);
+                        let runner_clone = self.clone();
+                        let ctx_clone = ctx.clone();
 
-                                join_set.spawn(async move {
-                                    // Build a temp mutable ctx for the tool call
-                                    let mut temp_ctx = ctx_clone.lock().await.clone();
-                                    let result = runner_clone
-                                        .execute_tool_call(&tool_name, &tool_args, &mut temp_ctx)
-                                        .await;
-                                    let output = match result {
-                                        Ok(out) => out.raw,
-                                        Err(e) => format!("Error: {}", e),
-                                    };
-                                    (call_id, tool_name, Ok(output))
+                        join_set.spawn(async move {
+                            // Build a temp mutable ctx for the tool call
+                            let mut temp_ctx = ctx_clone.lock().await.clone();
+                            let result = runner_clone
+                                .execute_tool_call(&tool_name, &tool_args, &mut temp_ctx)
+                                .await;
+                            let output = match result {
+                                Ok(out) => out.raw,
+                                Err(e) => format!("Error: {}", e),
+                            };
+                            (call_id, tool_name, Ok(output))
+                        });
+                    }
+
+                    // Collect all tool results and add to history
+                    while let Some(join_result) = join_set.join_next().await {
+                        match join_result {
+                            Ok((_call_id, tool_name, Ok(output))) => {
+                                // Emit ToolChunk event to output sink
+                                if let Some(sink) = &self.output_sink {
+                                    let step_name = ctx.lock().await.step_name.clone();
+                                    sink.emit(OutputEvent::ToolChunk {
+                                        step: step_name,
+                                        tool: tool_name.clone(),
+                                        delta: output.clone(),
+                                    })
+                                    .await;
+                                }
+                                // Add tool result to history as a tool message
+                                history.messages.push(crate::llm::provider::ChatMessage {
+                                    role: crate::llm::provider::ChatRole::Tool,
+                                    content: format!("[{}] {}", tool_name, output),
                                 });
                             }
+                            Ok((_call_id, tool_name, Err(e))) => {
+                                history.messages.push(crate::llm::provider::ChatMessage {
+                                    role: crate::llm::provider::ChatRole::Tool,
+                                    content: format!("[{}] Error: {}", tool_name, e),
+                                });
+                            }
+                            Err(join_err) => {
+                                return Err(StepError::ActionFailed {
+                                    reason: format!("tool task join error: {}", join_err),
+                                });
+                            }
+                        }
+                    }
 
-                            // Collect all tool results and add to history
-                            while let Some(join_result) = join_set.join_next().await {
-                                match join_result {
-                                    Ok((_call_id, tool_name, Ok(output))) => {
-                                        // Emit ToolChunk event to output sink
-                                        if let Some(sink) = &self.output_sink {
-                                            let step_name = ctx.lock().await.step_name.clone();
-                                            sink.emit(OutputEvent::ToolChunk {
-                                                step: step_name,
-                                                tool: tool_name.clone(),
-                                                delta: output.clone(),
-                                            }).await;
-                                        }
-                                        // Add tool result to history as a tool message
-                                        history.messages.push(crate::llm::provider::ChatMessage {
-                                            role: crate::llm::provider::ChatRole::Tool,
-                                            content: format!("[{}] {}", tool_name, output),
-                                        });
-                                    }
-                                    Ok((_call_id, tool_name, Err(e))) => {
-                                        history.messages.push(crate::llm::provider::ChatMessage {
-                                            role: crate::llm::provider::ChatRole::Tool,
-                                            content: format!("[{}] Error: {}", tool_name, e),
-                                        });
-                                    }
-                                    Err(join_err) => {
-                                        return Err(StepError::ActionFailed {
-                                            reason: format!("tool task join error: {}", join_err),
-                                        });
-                                    }
+                    // Check stop condition after tool dispatch
+                    match stop_condition {
+                        StopCondition::MaxRounds => {
+                            if round + 1 >= max_iterations {
+                                break 'outer;
+                            }
+                        }
+                        StopCondition::Pattern(pattern) => {
+                            if let Ok(regex) = regex::Regex::new(pattern) {
+                                if regex.is_match(&final_response) {
+                                    break 'outer;
                                 }
                             }
-
-                            // Check stop condition after tool dispatch
-                            match stop_condition {
-                                StopCondition::MaxRounds => {
-                                    if round + 1 >= max_iterations {
-                                        break 'outer;
-                                    }
-                                }
-                                StopCondition::Pattern(pattern) => {
-                                    if let Ok(regex) = regex::Regex::new(pattern) {
-                                        if regex.is_match(&final_response) {
-                                            break 'outer;
-                                        }
-                                    }
-                                }
-                                StopCondition::TextOnly => {
-                                    // Continue looping — we had tool calls this round
-                                }
-                            }
+                        }
+                        StopCondition::TextOnly => {
+                            // Continue looping — we had tool calls this round
+                        }
+                    }
                 }
 
                 // Wire budget tracking
                 {
                     let mut ctx_lock = ctx.lock().await;
-                    ctx_lock.budget.llm_calls_used = ctx_lock.budget.llm_calls_used.saturating_add(llm_calls);
+                    ctx_lock.budget.llm_calls_used =
+                        ctx_lock.budget.llm_calls_used.saturating_add(llm_calls);
                     let token_estimate = (final_response.len() as f64 / 4.0) as u32;
                     let cost = (token_estimate as f64) * 0.000001;
                     if let Some(remaining) = ctx_lock.budget.remaining_usd {
@@ -1506,7 +1591,6 @@ impl PipelineRunner {
 
                 Ok(StepOutput::new(final_response))
             }
-
         }
     }
 
@@ -1593,7 +1677,8 @@ impl PipelineRunner {
                                 step: ctx.step_name.clone(),
                                 tool: tool_name.to_string(),
                                 delta: chunk.delta.clone(),
-                            }).await;
+                            })
+                            .await;
                         }
                     }
                 }
@@ -1703,10 +1788,7 @@ impl PipelineRunner {
                     parent_agent: parent_agent.clone(),
                     child_agent: agent_name.to_string(),
                     depth: current_depth,
-                    reason: format!(
-                        "agent '{}' not in allowed_agents list",
-                        agent_name
-                    ),
+                    reason: format!("agent '{}' not in allowed_agents list", agent_name),
                 },
             });
             return Err(StepError::ActionFailed {
@@ -1756,19 +1838,15 @@ impl PipelineRunner {
             Arc::new(ToolRegistry::new())
         };
 
-        let mut child_runner = PipelineRunner::with_registries(
-            child_tool_registry,
-            ctx.agent_registry.clone(),
-        );
+        let mut child_runner =
+            PipelineRunner::with_registries(child_tool_registry, ctx.agent_registry.clone());
 
         // Step 6: Run child agent pipeline
         // Build a temporary child agent with incremented delegation depth
         let mut child_policy = child_agent.policy.clone();
         // Inherit budget tracking if requested
         if delegation_policy.inherit_budget {
-            child_policy.max_cost_usd = child_policy
-                .max_cost_usd
-                .or(ctx.budget.remaining_usd);
+            child_policy.max_cost_usd = child_policy.max_cost_usd.or(ctx.budget.remaining_usd);
         }
 
         let child_agent_instance = crate::agent::Agent {
@@ -1780,32 +1858,29 @@ impl PipelineRunner {
             policy: child_policy,
         };
 
-        let child_result = Box::pin(
-            child_runner.run_with_delegation_depth(
-                &child_agent_instance.pipeline.clone(),
-                &child_agent_instance,
-                delegate_input.clone(),
-                current_depth + 1,
-                Some(parent_agent.clone()),
-            )
-        )
+        let child_result = Box::pin(child_runner.run_with_delegation_depth(
+            &child_agent_instance.pipeline.clone(),
+            &child_agent_instance,
+            delegate_input.clone(),
+            current_depth + 1,
+            Some(parent_agent.clone()),
+        ))
         .await;
 
         match child_result {
             Ok(result) => {
                 // Merge child trace entries into parent context
-                ctx.trace.entries.extend(
-                    result.audit_log.entries().iter().map(|e| TraceEntry {
+                ctx.trace
+                    .entries
+                    .extend(result.audit_log.entries().iter().map(|e| TraceEntry {
                         step_name: format!("{}.{}", agent_name, e.step_name),
                         status: format!("{:?}", e.event),
                         timestamp: e.timestamp,
-                    }),
-                );
+                    }));
 
                 // Merge child step results under namespaced keys
                 for (k, v) in result.step_results {
-                    ctx.step_results
-                        .insert(format!("{}.{}", agent_name, k), v);
+                    ctx.step_results.insert(format!("{}.{}", agent_name, k), v);
                 }
 
                 // Step 7: Validate child output schema if required
@@ -1819,12 +1894,8 @@ impl PipelineRunner {
                                 if let Ok(output_value) =
                                     serde_json::from_str::<Value>(&step_result.output.raw)
                                 {
-                                    if let Ok(validator) =
-                                        jsonschema::JSONSchema::compile(schema)
-                                    {
-                                        if let Err(errors) =
-                                            validator.validate(&output_value)
-                                        {
+                                    if let Ok(validator) = jsonschema::JSONSchema::compile(schema) {
+                                        if let Err(errors) = validator.validate(&output_value) {
                                             let msgs: Vec<String> =
                                                 errors.map(|e| e.to_string()).collect();
                                             return Err(StepError::ActionFailed {
@@ -2084,9 +2155,10 @@ impl PipelineRunner {
 
                         let result = StepResult {
                             step_name: step.name.clone(),
-                            output: ctx.output.clone().unwrap_or_else(|| {
-                                StepOutput::new("(no output)".to_string())
-                            }),
+                            output: ctx
+                                .output
+                                .clone()
+                                .unwrap_or_else(|| StepOutput::new("(no output)".to_string())),
                             verdict_passed: true,
                             error: None,
                         };
@@ -2098,17 +2170,21 @@ impl PipelineRunner {
                             timestamp: Utc::now(),
                             pipeline_name: pipeline.name.clone(),
                             step_name: step.name.clone(),
-                            event: AuditEvent::StepCompleted { verdict_passed: true },
+                            event: AuditEvent::StepCompleted {
+                                verdict_passed: true,
+                            },
                         });
 
                         // Emit step completion event to output sink
                         if let Some(sink) = &self.output_sink {
                             sink.emit(OutputEvent::StepCompleted {
                                 step: step.name.clone(),
-                                output: ctx.output.clone().unwrap_or_else(|| {
-                                    StepOutput::new("(no output)".to_string())
-                                }),
-                            }).await;
+                                output: ctx
+                                    .output
+                                    .clone()
+                                    .unwrap_or_else(|| StepOutput::new("(no output)".to_string())),
+                            })
+                            .await;
                         }
                     }
                     Err(VerdictError::UserApprovalRequired { prompt }) => {
@@ -2151,7 +2227,9 @@ impl PipelineRunner {
                                     timestamp: Utc::now(),
                                     pipeline_name: pipeline.name.clone(),
                                     step_name: step.name.clone(),
-                                    event: AuditEvent::StepCompleted { verdict_passed: false },
+                                    event: AuditEvent::StepCompleted {
+                                        verdict_passed: false,
+                                    },
                                 });
 
                                 // Emit step completion event to output sink
@@ -2161,7 +2239,8 @@ impl PipelineRunner {
                                         output: ctx.output.clone().unwrap_or_else(|| {
                                             StepOutput::new("(no output)".to_string())
                                         }),
-                                    }).await;
+                                    })
+                                    .await;
                                 }
                                 break;
                             }
@@ -2208,7 +2287,8 @@ impl PipelineRunner {
         if let Some(sink) = &self.output_sink {
             sink.emit(OutputEvent::PipelineCompleted {
                 result: pipeline_result.clone(),
-            }).await;
+            })
+            .await;
         }
 
         Ok(pipeline_result)
@@ -2252,11 +2332,12 @@ impl PipelineRunner {
 
         for i in 0..n {
             if !visited[i] {
-                visit(i, &pipeline.steps, &mut visited, &mut visiting, &mut sorted)
-                    .map_err(|reason| PipelineError::StepFailed {
+                visit(i, &pipeline.steps, &mut visited, &mut visiting, &mut sorted).map_err(
+                    |reason| PipelineError::StepFailed {
                         step: format!("DAG validation"),
                         error: StepError::ActionFailed { reason },
-                    })?;
+                    },
+                )?;
             }
         }
 

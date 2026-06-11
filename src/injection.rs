@@ -2,6 +2,7 @@
 
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 /// Risk level for detected injection or secret patterns
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -69,6 +70,7 @@ pub struct SecretMatch {
     pub pattern_name: String,
     pub redacted: String,
     pub position: usize,
+    pub risk_level: Option<RiskLevel>,
 }
 
 /// Injection detection patterns
@@ -218,12 +220,48 @@ impl InjectionScanner {
     }
 }
 
+/// Configuration for secret scanning behavior
+#[derive(Debug, Clone)]
+pub struct SecretScannerConfig {
+    /// Optional LLM client for verifying detected secrets
+    pub llm_verifier: Option<Arc<crate::llm::LlmClient>>,
+    /// Shannon entropy threshold for token detection
+    pub entropy_threshold: f64,
+    /// Minimum token length to consider for entropy analysis
+    pub min_token_len: usize,
+}
+
+impl Default for SecretScannerConfig {
+    fn default() -> Self {
+        Self {
+            llm_verifier: None,
+            entropy_threshold: 4.5,
+            min_token_len: 20,
+        }
+    }
+}
+
 /// Secret pattern scanning
-pub struct SecretScanner;
+pub struct SecretScanner {
+    config: SecretScannerConfig,
+}
 
 impl SecretScanner {
-    /// Scan text for common secret patterns
+    /// Create a new SecretScanner with default configuration
+    pub fn new() -> Self {
+        Self {
+            config: SecretScannerConfig::default(),
+        }
+    }
+
+    /// Create a SecretScanner with custom configuration
+    pub fn with_config(config: SecretScannerConfig) -> Self {
+        Self { config }
+    }
+
+    /// Scan text for common secret patterns (synchronous, static method for backward compatibility)
     pub fn scan(text: &str) -> Vec<SecretMatch> {
+        let _scanner = Self::new();
         let mut matches = Vec::new();
 
         // OpenAI API key pattern: sk-*
@@ -235,6 +273,7 @@ impl SecretScanner {
                     pattern_name: "OpenAI API Key".to_string(),
                     redacted: "sk-***".to_string(),
                     position: pos,
+                    risk_level: Some(RiskLevel::High),
                 });
             }
         }
@@ -247,6 +286,7 @@ impl SecretScanner {
                     pattern_name: "AWS Access Key".to_string(),
                     redacted: "AKIA***".to_string(),
                     position: pos,
+                    risk_level: Some(RiskLevel::High),
                 });
             }
         }
@@ -264,6 +304,7 @@ impl SecretScanner {
                     pattern_name: format!("Private Key ({})", pattern),
                     redacted: redacted.to_string(),
                     position: pos,
+                    risk_level: Some(RiskLevel::Critical),
                 });
             }
         }
@@ -289,6 +330,7 @@ impl SecretScanner {
                                 pattern_name: format!("Env Var: {}", key),
                                 redacted: format!("{}={}", key, redacted_key),
                                 position: pos,
+                                risk_level: Some(RiskLevel::High),
                             });
                         }
                     }
@@ -296,6 +338,54 @@ impl SecretScanner {
             }
         }
 
+        matches
+    }
+
+    /// Detect high-entropy tokens (potential secrets) in text
+    /// Returns vector of (token, position, entropy) tuples for tokens above the entropy threshold
+    fn detect_high_entropy_tokens(&self, text: &str) -> Vec<(String, usize, f64)> {
+        let mut high_entropy = Vec::new();
+        
+        // Split on whitespace and common separators, track positions
+        let mut pos = 0;
+        for token in text.split(|c: char| c.is_whitespace() || c == ',' || c == ';' || c == ':') {
+            if let Some(token_pos) = text[pos..].find(token) {
+                let abs_pos = pos + token_pos;
+                
+                if token.len() >= self.config.min_token_len {
+                    let h = entropy(token);
+                    if h >= self.config.entropy_threshold {
+                        high_entropy.push((token.to_string(), abs_pos, h));
+                    }
+                }
+                
+                pos = abs_pos + token.len();
+            }
+        }
+        
+        high_entropy
+    }
+
+    /// Asynchronous scan for secrets (Phase 12)
+    /// Combines pattern matching with entropy analysis
+    pub async fn scan_async(&self, text: &str) -> Vec<SecretMatch> {
+        // First, use the synchronous scan to get standard patterns
+        let mut matches = Self::scan(text);
+        
+        // Then, detect high-entropy tokens
+        let high_entropy_tokens = self.detect_high_entropy_tokens(text);
+        for (token, pos, _h) in high_entropy_tokens {
+            // Only add if not already matched by a pattern
+            if !matches.iter().any(|m| m.position == pos) {
+                matches.push(SecretMatch {
+                    pattern_name: "High-Entropy Token".to_string(),
+                    redacted: format!("{}***", &token[..token.len().min(3)]),
+                    position: pos,
+                    risk_level: Some(RiskLevel::Medium),
+                });
+            }
+        }
+        
         matches
     }
 }

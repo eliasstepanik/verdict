@@ -1,7 +1,6 @@
 //! LLM provider trait and implementations.
 
 use async_trait::async_trait;
-use futures::FutureExt;
 use futures::stream::Stream;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -88,7 +87,6 @@ pub struct LlmChunk {
     pub finish_reason: Option<String>,
 }
 
-
 /// Tool schema sent to the LLM for function calling.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolSchema {
@@ -115,7 +113,6 @@ pub struct LlmRequest {
     #[serde(default)]
     pub tools: Option<Vec<ToolSchema>>,
 }
-
 
 /// A tool call extracted from LLM response
 #[derive(Debug, Clone)]
@@ -176,6 +173,10 @@ pub trait LlmProvider: Send + Sync {
     fn name(&self) -> &str;
 
     /// Complete an LLM request.
+
+    /// Returns the default model name for this provider.
+    fn default_model(&self) -> &str;
+
     async fn complete(&self, req: LlmRequest) -> Result<LlmResponse, LlmError>;
 
     /// Stream an LLM request, yielding chunks as they arrive.
@@ -206,7 +207,6 @@ impl OpenAiCompatibleProvider {
     }
 }
 
-
 /// Internal structs for deserializing OpenAI API responses.
 #[derive(Debug, Deserialize)]
 struct OpenAiToolCallFunction {
@@ -220,6 +220,25 @@ struct OpenAiToolCall {
     id: Option<String>,
     function: OpenAiToolCallFunction,
 }
+
+#[derive(Debug, Deserialize)]
+struct SseStreamDelta {
+    #[serde(default)]
+    content: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SseStreamChoice {
+    delta: SseStreamDelta,
+    #[serde(default)]
+    finish_reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SseStreamChunk {
+    choices: Vec<SseStreamChoice>,
+}
+
 
 #[derive(Debug, Deserialize)]
 struct OpenAiMessage {
@@ -247,18 +266,20 @@ struct OpenAiResponse {
     usage: Option<OpenAiUsage>,
 }
 
-
 #[async_trait]
 impl LlmProvider for OpenAiCompatibleProvider {
     fn name(&self) -> &str {
         "openai-compatible"
     }
 
+    fn default_model(&self) -> &str {
+        &self.default_model
+    }
+
+
     async fn complete(&self, req: LlmRequest) -> Result<LlmResponse, LlmError> {
         // Build the messages array: system first, then history, then new user turn
-        let mut messages = vec![
-            serde_json::json!({"role": "system", "content": req.system}),
-        ];
+        let mut messages = vec![serde_json::json!({"role": "system", "content": req.system})];
         if let Some(history) = &req.history {
             for msg in &history.messages {
                 let role_str = match msg.role {
@@ -278,7 +299,7 @@ impl LlmProvider for OpenAiCompatibleProvider {
             "messages": messages,
             "stream": false
         });
-        
+
         // Add optional fields only if present
         if let Some(max_tokens) = req.max_tokens {
             body["max_tokens"] = serde_json::json!(max_tokens);
@@ -289,22 +310,24 @@ impl LlmProvider for OpenAiCompatibleProvider {
 
         // Add tool schemas for function calling if provided
         if let Some(tools) = &req.tools {
-            let tools_json: Vec<serde_json::Value> = tools.iter().map(|t| {
-                serde_json::json!({
-                    "type": "function",
-                    "function": {
-                        "name": t.name,
-                        "description": t.description,
-                        "parameters": t.parameters
-                    }
+            let tools_json: Vec<serde_json::Value> = tools
+                .iter()
+                .map(|t| {
+                    serde_json::json!({
+                        "type": "function",
+                        "function": {
+                            "name": t.name,
+                            "description": t.description,
+                            "parameters": t.parameters
+                        }
+                    })
                 })
-            }).collect();
+                .collect();
             if !tools_json.is_empty() {
                 body["tools"] = serde_json::json!(tools_json);
                 body["tool_choice"] = serde_json::json!("auto");
             }
         }
-
 
         // Construct the URL — strip any trailing /v1 from base_url to avoid double-path
         let base = self.base_url.trim_end_matches('/').trim_end_matches("/v1");
@@ -350,7 +373,6 @@ impl LlmProvider for OpenAiCompatibleProvider {
             .await
             .map_err(|e| LlmError::InvalidResponse(e.to_string()))?;
 
-
         // Extract first choice
         let first_choice = api_response
             .choices
@@ -362,17 +384,25 @@ impl LlmProvider for OpenAiCompatibleProvider {
         let content = first_choice.message.content.unwrap_or_default();
 
         // Parse tool_calls if present
-        let tool_calls = first_choice.message.tool_calls.map(|calls| {
-            calls.into_iter().filter_map(|tc| {
-                // Parse the arguments JSON string
-                let arguments = serde_json::from_str::<serde_json::Value>(&tc.function.arguments)
-                    .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
-                Some(ToolCall {
-                    name: tc.function.name,
-                    arguments,
-                })
-            }).collect::<Vec<_>>()
-        }).filter(|v: &Vec<ToolCall>| !v.is_empty());
+        let tool_calls = first_choice
+            .message
+            .tool_calls
+            .map(|calls| {
+                calls
+                    .into_iter()
+                    .filter_map(|tc| {
+                        // Parse the arguments JSON string
+                        let arguments =
+                            serde_json::from_str::<serde_json::Value>(&tc.function.arguments)
+                                .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+                        Some(ToolCall {
+                            name: tc.function.name,
+                            arguments,
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .filter(|v: &Vec<ToolCall>| !v.is_empty());
 
         // Extract usage if available
         let usage = api_response.usage.map(|u| LlmUsage {
@@ -386,43 +416,137 @@ impl LlmProvider for OpenAiCompatibleProvider {
             usage,
             tool_calls,
         })
-
     }
+
 
     fn stream(
         &self,
         request: LlmRequest,
     ) -> Pin<Box<dyn Stream<Item = Result<LlmChunk, LlmError>> + Send>> {
-        // Fallback implementation: call complete() and yield the entire response as a single chunk.
-        // True HTTP streaming would require stream=true in the API request and SSE parsing.
-        use futures::stream::iter;
+        use futures::stream::unfold;
+        use futures::StreamExt;
+
         let api_key = self.api_key.clone();
         let base_url = self.base_url.clone();
         let default_model = self.default_model.clone();
-        let client = self.client.clone();
+        let http_client = self.client.clone();
 
-        let response_future = async move {
-            let provider = OpenAiCompatibleProvider {
-                base_url,
-                api_key,
-                default_model,
-                client,
-            };
-            match provider.complete(request).await {
-                Ok(response) => {
-                    vec![Ok(LlmChunk {
-                        delta: response.content,
-                        finish_reason: Some("stop".to_string()),
-                    })]
-                }
-                Err(e) => vec![Err(e)],
-            }
+        let model = if request.model.is_empty() {
+            default_model.clone()
+        } else {
+            request.model.clone()
         };
 
+        let mut messages = vec![serde_json::json!({"role": "system", "content": request.system})];
+        if let Some(history) = &request.history {
+            for msg in &history.messages {
+                let role_str = match msg.role {
+                    ChatRole::System => "system",
+                    ChatRole::User => "user",
+                    ChatRole::Assistant => "assistant",
+                    ChatRole::Tool => "tool",
+                };
+                messages.push(serde_json::json!({"role": role_str, "content": msg.content}));
+            }
+        }
+        messages.push(serde_json::json!({"role": "user", "content": request.user}));
+
+        let mut body = serde_json::json!({
+            "model": model,
+            "messages": messages,
+            "stream": true
+        });
+        if let Some(mt) = request.max_tokens {
+            body["max_tokens"] = serde_json::json!(mt);
+        }
+        if let Some(t) = request.temperature {
+            body["temperature"] = serde_json::json!(t);
+        }
+
+        let base = base_url.trim_end_matches('/').trim_end_matches("/v1").to_string();
+        let url = format!("{}/v1/chat/completions", base);
+
+        // Create the stream using a state machine
+        let stream = async move {
+            // Make the initial HTTP request
+            let resp = http_client
+                .post(&url)
+                .header("Authorization", format!("Bearer {}", api_key))
+                .json(&body)
+                .send()
+                .await
+                .map_err(|e| LlmError::NetworkError(e.to_string()))?;
+
+            let status = resp.status();
+            if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+                return Err(LlmError::AuthFailed);
+            }
+            if !status.is_success() {
+                return Err(LlmError::RequestFailed(format!("HTTP {}", status.as_u16())));
+            }
+
+            // Read entire response as bytes and convert to string
+            let bytes = resp.bytes().await
+                .map_err(|e| LlmError::NetworkError(e.to_string()))?;
+            Ok(String::from_utf8_lossy(&bytes).into_owned())
+        };
+
+        // Convert the async result into a stream of chunks using unfold
         Box::pin(
-            response_future
-                .map(|vec| iter(vec.into_iter()))
-                .flatten_stream(),
+            futures::stream::once(stream)
+                .flat_map(|init_result| {
+                    match init_result {
+                        Err(e) => futures::stream::once(async move { Err(e) }).boxed(),
+                        Ok(full_response) => {
+                            unfold(
+                                (full_response, 0usize),
+                                |(response, mut pos): (String, usize)| async move {
+                                    loop {
+                                        if pos >= response.len() {
+                                            return None;
+                                        }
+
+                                        // Find next newline
+                                        if let Some(newline_pos) = response[pos..].find('\n') {
+                                            let line_end = pos + newline_pos;
+                                            let line = response[pos..line_end].trim_end_matches('\r').to_string();
+                                            pos = line_end + 1;
+
+                                            if line.starts_with("data: ") {
+                                                let data = &line["data: ".len()..];
+                                                if data.trim() == "[DONE]" {
+                                                    return None;
+                                                }
+                                                match serde_json::from_str::<SseStreamChunk>(data) {
+                                                    Ok(chunk) => {
+                                                        if let Some(choice) = chunk.choices.into_iter().next() {
+                                                            let delta = choice.delta.content.unwrap_or_default();
+                                                            let finish_reason = choice.finish_reason;
+                                                            if delta.is_empty() && finish_reason.is_none() {
+                                                                continue;
+                                                            }
+                                                            return Some((
+                                                                Ok(LlmChunk { delta, finish_reason }),
+                                                                (response, pos),
+                                                            ));
+                                                        }
+                                                        continue;
+                                                    }
+                                                    Err(_) => continue, // skip non-JSON lines
+                                                }
+                                            }
+                                            continue;
+                                        } else {
+                                            // No more newlines, we're done
+                                            return None;
+                                        }
+                                    }
+                                },
+                            ).boxed()
+                        }
+                    }
+                })
         )
     }
+
 }

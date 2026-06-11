@@ -29,6 +29,11 @@ impl LlmProvider for MockLlmProvider {
         "mock"
     }
 
+    fn default_model(&self) -> &str {
+        "mock-model"
+    }
+
+
     async fn complete(&self, req: LlmRequest) -> Result<LlmResponse, LlmError> {
         *self.captured_request.lock().unwrap() = Some(req);
         Ok(LlmResponse {

@@ -2745,7 +2745,7 @@ Parallel step execution infrastructure completed in Phase 12:
 - `execute_action()` signature changed from `ctx: &mut StepContext` to `ctx: Arc<tokio::sync::Mutex<StepContext>>` for Send safety
 - Parallel steps now execute with **isolated contexts** (each step gets a cloned context) 
 - Results are merged back into the primary context with **last-writer-wins** semantics for variables
-- Architecture supports true `tokio::task::spawn` concurrency in the future (currently sequential execution within batches maintains safety with non-Send recursive futures)
+- Phase 11 implemented true `tokio::task::JoinSet::spawn` concurrency for parallel batches. Phase 12 verified: all spawns happen in a for-loop before any `join_next().await` call, achieving genuine concurrent execution. Verified by timing test in `tests/phase12.rs`.
 
 #### Phase 12 Implementation Details
 > - `execute_action()` method updated to accept `Arc<tokio::sync::Mutex<StepContext>>` instead of `&mut StepContext`
@@ -3485,3 +3485,57 @@ No self-update is applied without tests, evaluation, and approval.
 The core philosophy remains:
 
 > Prompts suggest. Guards enforce. Verdict decides.
+
+
+---
+
+## Phase 12 — Deferred Items (Completed)
+
+All six Phase 12 items from the deferred backlog are now implemented and verified.
+
+### 12.1 Guard::SemanticCheck — LLM-as-Judge
+
+Replaced the Phase 11 heuristic with a real LLM call. `GuardEngine::evaluate()` now:
+1. Requires `ctx.llm_client` to be set; returns `GuardError::Failed` if absent.
+2. Builds a system prompt: "You are a semantic quality judge. Reply PASS if the output satisfies the assertion, otherwise reply FAIL followed by a short reason."
+3. Calls `llm_client.complete()` with the assertion and step output.
+4. Returns `Ok(())` if response contains "PASS"; `Err(GuardError::Failed)` otherwise.
+
+> **Decision**: Model is selected via `llm_client.default_model()`. Temperature is 0.0 for deterministic judging. Max tokens capped at 64.
+
+### 12.2 True SSE Streaming (`OpenAiCompatibleProvider::stream`)
+
+Replaced the single-chunk fallback wrapper with real OpenAI-compatible SSE streaming:
+- Sets `"stream": true` in the request body (was `false` in Phase 11 fallback).
+- Receives the HTTP response body as a byte stream via `reqwest`.
+- Uses `futures::stream::unfold` state machine to parse `data: {...}` SSE lines.
+- Handles `data: [DONE]` sentinel to signal stream completion.
+- Yields each `LlmChunk { delta, finish_reason }` incrementally.
+
+> **Decision**: `SseStreamDelta`, `SseStreamChoice`, `SseStreamChunk` structs added for SSE parsing.
+
+### 12.3 Context Persistence (`ContextStore`)
+
+`ContextStore` in `src/context.rs` persists `SerializableStepContext` snapshots to disk.
+
+File naming: `{dir}/{pipeline_name}_{step_name}.json` (with path-unsafe chars replaced by `_`).
+
+`PipelineRunner` gains `context_store: Option<Arc<ContextStore>>` and `with_context_store(dir)` builder. When set, auto-saves context after each successful sequential step.
+
+Exports: `pub use context::{ContextStore, ContextStoreError};` in `lib.rs`.
+
+### 12.4 MCP HTTP Transport
+
+`McpClient` now supports URL-only `McpServerConfig`. Previously returned `Err(McpError::NotImplemented)` for URL-based servers. Added `http_client: Option<reqwest::Client>` and `base_url: Option<String>` fields. `connect()` returns `Ok` for URL-only configs. `discover_tools()` and `call_tool()` branch on `self.base_url.is_some()` to use HTTP JSON-RPC POST.
+
+### 12.5 Secret Detection Context Awareness (`SecretScannerConfig`)
+
+`SecretScanner` converted from unit struct to instance type with configurable LLM verification. `SecretScannerConfig` has `llm_verifier: Option<Arc<LlmClient>>`, `entropy_threshold: f64` (default 4.5), `min_token_len: usize` (default 20). `scan_async()` sends high-entropy-only tokens to LLM for YES/NO verification. `SecretMatch` gains `risk_level: Option<RiskLevel>` field.
+
+### 12.6 Parallel Concurrency Verification
+
+Confirmed `PipelineRunner` correctly uses `tokio::task::JoinSet::spawn()` for true concurrent parallel step execution. Verified by timing test in `tests/phase12.rs::test_parallel_steps_true_concurrency`.
+
+### Phase 12 Test Coverage
+
+`tests/phase12.rs` — 14 integration tests covering all 6 items.

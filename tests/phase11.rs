@@ -24,6 +24,10 @@ impl LlmProvider for MockLlmProvider {
         "mock"
     }
 
+    fn default_model(&self) -> &str {
+        "mock-model"
+    }
+
     async fn complete(&self, _req: LlmRequest) -> Result<LlmResponse, LlmError> {
         Ok(LlmResponse {
             content: self.response.clone(),

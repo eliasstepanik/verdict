@@ -170,19 +170,13 @@ fn test_mcp_server_allowlist_rejects_unlisted_tool() {
     assert!(!config.is_tool_allowed("blacklisted"));
 }
 
-/// Test 10: McpClient::connect with URL-only config returns NotImplemented
+/// Test 10: McpClient::connect with URL-only config succeeds (Phase 12)
 #[tokio::test]
-async fn test_mcp_client_url_only_not_implemented() {
+async fn test_mcp_client_connect_url_only_succeeds() {
     let config = McpServerConfig::new("http_server").with_url("http://localhost:3000");
 
     let result = McpClient::connect(config).await;
-    assert!(result.is_err());
-
-    if let Err(McpError::NotImplemented(msg)) = result {
-        assert!(msg.contains("not yet supported"));
-    } else {
-        panic!("Expected NotImplemented error");
-    }
+    assert!(result.is_ok(), "URL-only connect should succeed: {:?}", result.err());
 }
 
 /// Test 11: McpClient::connect with nonexistent command returns error
