@@ -806,8 +806,24 @@ impl PipelineRunner {
             step_idx += 1;
         }
 
-        // Finalize
+        // Finalize: append the completion event BEFORE snapshotting into PipelineResult
+        // so the result's audit_log contains the final event.
         let success = steps_failed.is_empty();
+        self.audit_log.append(AuditEntry {
+            timestamp: Utc::now(),
+            pipeline_name: pipeline.name.clone(),
+            step_name: String::new(),
+            event: if success {
+                AuditEvent::PipelineCompleted {
+                    steps_passed: steps_passed.len() as u32,
+                    steps_failed: steps_failed.len() as u32,
+                }
+            } else {
+                AuditEvent::PipelineFailed {
+                    reason: format!("Failed steps: {:?}", steps_failed),
+                }
+            },
+        });
         let pipeline_result = PipelineResult {
             pipeline_name: pipeline.name.clone(),
             steps_passed,
@@ -817,21 +833,6 @@ impl PipelineRunner {
             success,
         };
 
-        self.audit_log.append(AuditEntry {
-            timestamp: Utc::now(),
-            pipeline_name: pipeline.name.clone(),
-            step_name: String::new(),
-            event: if success {
-                AuditEvent::PipelineCompleted {
-                    steps_passed: pipeline_result.steps_passed.len() as u32,
-                    steps_failed: pipeline_result.steps_failed.len() as u32,
-                }
-            } else {
-                AuditEvent::PipelineFailed {
-                    reason: format!("Failed steps: {:?}", pipeline_result.steps_failed),
-                }
-            },
-        });
 
         // Emit pipeline completion event to output sink
         if let Some(sink) = &self.output_sink {

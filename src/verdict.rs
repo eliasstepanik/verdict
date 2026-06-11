@@ -106,28 +106,10 @@ impl VerdictEngine {
                 Ok(())
             }
 
-            Verdict::UserApproval { prompt, show_diff } => {
-                use std::io::{self, Write};
-                
-                if *show_diff {
-                    if let Some(output) = &ctx.output {
-                        eprintln!("\n--- Output / Diff ---\n{}\n---\n", output.raw);
-                    }
-                }
-                
-                eprint!("{} [y/N]: ", prompt);
-                io::stderr().flush().map_err(|e| VerdictError::IoError(e.to_string()))?;
-                
-                let mut line = String::new();
-                io::stdin()
-                    .read_line(&mut line)
-                    .map_err(|e| VerdictError::IoError(e.to_string()))?;
-                
-                match line.trim().to_lowercase().as_str() {
-                    "y" | "yes" => Ok(()),
-                    _ => Err(VerdictError::UserApprovalDenied { prompt }),
-                }
+            Verdict::UserApproval { prompt, .. } => {
+                Err(VerdictError::UserApprovalRequired { prompt })
             }
+
 
             Verdict::LlmJudge { system, input_template, model: _, pass_on_pattern } => {
                 let llm_client = ctx.llm_client.as_ref()
