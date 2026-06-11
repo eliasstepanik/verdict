@@ -1,4 +1,4 @@
-r th# verdict
+verdict
 
 **A Rust framework for building agents that actually complete their work through code-enforced structure, guarded execution, and composable pipelines.**
 
