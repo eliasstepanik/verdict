@@ -88,6 +88,15 @@ pub struct LlmChunk {
     pub finish_reason: Option<String>,
 }
 
+
+/// Tool schema sent to the LLM for function calling.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolSchema {
+    pub name: String,
+    pub description: String,
+    pub parameters: serde_json::Value,
+}
+
 /// Request to an LLM provider.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LlmRequest {
@@ -101,7 +110,12 @@ pub struct LlmRequest {
     /// Optional temperature for sampling (0.0 to 2.0).
     /// Higher values = more creative, lower values = more deterministic.
     pub temperature: Option<f32>,
+    /// Optional tool schemas for function/tool calling.
+    /// When present, the LLM may respond with tool_calls instead of plain text.
+    #[serde(default)]
+    pub tools: Option<Vec<ToolSchema>>,
 }
+
 
 /// A tool call extracted from LLM response
 #[derive(Debug, Clone)]
@@ -192,10 +206,27 @@ impl OpenAiCompatibleProvider {
     }
 }
 
-/// Internal struct for deserializing OpenAI API responses.
+
+/// Internal structs for deserializing OpenAI API responses.
+#[derive(Debug, Deserialize)]
+struct OpenAiToolCallFunction {
+    name: String,
+    arguments: String, // JSON string
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAiToolCall {
+    #[allow(dead_code)]
+    id: Option<String>,
+    function: OpenAiToolCallFunction,
+}
+
 #[derive(Debug, Deserialize)]
 struct OpenAiMessage {
-    content: String,
+    #[serde(default)]
+    content: Option<String>,
+    #[serde(default)]
+    tool_calls: Option<Vec<OpenAiToolCall>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -215,6 +246,7 @@ struct OpenAiResponse {
     model: String,
     usage: Option<OpenAiUsage>,
 }
+
 
 #[async_trait]
 impl LlmProvider for OpenAiCompatibleProvider {
@@ -254,6 +286,25 @@ impl LlmProvider for OpenAiCompatibleProvider {
         if let Some(temperature) = req.temperature {
             body["temperature"] = serde_json::json!(temperature);
         }
+
+        // Add tool schemas for function calling if provided
+        if let Some(tools) = &req.tools {
+            let tools_json: Vec<serde_json::Value> = tools.iter().map(|t| {
+                serde_json::json!({
+                    "type": "function",
+                    "function": {
+                        "name": t.name,
+                        "description": t.description,
+                        "parameters": t.parameters
+                    }
+                })
+            }).collect();
+            if !tools_json.is_empty() {
+                body["tools"] = serde_json::json!(tools_json);
+                body["tool_choice"] = serde_json::json!("auto");
+            }
+        }
+
 
         // Construct the URL — strip any trailing /v1 from base_url to avoid double-path
         let base = self.base_url.trim_end_matches('/').trim_end_matches("/v1");
@@ -299,14 +350,29 @@ impl LlmProvider for OpenAiCompatibleProvider {
             .await
             .map_err(|e| LlmError::InvalidResponse(e.to_string()))?;
 
-        // Extract content from first choice
-        let content = api_response
+
+        // Extract first choice
+        let first_choice = api_response
             .choices
-            .first()
-            .ok_or_else(|| LlmError::InvalidResponse("no choices in response".into()))?
-            .message
-            .content
-            .clone();
+            .into_iter()
+            .next()
+            .ok_or_else(|| LlmError::InvalidResponse("no choices in response".into()))?;
+
+        // Extract content (may be null/empty when tool_calls are present)
+        let content = first_choice.message.content.unwrap_or_default();
+
+        // Parse tool_calls if present
+        let tool_calls = first_choice.message.tool_calls.map(|calls| {
+            calls.into_iter().filter_map(|tc| {
+                // Parse the arguments JSON string
+                let arguments = serde_json::from_str::<serde_json::Value>(&tc.function.arguments)
+                    .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+                Some(ToolCall {
+                    name: tc.function.name,
+                    arguments,
+                })
+            }).collect::<Vec<_>>()
+        }).filter(|v: &Vec<ToolCall>| !v.is_empty());
 
         // Extract usage if available
         let usage = api_response.usage.map(|u| LlmUsage {
@@ -318,8 +384,9 @@ impl LlmProvider for OpenAiCompatibleProvider {
             content,
             model: api_response.model,
             usage,
-            tool_calls: None,
+            tool_calls,
         })
+
     }
 
     fn stream(

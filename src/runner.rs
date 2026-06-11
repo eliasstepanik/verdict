@@ -7,6 +7,39 @@ use futures::stream::StreamExt;
 use tokio::sync::Mutex as TokioMutex;
 use async_recursion::async_recursion;
 
+
+/// Resolve template placeholders in a prompt string.
+///
+/// Supported placeholders:
+/// - `{input}` → the pipeline input value (as string)
+/// - `{step_name}` → the raw output of the named prior step
+fn resolve_template(template: &str, ctx: &crate::context::StepContext) -> String {
+    let mut result = template.to_string();
+
+    // Substitute {input}
+    let input_str = match &ctx.input {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Object(map) => {
+            // If input is {"task": "..."}, extract the "task" field preferentially
+            if let Some(serde_json::Value::String(task)) = map.get("task") {
+                task.clone()
+            } else {
+                ctx.input.to_string()
+            }
+        }
+        v => v.to_string(),
+    };
+    result = result.replace("{input}", &input_str);
+
+    // Substitute {step_name} for each prior step result
+    for (step_name, step_result) in &ctx.step_results {
+        let placeholder = format!("{{{}}}", step_name);
+        result = result.replace(&placeholder, &step_result.output.raw);
+    }
+
+    result
+}
+
 use crate::action::{StepAction, StepError, StepOutput, IterationFailureMode, SkillMode, StopCondition};
 use crate::agent::Agent;
 use crate::audit::{AuditEntry, AuditEvent, AuditLog};
@@ -824,34 +857,43 @@ impl PipelineRunner {
                         reason: "no LLM client configured".into(),
                     })?;
 
+
                 let model_str = match model {
                     Some(spec) => spec.model.clone(),
-                    None => "gpt-4o".into(),
+                    None => String::new(), // empty → provider uses its configured default
                 };
 
-                // Resolve history: named conversation takes precedence over per-step history
-                let history = {
-                    if let Some(conv_id) = conversation_id {
+                // Resolve template placeholders in system and user prompts
+                let (resolved_system, resolved_user, history) = {
+                    let ctx_lock = ctx.lock().await;
+                    let sys = resolve_template(system, &ctx_lock);
+                    let usr = resolve_template(user, &ctx_lock);
+                    // Resolve history: named conversation takes precedence over per-step history
+                    let hist = if let Some(conv_id) = conversation_id {
                         let reg = self.conversation_registry.lock().unwrap();
                         reg.get(conv_id).filter(|h| !h.is_empty()).cloned()
                     } else {
-                        let ctx_lock = ctx.lock().await;
                         if !ctx_lock.conversation_history.is_empty() {
                             Some(ctx_lock.conversation_history.clone())
                         } else {
                             None
                         }
-                    }
+                    };
+                    (sys, usr, hist)
                 };
 
+
                 let req = crate::llm::LlmRequest {
-                    system: system.clone(),
-                    user: user.clone(),
+                    system: resolved_system.clone(),
+                    user: resolved_user.clone(),
                     model: model_str,
                     max_tokens: None,
                     history,
                     temperature: None,
+                    tools: None,
                 };
+
+
 
                 let resp = client.complete(req).await
                     .map_err(|e| StepError::ActionFailed {
@@ -870,22 +912,24 @@ impl PipelineRunner {
                     }
                 }
 
+
                 // Append to conversation history (both named registry and per-step)
                 if *append_to_history {
                     // Update named conversation if specified
                     if let Some(conv_id) = conversation_id {
                         let mut reg = self.conversation_registry.lock().unwrap();
                         let history = reg.get_or_create(conv_id);
-                        history.push(crate::llm::provider::ChatRole::User, user.clone());
+                        history.push(crate::llm::provider::ChatRole::User, resolved_user.clone());
                         history.push(crate::llm::provider::ChatRole::Assistant, resp.content.clone());
                     }
                     // Also update per-step conversation history
                     {
                         let mut ctx_lock = ctx.lock().await;
-                        ctx_lock.conversation_history.push(crate::llm::provider::ChatRole::User, user.clone());
+                        ctx_lock.conversation_history.push(crate::llm::provider::ChatRole::User, resolved_user.clone());
                         ctx_lock.conversation_history.push(crate::llm::provider::ChatRole::Assistant, resp.content.clone());
                     }
                 }
+
 
                 Ok(StepOutput::new(resp.content))
             }
@@ -1182,28 +1226,37 @@ impl PipelineRunner {
                         reason: "no LLM client configured".into(),
                     })?;
 
+
                 let model_str = match model {
                     Some(spec) => spec.model.clone(),
-                    None => "gpt-4o".into(),
+                    None => String::new(), // empty → provider uses its configured default
                 };
 
-                let history = {
+                // Resolve template placeholders in system and user prompts
+                let (resolved_system, resolved_user, history) = {
                     let ctx_lock = ctx.lock().await;
-                    if ctx_lock.conversation_history.is_empty() {
+                    let sys = resolve_template(system, &ctx_lock);
+                    let usr = resolve_template(user, &ctx_lock);
+                    let hist = if ctx_lock.conversation_history.is_empty() {
                         None
                     } else {
                         Some(ctx_lock.conversation_history.clone())
-                    }
+                    };
+                    (sys, usr, hist)
                 };
 
+
                 let req = crate::llm::LlmRequest {
-                    system: system.clone(),
-                    user: user.clone(),
+                    system: resolved_system.clone(),
+                    user: resolved_user.clone(),
                     model: model_str,
                     max_tokens: None,
                     history,
                     temperature: None,
+                    tools: None,
                 };
+
+
 
                 // Call the provider's stream method to get chunks
                 let mut stream = client.stream(req);
@@ -1243,15 +1296,17 @@ impl PipelineRunner {
                         ctx_lock.budget.remaining_usd = Some((remaining - cost).max(0.0));
                     }
 
-                    // Append to conversation history
+
+                    // Append resolved prompts to conversation history
                     ctx_lock.conversation_history.push(
                         crate::llm::provider::ChatRole::User,
-                        user.clone(),
+                        resolved_user.clone(),
                     );
                     ctx_lock.conversation_history.push(
                         crate::llm::provider::ChatRole::Assistant,
                         full_response.clone(),
                     );
+
                 }
 
                 Ok(StepOutput::new(full_response))
@@ -1265,32 +1320,58 @@ impl PipelineRunner {
                 max_rounds,
                 stop_condition,
             } => {
-                // ReAct tool-use loop: iterate LLM calls until condition met
-                // Note: tool_calls parsing from LLM response is a future enhancement
+                // ReAct tool-use loop with parallel multi-tool dispatch.
+                //
+                // Each round:
+                //   1. Call LLM with tool schemas attached.
+                //   2. If response contains tool_calls → dispatch ALL of them in parallel.
+                //   3. Append each tool result as a `tool` role message.
+                //   4. Loop back to step 1 with updated history.
+                //   5. Stop when LLM returns text-only (no tool_calls), or max_rounds reached.
                 let client = self.llm_client.as_ref()
                     .ok_or_else(|| StepError::ActionFailed {
                         reason: "no LLM client configured".into(),
                     })?;
 
+                // Resolve template placeholders once at the start
+                let (resolved_system, resolved_user_initial) = {
+                    let ctx_lock = ctx.lock().await;
+                    (resolve_template(system, &ctx_lock), resolve_template(user, &ctx_lock))
+                };
+
+
+                // Build tool schemas from the registry for the declared tool names.
+                let tool_schemas: Vec<crate::llm::provider::ToolSchema> = _allowed_tools
+                    .iter()
+                    .filter_map(|name| self.tool_registry.get(name))
+                    .map(|t| crate::llm::provider::ToolSchema {
+                        name: t.name().to_string(),
+                        description: t.description().to_string(),
+                        parameters: t.schema(),
+                    })
+                    .collect();
+
+
+
                 let mut history = crate::llm::provider::MessageHistory {
                     messages: vec![],
                     conversation_id: None,
                 };
-
                 let mut final_response = String::new();
                 let max_iterations = *max_rounds;
+                let mut llm_calls: u32 = 0;
 
-                for round in 0..max_iterations {
-                    // Call LLM with current message history
+                'outer: for round in 0..max_iterations {
                     let model_str = model.model.clone();
                     let user_message = if round == 0 {
-                        user.clone()
+                        resolved_user_initial.clone()
                     } else {
-                        final_response.clone()
+                        // Subsequent rounds: re-send original user message (history carries context)
+                        resolved_user_initial.clone()
                     };
 
                     let req = crate::llm::LlmRequest {
-                        system: system.clone(),
+                        system: resolved_system.clone(),
                         user: user_message.clone(),
                         model: model_str,
                         max_tokens: None,
@@ -1300,48 +1381,121 @@ impl PipelineRunner {
                             None
                         },
                         temperature: None,
+                        tools: if !tool_schemas.is_empty() { Some(tool_schemas.clone()) } else { None },
                     };
 
                     let response = client.complete(req).await
                         .map_err(|e| StepError::ActionFailed {
                             reason: e.to_string(),
                         })?;
+                    llm_calls += 1;
 
+                    // Append assistant turn to history
+                    if !response.content.is_empty() {
+                        history.messages.push(crate::llm::provider::ChatMessage {
+                            role: crate::llm::provider::ChatRole::Assistant,
+                            content: response.content.clone(),
+                        });
+                    }
                     final_response = response.content.clone();
 
-                    // Add assistant response to history
-                    history.messages.push(crate::llm::provider::ChatMessage {
-                        role: crate::llm::provider::ChatRole::Assistant,
-                        content: final_response.clone(),
-                    });
 
-                    // Check stop condition
-                    match stop_condition {
-                        StopCondition::TextOnly => {
-                            // Stop if response doesn't contain tool call syntax
-                            if !final_response.contains("<tool>") && !final_response.contains("[tool]") {
-                                break;
+                    // Check if LLM returned tool calls; if not, stop the loop
+                    let has_tool_calls = response.tool_calls
+                        .as_ref()
+                        .map(|v| !v.is_empty())
+                        .unwrap_or(false);
+
+                    if !has_tool_calls {
+                        // No tool calls — text-only response, stop loop
+                        break 'outer;
+                    }
+
+                    // Dispatch all tool calls in parallel
+                    let tool_calls = response.tool_calls.unwrap();
+
+                            // Dispatch all tool calls in parallel
+                            use tokio::task::JoinSet;
+                            let mut join_set: JoinSet<(String, String, Result<String, String>)> = JoinSet::new();
+
+                            for tc in tool_calls {
+                                let tool_name = tc.name.clone();
+                                let tool_args = tc.arguments.clone();
+                                let call_id = format!("call_{}", tool_name);
+                                let runner_clone = self.clone();
+                                let ctx_clone = ctx.clone();
+
+                                join_set.spawn(async move {
+                                    // Build a temp mutable ctx for the tool call
+                                    let mut temp_ctx = ctx_clone.lock().await.clone();
+                                    let result = runner_clone
+                                        .execute_tool_call(&tool_name, &tool_args, &mut temp_ctx)
+                                        .await;
+                                    let output = match result {
+                                        Ok(out) => out.raw,
+                                        Err(e) => format!("Error: {}", e),
+                                    };
+                                    (call_id, tool_name, Ok(output))
+                                });
                             }
-                        }
-                        StopCondition::Pattern(pattern) => {
-                            if let Ok(regex) = regex::Regex::new(pattern) {
-                                if regex.is_match(&final_response) {
-                                    break;
+
+                            // Collect all tool results and add to history
+                            while let Some(join_result) = join_set.join_next().await {
+                                match join_result {
+                                    Ok((_call_id, tool_name, Ok(output))) => {
+                                        // Emit ToolChunk event to output sink
+                                        if let Some(sink) = &self.output_sink {
+                                            let step_name = ctx.lock().await.step_name.clone();
+                                            sink.emit(OutputEvent::ToolChunk {
+                                                step: step_name,
+                                                tool: tool_name.clone(),
+                                                delta: output.clone(),
+                                            }).await;
+                                        }
+                                        // Add tool result to history as a tool message
+                                        history.messages.push(crate::llm::provider::ChatMessage {
+                                            role: crate::llm::provider::ChatRole::Tool,
+                                            content: format!("[{}] {}", tool_name, output),
+                                        });
+                                    }
+                                    Ok((_call_id, tool_name, Err(e))) => {
+                                        history.messages.push(crate::llm::provider::ChatMessage {
+                                            role: crate::llm::provider::ChatRole::Tool,
+                                            content: format!("[{}] Error: {}", tool_name, e),
+                                        });
+                                    }
+                                    Err(join_err) => {
+                                        return Err(StepError::ActionFailed {
+                                            reason: format!("tool task join error: {}", join_err),
+                                        });
+                                    }
                                 }
                             }
-                        }
-                        StopCondition::MaxRounds => {
-                            if round + 1 >= max_iterations {
-                                break;
+
+                            // Check stop condition after tool dispatch
+                            match stop_condition {
+                                StopCondition::MaxRounds => {
+                                    if round + 1 >= max_iterations {
+                                        break 'outer;
+                                    }
+                                }
+                                StopCondition::Pattern(pattern) => {
+                                    if let Ok(regex) = regex::Regex::new(pattern) {
+                                        if regex.is_match(&final_response) {
+                                            break 'outer;
+                                        }
+                                    }
+                                }
+                                StopCondition::TextOnly => {
+                                    // Continue looping — we had tool calls this round
+                                }
                             }
-                        }
-                    }
                 }
 
                 // Wire budget tracking
                 {
                     let mut ctx_lock = ctx.lock().await;
-                    ctx_lock.budget.llm_calls_used = ctx_lock.budget.llm_calls_used.saturating_add(1);
+                    ctx_lock.budget.llm_calls_used = ctx_lock.budget.llm_calls_used.saturating_add(llm_calls);
                     let token_estimate = (final_response.len() as f64 / 4.0) as u32;
                     let cost = (token_estimate as f64) * 0.000001;
                     if let Some(remaining) = ctx_lock.budget.remaining_usd {
@@ -1351,6 +1505,7 @@ impl PipelineRunner {
 
                 Ok(StepOutput::new(final_response))
             }
+
         }
     }
 

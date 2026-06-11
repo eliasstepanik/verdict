@@ -68,6 +68,7 @@ async fn test_llm_provider_trait_object_dispatch() {
         max_tokens: None,
         history: None,
         temperature: None,
+        tools: None,
     };
     let resp = provider.complete(req).await.unwrap();
     assert_eq!(resp.content, "hello");

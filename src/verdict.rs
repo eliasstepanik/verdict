@@ -147,6 +147,7 @@ impl VerdictEngine {
                     max_tokens: Some(256),
                     history: None,
                     temperature: None,
+                    tools: None,
                 };
 
                 let response = llm_client.complete(req).await

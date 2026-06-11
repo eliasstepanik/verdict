@@ -39,6 +39,17 @@ pub enum ToolSet {
 }
 
 impl ToolSet {
+
+    /// Return the list of explicitly named tools, if this is an Allow set.
+    /// Returns None for Full/ReadWrite/Deny/etc. (caller must enumerate registry instead).
+    pub fn explicit_names(&self) -> Option<&[String]> {
+        match self {
+            ToolSet::Allow(names) => Some(names.as_slice()),
+            _ => None,
+        }
+    }
+
+
     /// Check if a tool is allowed by this toolset.
     ///
     /// In Phase 1, this is a basic stub that handles the common cases.
