@@ -36,7 +36,8 @@ pub fn coder_agent() -> Agent {
         name: "coder_pipeline".into(),
         steps: vec![step],
         on_failure: FailureMode::Abort,
-        max_retries: 3,
+        // Retry budget is centralised in AgentPolicy.max_retries; pipeline does not add its own.
+        max_retries: 1,
     };
 
     let policy = AgentPolicy {
