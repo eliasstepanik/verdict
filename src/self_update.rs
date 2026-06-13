@@ -115,8 +115,8 @@ impl SelfUpdateEngine {
         }
 
         // Check if patch is a valid unified diff (has diff markers)
-        if !proposal.patch.contains("--- ") || !proposal.patch.contains("+++ ")
-            || !proposal.patch.contains("@@")
+        if !proposal.patch.contains("--- ") && !proposal.patch.contains("+++ ")
+            && !proposal.patch.contains("@@")
         {
             return Err(SelfUpdateError::InvalidDiff);
         }
@@ -156,9 +156,13 @@ impl SelfUpdateEngine {
             .await
             .map_err(|e| SelfUpdateError::Io(e.to_string()))?;
 
+        let patch_path_str = patch_path
+            .to_str()
+            .ok_or_else(|| SelfUpdateError::Io("patch path contains non-UTF-8 characters".to_string()))?;
+
         // Step 1: git apply --check (dry run)
         let check = tokio::process::Command::new("git")
-            .args(["apply", "--check", patch_path.to_str().unwrap()])
+            .args(["apply", "--check", patch_path_str])
             .current_dir(sandbox_dir)
             .output()
             .await
