@@ -156,13 +156,9 @@ impl SelfUpdateEngine {
             .await
             .map_err(|e| SelfUpdateError::Io(e.to_string()))?;
 
-        let patch_path_str = patch_path
-            .to_str()
-            .ok_or_else(|| SelfUpdateError::Io("patch path contains non-UTF-8 characters".to_string()))?;
-
         // Step 1: git apply --check (dry run)
         let check = tokio::process::Command::new("git")
-            .args(["apply", "--check", patch_path_str])
+            .args(["apply", "--check", patch_path.to_str().unwrap()])
             .current_dir(sandbox_dir)
             .output()
             .await
@@ -186,6 +182,34 @@ impl SelfUpdateEngine {
             return Err(SelfUpdateError::PatchApplyFailed(
                 String::from_utf8_lossy(&apply.stderr).into_owned(),
             ));
+        }
+
+        // Step 3: cargo check — verify the patched code still compiles.
+        let check_build = tokio::process::Command::new("cargo")
+            .args(["check", "--quiet"])
+            .current_dir(sandbox_dir)
+            .output()
+            .await
+            .map_err(|e| SelfUpdateError::Io(e.to_string()))?;
+
+        if !check_build.status.success() {
+            return Err(SelfUpdateError::CompileFailed {
+                reason: String::from_utf8_lossy(&check_build.stderr).into_owned(),
+            });
+        }
+
+        // Step 4: cargo test — verify the patched code still passes tests.
+        let test_run = tokio::process::Command::new("cargo")
+            .args(["test", "--quiet", "--no-fail-fast"])
+            .current_dir(sandbox_dir)
+            .output()
+            .await
+            .map_err(|e| SelfUpdateError::Io(e.to_string()))?;
+
+        if !test_run.status.success() {
+            return Err(SelfUpdateError::TestFailed {
+                reason: String::from_utf8_lossy(&test_run.stderr).into_owned(),
+            });
         }
 
         Ok(())
