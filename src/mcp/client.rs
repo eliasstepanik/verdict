@@ -169,11 +169,20 @@ impl McpClient {
         let stdin = process.stdin.as_mut().ok_or(McpError::Io("no stdin".into()))?;
         let stdout = process.stdout.as_mut().ok_or(McpError::Io("no stdout".into()))?;
 
+        // Increment ID counter
+        let id = {
+            let mut id_ref = self.request_id.lock().map_err(|_| {
+                McpError::JsonRpc("failed to acquire request ID lock".to_string())
+            })?;
+            *id_ref += 1;
+            *id_ref
+        };
+
         // Write JSON-RPC request
         use tokio::io::AsyncWriteExt;
         let request = json!({
             "jsonrpc": "2.0",
-            "id": 0,
+            "id": id,
             "method": "tools/list",
             "params": {}
         });
