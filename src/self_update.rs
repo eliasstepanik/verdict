@@ -115,8 +115,8 @@ impl SelfUpdateEngine {
         }
 
         // Check if patch is a valid unified diff (has diff markers)
-        if !proposal.patch.contains("--- ") && !proposal.patch.contains("+++ ")
-            && !proposal.patch.contains("@@")
+        if !proposal.patch.contains("--- ") || !proposal.patch.contains("+++ ")
+            || !proposal.patch.contains("@@")
         {
             return Err(SelfUpdateError::InvalidDiff);
         }
