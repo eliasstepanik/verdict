@@ -67,10 +67,10 @@ impl FilesystemPolicy {
                     (Some(parent), Some(name)) => {
                         match std::fs::canonicalize(parent) {
                             Ok(canon_parent) => canon_parent.join(name),
-                            Err(_) => abs,
+                            Err(_) => return false,
                         }
                     }
-                    _ => abs,
+                    _ => return false,
                 }
             }
         };
@@ -88,42 +88,8 @@ impl FilesystemPolicy {
         let norm_path = strip_verbatim_prefix(&resolved_path);
         let norm_root = strip_verbatim_prefix(&resolved_root);
 
-        // Helper closure: check if a candidate path is within any allowed entry
-        // in the supplied list. Each entry is canonicalized/normalised the same
-        // way as the target path so comparisons are consistent.
-        let within_any = |candidate: &std::path::Path, list: &[PathBuf]| -> bool {
-            for entry in list {
-                let resolved_entry = match std::fs::canonicalize(entry) {
-                    Ok(p) => p,
-                    Err(_) => entry.clone(),
-                };
-                let norm_entry = strip_verbatim_prefix(&resolved_entry);
-                if candidate.starts_with(&norm_entry) {
-                    return true;
-                }
-            }
-            false
-        };
-
-        let in_workspace = norm_path.starts_with(&norm_root)
-            || norm_path
-                .parent()
-                .map(|p| p.starts_with(&norm_root))
-                .unwrap_or(false);
-
-        if in_workspace {
-            // If read_paths or write_paths are non-empty, the path must be
-            // within at least one of those allowed entries. If both lists are
-            // empty, fall back to allowing anything within the workspace.
-            if self.read_paths.is_empty() && self.write_paths.is_empty() {
-                return true;
-            }
-            if within_any(&norm_path, &self.read_paths)
-                || within_any(&norm_path, &self.write_paths)
-            {
-                return true;
-            }
-            return false;
+        if norm_path.starts_with(&norm_root) {
+            return true;
         }
         // Also allow if the parent directory is within the workspace (covers the
         // case where the file itself does not yet exist).
