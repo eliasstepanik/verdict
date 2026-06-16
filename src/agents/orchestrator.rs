@@ -1,40 +1,97 @@
 //! Orchestrator agent: delegates work to specialized agents
 
-use crate::action::StepAction;
+use crate::action::{StepAction, DelegationPolicy};
 use crate::agent::{Agent, AgentPolicy, FilesystemPolicy, NetworkPolicy};
-use crate::guard::Guard;
+use crate::guards::Guard;
 use crate::pipeline::{AgentStep, FailureMode, InjectionProtection, Pipeline};
 use crate::skills::skill::SkillSet;
 use crate::toolset::ToolSet;
 use crate::verdict::Verdict;
+use serde_json::json;
 
 /// Creates an orchestrator agent that delegates work to specialized agents.
 ///
 /// The orchestrator agent is read-only and coordinates the work of other agents
 /// (planner, coder, reviewer, debugger, reflector) to achieve user goals.
 pub fn orchestrator_agent() -> Agent {
-    let step = AgentStep {
+    let plan_step = AgentStep {
         name: "orchestrate".into(),
         guard_in: Guard::None,
-        action: StepAction::LlmCall {
-            system: "You are an orchestrator agent. Coordinate specialized agents to achieve the user's goal.".into(),
-            user: "Goal: {goal}\n\nAvailable agents: planner, coder, reviewer, debugger, reflector.\n\nProduce a delegation plan.".into(),
-            model: None,
-            conversation_id: None,
-            append_to_history: true,
+        action: StepAction::DelegateAgent {
+            agent: "planner".into(),
+            input: json!({ "task": "{input}" }),
+            expected_output_schema: None,
+            delegation_policy: DelegationPolicy {
+                max_depth: 2,
+                allowed_agents: vec![],
+                require_output_schema: false,
+                inherit_tool_scope: true,
+                inherit_budget: true,
+                require_user_approval: false,
+            },
         },
         guard_out: Guard::NonEmptyOutput,
         verdict: Verdict::Automated(Guard::NonEmptyOutput),
         tools: ToolSet::ReadOnly,
-        injection_protection: InjectionProtection::None,
+        injection_protection: InjectionProtection::Strict,
         output_schema: None,
         dependencies: Vec::new(),
         parallel: false,
     };
 
+    let implement_step = AgentStep {
+        name: "implement".into(),
+        guard_in: Guard::StepPassed("orchestrate".into()),
+        action: StepAction::DelegateAgent {
+            agent: "coder".into(),
+            input: json!({ "plan": "{orchestrate}", "task": "{input}" }),
+            expected_output_schema: None,
+            delegation_policy: DelegationPolicy {
+                max_depth: 2,
+                allowed_agents: vec![],
+                require_output_schema: false,
+                inherit_tool_scope: true,
+                inherit_budget: true,
+                require_user_approval: false,
+            },
+        },
+        guard_out: Guard::NonEmptyOutput,
+        verdict: Verdict::Automated(Guard::NonEmptyOutput),
+        tools: ToolSet::ReadOnly,
+        injection_protection: InjectionProtection::Strict,
+        output_schema: None,
+        dependencies: vec!["orchestrate".into()],
+        parallel: false,
+    };
+
+    let review_step = AgentStep {
+        name: "review".into(),
+        guard_in: Guard::StepPassed("implement".into()),
+        action: StepAction::DelegateAgent {
+            agent: "reviewer".into(),
+            input: json!({ "code": "{implement}", "task": "{input}" }),
+            expected_output_schema: None,
+            delegation_policy: DelegationPolicy {
+                max_depth: 2,
+                allowed_agents: vec![],
+                require_output_schema: false,
+                inherit_tool_scope: true,
+                inherit_budget: true,
+                require_user_approval: false,
+            },
+        },
+        guard_out: Guard::NonEmptyOutput,
+        verdict: Verdict::Automated(Guard::NonEmptyOutput),
+        tools: ToolSet::ReadOnly,
+        injection_protection: InjectionProtection::Strict,
+        output_schema: None,
+        dependencies: vec!["implement".into()],
+        parallel: false,
+    };
+
     let pipeline = Pipeline {
         name: "orchestrator_pipeline".into(),
-        steps: vec![step],
+        steps: vec![plan_step, implement_step, review_step],
         on_failure: FailureMode::Abort,
         max_retries: 3,
     };

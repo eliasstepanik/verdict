@@ -6,6 +6,7 @@ use crate::mcp::McpError;
 use crate::tools::Tool;
 
 /// Registry of available agents for delegation
+#[derive(Debug)]
 pub struct AgentRegistry {
     agents: HashMap<String, Arc<Agent>>,
 }
@@ -39,6 +40,14 @@ impl Default for AgentRegistry {
 /// Registry of available tools
 pub struct ToolRegistry {
     tools: HashMap<String, Arc<dyn Tool>>,
+}
+
+impl std::fmt::Debug for ToolRegistry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ToolRegistry")
+            .field("tools", &self.tools.keys().collect::<Vec<_>>())
+            .finish()
+    }
 }
 
 impl ToolRegistry {

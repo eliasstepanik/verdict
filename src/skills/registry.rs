@@ -18,6 +18,17 @@ impl SkillRegistry {
         }
     }
 
+    /// Create a new skill registry with all built-in skills registered
+    pub fn with_builtins() -> Self {
+        let mut registry = Self::new();
+        registry.register(crate::skills::builtin::rust_debugging());
+        registry.register(crate::skills::builtin::code_review());
+        registry.register(crate::skills::builtin::api_design());
+        registry.register(crate::skills::builtin::test_writing());
+        registry.register(crate::skills::builtin::refactoring());
+        registry
+    }
+
     /// Register a skill in the registry
     pub fn register(&mut self, skill: Skill) {
         self.skills.insert(skill.name.clone(), skill);

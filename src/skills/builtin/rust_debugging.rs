@@ -1,6 +1,6 @@
 //! Rust debugging skill
 
-use crate::guard::Guard;
+use crate::guards::Guard;
 use crate::pipeline::{AgentStep, FailureMode, InjectionProtection, Pipeline};
 use crate::skills::skill::Skill;
 use crate::toolset::ToolSet;
@@ -44,8 +44,8 @@ fn rust_debugging_pipeline() -> Pipeline {
                     tool: "shell.cargo_check".to_string(),
                     args: serde_json::json!({}),
                 },
-                guard_out: Guard::None,
-                verdict: Verdict::Automated(Guard::None),
+                guard_out: Guard::Compiles,
+                verdict: Verdict::Automated(Guard::Compiles),
                 tools: ToolSet::Allow(vec!["shell.cargo_check".to_string()]),
                 injection_protection: InjectionProtection::None,
                 output_schema: None,
@@ -54,13 +54,13 @@ fn rust_debugging_pipeline() -> Pipeline {
             },
             AgentStep {
                 name: "run_tests".to_string(),
-                guard_in: Guard::None,
+                guard_in: Guard::Compiles,
                 action: crate::action::StepAction::ToolCall {
                     tool: "shell.cargo_test".to_string(),
                     args: serde_json::json!({}),
                 },
-                guard_out: Guard::None,
-                verdict: Verdict::Automated(Guard::None),
+                guard_out: Guard::TestsPass,
+                verdict: Verdict::Automated(Guard::TestsPass),
                 tools: ToolSet::Allow(vec!["shell.cargo_test".to_string()]),
                 injection_protection: InjectionProtection::None,
                 output_schema: None,

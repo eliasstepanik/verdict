@@ -6,6 +6,14 @@ use crate::pipeline::Pipeline;
 use crate::skills::skill::SkillSet;
 use crate::toolset::ToolSet;
 
+/// File access type for filesystem policy enforcement
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AccessType {
+    Read,
+    Write,
+}
+
+
 /// Workspace isolation strategy for task execution
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum WorkspaceIsolation {
@@ -39,8 +47,22 @@ pub struct FilesystemPolicy {
 }
 
 impl FilesystemPolicy {
-    /// Check if a path is allowed for access
+    /// Check if a path is allowed for read access
+    pub fn is_read_allowed(&self, path: &std::path::Path) -> bool {
+        self.check_path_allowed(path, AccessType::Read)
+    }
+
+    /// Check if a path is allowed for write access
+    pub fn is_write_allowed(&self, path: &std::path::Path) -> bool {
+        self.check_path_allowed(path, AccessType::Write)
+    }
+
+    /// Check if a path is allowed for access (legacy, used internally)
     pub fn is_path_allowed(&self, path: &std::path::Path) -> bool {
+        self.is_read_allowed(path)
+    }
+
+    fn check_path_allowed(&self, path: &std::path::Path, access_type: AccessType) -> bool {
         // Check if path is in forbidden list
         for forbidden in &self.forbidden_paths {
             if path.starts_with(forbidden) {
@@ -88,18 +110,42 @@ impl FilesystemPolicy {
         let norm_path = strip_verbatim_prefix(&resolved_path);
         let norm_root = strip_verbatim_prefix(&resolved_root);
 
-        if norm_path.starts_with(&norm_root) {
-            return true;
+        if !norm_path.starts_with(&norm_root) {
+            // Also check if the parent directory is within the workspace (covers the
+            // case where the file itself does not yet exist).
+            if let Some(parent) = norm_path.parent() {
+                if !parent.starts_with(&norm_root) {
+                    return false;
+                }
+            } else {
+                return false;
+            }
         }
-        // Also allow if the parent directory is within the workspace (covers the
-        // case where the file itself does not yet exist).
-        if let Some(parent) = norm_path.parent() {
-            parent.starts_with(&norm_root)
-        } else {
-            false
+
+        // Check specific read/write path restrictions
+        match access_type {
+            AccessType::Read => {
+                if self.read_paths.is_empty() {
+                    // No restrictions if empty
+                    true
+                } else {
+                    // Must match at least one read_path
+                    self.read_paths.iter().any(|rp| norm_path.starts_with(rp))
+                }
+            }
+            AccessType::Write => {
+                if self.write_paths.is_empty() {
+                    // No restrictions if empty
+                    true
+                } else {
+                    // Must match at least one write_path
+                    self.write_paths.iter().any(|wp| norm_path.starts_with(wp))
+                }
+            }
         }
     }
 }
+
 
 impl Default for FilesystemPolicy {
     fn default() -> Self {

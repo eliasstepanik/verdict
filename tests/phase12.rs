@@ -9,58 +9,15 @@ use std::sync::Arc;
 use verdict::prelude::*;
 use verdict::{ContextStore, ContextStoreError};
 use verdict::injection::SecretScannerConfig;
-use async_trait::async_trait;
 use serde_json::json;
 use std::time::Instant;
 
-/// Mock LLM provider for testing
-struct MockLlmProvider {
-    response: String,
-}
+mod common;
+use common::MockLlmProvider;
 
-impl MockLlmProvider {
-    fn new(response: impl Into<String>) -> Self {
-        Self {
-            response: response.into(),
-        }
-    }
-}
+// ===== SemanticCheck Tests (P12-1) =====
 
-#[async_trait]
-impl LlmProvider for MockLlmProvider {
-    fn name(&self) -> &str {
-        "mock"
-    }
-
-    fn default_model(&self) -> &str {
-        "mock-model"
-    }
-
-    async fn complete(&self, _req: LlmRequest) -> Result<LlmResponse, LlmError> {
-        Ok(LlmResponse {
-            content: self.response.clone(),
-            model: "mock".into(),
-            usage: Some(LlmUsage {
-                prompt_tokens: 100,
-                completion_tokens: 50,
-            }),
-            tool_calls: None,
-        })
-    }
-
-    fn stream(
-        &self,
-        _request: LlmRequest,
-    ) -> std::pin::Pin<Box<dyn futures::stream::Stream<Item = Result<verdict::LlmChunk, verdict::LlmError>> + Send>> {
-        let response = self.response.clone();
-        Box::pin(futures::stream::once(async move {
-            Ok(verdict::LlmChunk {
-                delta: response,
-                finish_reason: Some("stop".to_string()),
-            })
-        }))
-    }
-}
+/// Test 1: SemanticCheck requires LLM client
 
 // ===== SemanticCheck Tests (P12-1) =====
 
@@ -336,7 +293,8 @@ async fn test_secret_scanner_scan_async_with_llm() {
 // ===== Parallel Concurrency Test (P12-6) =====
 
 /// Test 13: Parallel steps execute with true concurrency
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+
 async fn test_parallel_steps_true_concurrency() {
     use std::sync::{Arc as StdArc, Mutex};
 

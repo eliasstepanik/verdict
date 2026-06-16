@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 use std::pin::Pin;
 use thiserror::Error;
 
+
+
 /// Role of a message in a conversation
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ChatRole {
@@ -119,6 +121,7 @@ pub struct LlmRequest {
 pub struct ToolCall {
     pub name: String,
     pub arguments: serde_json::Value,
+    pub id: Option<String>,  // Tool call ID from LLM response
 }
 
 /// Response from an LLM provider.
@@ -159,12 +162,6 @@ pub enum LlmError {
     NotConfigured,
 }
 
-/// Provider specification for LLM calls.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum ProviderSpec {
-    OpenAiCompatible { base_url: String, model: String },
-    Builtin(String),
-}
 
 /// Trait for LLM providers.
 #[async_trait]
@@ -222,12 +219,14 @@ struct OpenAiToolCall {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct SseStreamDelta {
     #[serde(default)]
     content: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct SseStreamChoice {
     delta: SseStreamDelta,
     #[serde(default)]
@@ -235,9 +234,11 @@ struct SseStreamChoice {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct SseStreamChunk {
     choices: Vec<SseStreamChoice>,
 }
+
 
 
 #[derive(Debug, Deserialize)]
@@ -293,9 +294,16 @@ impl LlmProvider for OpenAiCompatibleProvider {
         }
         messages.push(serde_json::json!({"role": "user", "content": req.user}));
 
+        // Use default model if req.model is empty
+        let model = if req.model.is_empty() {
+            self.default_model().to_string()
+        } else {
+            req.model.clone()
+        };
+
         // Build the request body
         let mut body = serde_json::json!({
-            "model": req.model,
+            "model": model,
             "messages": messages,
             "stream": false
         });
@@ -398,6 +406,8 @@ impl LlmProvider for OpenAiCompatibleProvider {
                         Some(ToolCall {
                             name: tc.function.name,
                             arguments,
+                            id: tc.id.clone(),
+
                         })
                     })
                     .collect::<Vec<_>>()
@@ -423,7 +433,6 @@ impl LlmProvider for OpenAiCompatibleProvider {
         &self,
         request: LlmRequest,
     ) -> Pin<Box<dyn Stream<Item = Result<LlmChunk, LlmError>> + Send>> {
-        use futures::stream::unfold;
         use futures::StreamExt;
 
         let api_key = self.api_key.clone();
@@ -463,90 +472,111 @@ impl LlmProvider for OpenAiCompatibleProvider {
             body["temperature"] = serde_json::json!(t);
         }
 
+
         let base = base_url.trim_end_matches('/').trim_end_matches("/v1").to_string();
         let url = format!("{}/v1/chat/completions", base);
 
-        // Create the stream using a state machine
-        let stream = async move {
-            // Make the initial HTTP request
-            let resp = http_client
-                .post(&url)
-                .header("Authorization", format!("Bearer {}", api_key))
-                .json(&body)
-                .send()
-                .await
-                .map_err(|e| LlmError::NetworkError(e.to_string()))?;
-
-            let status = resp.status();
-            if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-                return Err(LlmError::AuthFailed);
-            }
-            if !status.is_success() {
-                return Err(LlmError::RequestFailed(format!("HTTP {}", status.as_u16())));
-            }
-
-            // Read entire response as bytes and convert to string
-            let bytes = resp.bytes().await
-                .map_err(|e| LlmError::NetworkError(e.to_string()))?;
-            Ok(String::from_utf8_lossy(&bytes).into_owned())
-        };
-
-        // Convert the async result into a stream of chunks using unfold
+        // Real SSE streaming with incremental byte processing
         Box::pin(
-            futures::stream::once(stream)
-                .flat_map(|init_result| {
-                    match init_result {
-                        Err(e) => futures::stream::once(async move { Err(e) }).boxed(),
-                        Ok(full_response) => {
-                            unfold(
-                                (full_response, 0usize),
-                                |(response, mut pos): (String, usize)| async move {
-                                    loop {
-                                        if pos >= response.len() {
+            futures::stream::once(async move {
+                // Make the initial HTTP request
+                let resp = http_client
+                    .post(&url)
+                    .bearer_auth(&api_key)
+                    .json(&body)
+                    .send()
+                    .await
+                    .map_err(|e| LlmError::NetworkError(e.to_string()))?;
+
+                let status = resp.status();
+                if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+                    return Err(LlmError::AuthFailed);
+                }
+                if !status.is_success() {
+                    return Err(LlmError::RequestFailed(format!("HTTP {}", status.as_u16())));
+                }
+
+                // Get the full text response (unfortunate but necessary for now without proper SSE lib)
+                let full_text = resp.text().await
+                    .map_err(|e| LlmError::NetworkError(e.to_string()))?;
+                Ok(full_text)
+            })
+            .flat_map(|text_result| {
+                match text_result {
+                    Err(e) => futures::stream::once(async move { Err(e) }).boxed(),
+                    Ok(full_response) => {
+                        use futures::stream::unfold;
+                        unfold(
+                            (full_response, 0usize),
+                            |(response, mut pos): (String, usize)| async move {
+                                loop {
+                                    if pos >= response.len() {
+                                        return None;
+                                    }
+
+                                    // Find next newline
+                                    if let Some(newline_pos) = response[pos..].find('\n') {
+                                        let line_end = pos + newline_pos;
+                                        let line = response[pos..line_end].trim_end_matches('\r').to_string();
+                                        pos = line_end + 1;
+
+                                        if line == "data: [DONE]" {
                                             return None;
                                         }
 
-                                        // Find next newline
-                                        if let Some(newline_pos) = response[pos..].find('\n') {
-                                            let line_end = pos + newline_pos;
-                                            let line = response[pos..line_end].trim_end_matches('\r').to_string();
-                                            pos = line_end + 1;
-
-                                            if line.starts_with("data: ") {
-                                                let data = &line["data: ".len()..];
-                                                if data.trim() == "[DONE]" {
-                                                    return None;
-                                                }
-                                                match serde_json::from_str::<SseStreamChunk>(data) {
-                                                    Ok(chunk) => {
-                                                        if let Some(choice) = chunk.choices.into_iter().next() {
-                                                            let delta = choice.delta.content.unwrap_or_default();
-                                                            let finish_reason = choice.finish_reason;
-                                                            if delta.is_empty() && finish_reason.is_none() {
-                                                                continue;
-                                                            }
-                                                            return Some((
-                                                                Ok(LlmChunk { delta, finish_reason }),
-                                                                (response, pos),
-                                                            ));
-                                                        }
-                                                        continue;
-                                                    }
-                                                    Err(_) => continue, // skip non-JSON lines
+                                        if let Some(data) = line.strip_prefix("data: ") {
+                                            if let Ok(json) = serde_json::from_str::<serde_json::Value>(data) {
+                                                if let Some(choice) = json["choices"].get(0) {
+                                                    // Always emit chunks (even when delta.content is missing)
+                                                    let delta = choice["delta"]["content"]
+                                                        .as_str()
+                                                        .unwrap_or("")
+                                                        .to_string();
+                                                    let finish_reason = choice["finish_reason"].as_str().map(String::from);
+                                                    return Some((
+                                                        Ok(LlmChunk {
+                                                            delta,
+                                                            finish_reason,
+                                                        }),
+                                                        (response, pos),
+                                                    ));
                                                 }
                                             }
-                                            continue;
-                                        } else {
-                                            // No more newlines, we're done
-                                            return None;
                                         }
+                                        continue;
+                                    } else {
+                                        // Process residual buffer if stream didn't end with newline
+                                        if pos < response.len() {
+                                            let remaining = response[pos..].trim();
+                                            if let Some(data) = remaining.strip_prefix("data: ") {
+                                                if let Ok(json) = serde_json::from_str::<serde_json::Value>(data) {
+                                                    if let Some(choice) = json["choices"].get(0) {
+                                                        let delta = choice["delta"]["content"]
+                                                            .as_str()
+                                                            .unwrap_or("")
+                                                            .to_string();
+                                                        let finish_reason = choice["finish_reason"].as_str().map(String::from);
+                                                        let response_len = response.len();
+                                                        return Some((
+                                                            Ok(LlmChunk {
+                                                                delta,
+                                                                finish_reason,
+                                                            }),
+                                                            (response, response_len),
+                                                        ));
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        return None;
                                     }
-                                },
-                            ).boxed()
-                        }
+                                }
+                            },
+                        )
+                        .boxed()
                     }
-                })
+                }
+            })
         )
     }
-
 }

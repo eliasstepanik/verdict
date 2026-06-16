@@ -2,57 +2,12 @@
 
 use std::sync::Arc;
 use verdict::prelude::*;
-use async_trait::async_trait;
 use serde_json::json;
 
-/// Mock LLM provider for testing
-struct MockLlmProvider {
-    response: String,
-}
+mod common;
+use common::MockLlmProvider;
 
-impl MockLlmProvider {
-    fn new(response: impl Into<String>) -> Self {
-        Self {
-            response: response.into(),
-        }
-    }
-}
-
-#[async_trait]
-impl LlmProvider for MockLlmProvider {
-    fn name(&self) -> &str {
-        "mock"
-    }
-
-    fn default_model(&self) -> &str {
-        "mock-model"
-    }
-
-    async fn complete(&self, _req: LlmRequest) -> Result<LlmResponse, LlmError> {
-        Ok(LlmResponse {
-            content: self.response.clone(),
-            model: "mock".into(),
-            usage: Some(LlmUsage {
-                prompt_tokens: 100,
-                completion_tokens: 50,
-            }),
-            tool_calls: None,
-        })
-    }
-
-    fn stream(
-        &self,
-        _request: LlmRequest,
-    ) -> std::pin::Pin<Box<dyn futures::stream::Stream<Item = Result<verdict::LlmChunk, verdict::LlmError>> + Send>> {
-        let response = self.response.clone();
-        Box::pin(futures::stream::once(async move {
-            Ok(verdict::LlmChunk {
-                delta: response,
-                finish_reason: Some("stop".to_string()),
-            })
-        }))
-    }
-}
+/// Test 1: Guard::PathWithinWorkspace rejects path traversal
 
 /// Test 1: Guard::PathWithinWorkspace rejects path traversal
 #[tokio::test]
@@ -516,18 +471,25 @@ async fn test_verdict_llm_judge_fails_without_pattern() {
 }
 
 /// Test 10: Parallel steps both execute and results are merged
+
 #[tokio::test]
 async fn test_parallel_steps_both_execute() {
     use std::sync::atomic::{AtomicU32, Ordering};
+    use std::time::Instant;
 
     let counter = Arc::new(AtomicU32::new(0));
     let c1 = counter.clone();
     let c2 = counter.clone();
 
+    // Create steps that sleep to verify parallelism
+    // If they run in parallel, total time should be ~100ms (both run at once)
+    // If sequential, total time would be ~200ms (one after the other)
     let step1 = AgentStep {
         name: "parallel_a".to_string(),
         action: StepAction::Custom(Arc::new(move |_ctx| {
             c1.fetch_add(1, Ordering::SeqCst);
+            // Simulate work with a sleep
+            std::thread::sleep(std::time::Duration::from_millis(100));
             Ok(StepOutput::new("a done".to_string()))
         })),
         guard_in: Guard::None,
@@ -544,6 +506,8 @@ async fn test_parallel_steps_both_execute() {
         name: "parallel_b".to_string(),
         action: StepAction::Custom(Arc::new(move |_ctx| {
             c2.fetch_add(1, Ordering::SeqCst);
+            // Simulate work with a sleep
+            std::thread::sleep(std::time::Duration::from_millis(100));
             Ok(StepOutput::new("b done".to_string()))
         })),
         guard_in: Guard::None,
@@ -566,21 +530,43 @@ async fn test_parallel_steps_both_execute() {
     let agent = Agent {
         name: "test_agent".to_string(),
         description: String::new(),
-        pipeline: Pipeline { name: "empty".to_string(), steps: Vec::new(), max_retries: 0, on_failure: FailureMode::Abort },
+        pipeline: Pipeline { 
+            name: "empty".to_string(), 
+            steps: Vec::new(), 
+            max_retries: 0, 
+            on_failure: FailureMode::Abort 
+        },
         tools: ToolSet::None,
         skills: Default::default(),
         policy: Default::default(),
     };
+
     let mut runner = PipelineRunner::new();
 
+    // Measure execution time
+    let start = Instant::now();
     let result = runner.run(&pipeline, &agent, json!({})).await;
+    let elapsed = start.elapsed();
+
     assert!(result.is_ok(), "Parallel pipeline should succeed");
     assert_eq!(counter.load(Ordering::SeqCst), 2, "Both parallel steps should have executed");
 
     let pr = result.unwrap();
     assert!(pr.step_results.contains_key("parallel_a"), "parallel_a result should be present");
     assert!(pr.step_results.contains_key("parallel_b"), "parallel_b result should be present");
+
+    // Verify that steps ran in parallel, not sequentially
+    // If parallel: elapsed should be ~100ms (both sleep for 100ms concurrently)
+    // If sequential: elapsed would be ~200ms (each sleeps 100ms one after the other)
+    // We allow some buffer for overhead, so expect < 180ms
+    assert!(
+        elapsed.as_millis() < 180,
+        "Parallel steps should complete in ~100ms, not ~200ms. Actual: {}ms",
+        elapsed.as_millis()
+    );
 }
+
+
 
 /// Test 11: LlmCallStreaming emits to OutputSink and returns assembled output
 #[tokio::test]
@@ -613,6 +599,8 @@ async fn test_llm_call_streaming_with_sink() {
             system: "You are helpful.".to_string(),
             user: "Say hello.".to_string(),
             model: None,
+            conversation_id: None,
+            append_to_history: false,
         },
         guard_in: Guard::None,
         guard_out: Guard::NonEmptyOutput,

@@ -45,8 +45,17 @@ async fn test_guard_validjson_rejects_invalid_json() {
     assert!(result.is_err());
 }
 
+
 #[tokio::test]
 async fn test_guard_fileexists() {
+    use std::fs;
+    use tempfile::TempDir;
+
+    // Create a temporary directory with a test file
+    let temp_dir = TempDir::new().unwrap();
+    let test_file_path = temp_dir.path().join("test_file.txt");
+    fs::write(&test_file_path, "test content").unwrap();
+
     let mut ctx = StepContext::new(
         "test".into(),
         "test".into(),
@@ -54,17 +63,38 @@ async fn test_guard_fileexists() {
         Value::Null,
         Default::default(),
     );
-    // Use Cargo.toml which should exist
-    ctx.filesystem_policy.workspace_root = std::env::current_dir().unwrap();
+    ctx.filesystem_policy.workspace_root = temp_dir.path().to_path_buf();
 
-    let result = GuardEngine::evaluate(&Guard::FileExists("Cargo.toml".into()), &ctx).await;
-    // Should pass if running in the project root
-    assert!(result.is_ok() || result.is_err()); // Accept either result depending on test location
+    // Test that FileExists passes when file exists
+    let result = GuardEngine::evaluate(&Guard::FileExists("test_file.txt".into()), &ctx).await;
+    assert!(result.is_ok(), "FileExists should pass when file exists");
+
+    // Test that FileNotExists passes when file does not exist
+    let result = GuardEngine::evaluate(&Guard::FileNotExists("nonexistent_file.txt".into()), &ctx).await;
+    assert!(result.is_ok(), "FileNotExists should pass when file does not exist");
+
+    // Test that FileExists fails when file does not exist
+    let result = GuardEngine::evaluate(&Guard::FileExists("nonexistent_file.txt".into()), &ctx).await;
+    assert!(result.is_err(), "FileExists should fail when file does not exist");
+
+    // Test that FileNotExists fails when file exists
+    let result = GuardEngine::evaluate(&Guard::FileNotExists("test_file.txt".into()), &ctx).await;
+    assert!(result.is_err(), "FileNotExists should fail when file exists");
 }
 
+
+
 #[tokio::test]
-#[ignore] // Can conflict with other cargo operations
 async fn test_guard_compiles_ok() {
+    if std::process::Command::new("cargo")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
+        println!("cargo not available, skipping test");
+        return;
+    }
+
     let ctx = StepContext::new(
         "test".into(),
         "test".into(),
@@ -82,9 +112,19 @@ async fn test_guard_compiles_ok() {
     );
 }
 
+
+
 #[tokio::test]
-#[ignore] // Conflicts with test runner (tries to run cargo test while cargo test is already running)
 async fn test_guard_tests_pass_ok() {
+    if std::process::Command::new("cargo")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
+        println!("cargo not available, skipping test");
+        return;
+    }
+
     let ctx = StepContext::new(
         "test".into(),
         "test".into(),
@@ -101,6 +141,8 @@ async fn test_guard_tests_pass_ok() {
         result
     );
 }
+
+
 
 #[tokio::test]
 async fn test_guard_allof_all_pass() {

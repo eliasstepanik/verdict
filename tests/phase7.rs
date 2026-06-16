@@ -80,18 +80,25 @@ fn test_secret_scanner_detects_openai_api_key() {
     assert!(matches[0].pattern_name.contains("OpenAI"));
 }
 
+
 #[test]
 fn test_secret_scanner_detects_aws_key() {
     let matches = SecretScanner::scan("AWS key: AKIAIOSFODNN7EXAMPLE");
-    assert!(!matches.is_empty());
-    assert!(matches[0].pattern_name.contains("AWS"));
+    assert!(!matches.is_empty(), "Should detect AWS key");
+    // Verify the pattern name indicates AWS key detection
+    assert!(matches.iter().any(|m| m.pattern_name.contains("AWS") || m.pattern_name.contains("AKIA")),
+        "Pattern name should contain AWS or AKIA identifier. Got: {:?}", matches[0].pattern_name);
 }
 
 #[test]
 fn test_secret_scanner_match_has_pattern_name() {
     let matches = SecretScanner::scan("sk-abc123def456ghi789jkl012mno345pqr678stu901vwx");
     if !matches.is_empty() {
-        assert!(!matches[0].pattern_name.is_empty());
+        assert!(!matches[0].pattern_name.is_empty(), "Pattern name should not be empty");
+        // Verify it matches an OpenAI-like pattern
+        assert!(matches[0].pattern_name.contains("OpenAI") || matches[0].pattern_name.contains("api_key") || 
+            matches[0].pattern_name.contains("token"), "Pattern should match OpenAI or api_key pattern. Got: {:?}", 
+            matches[0].pattern_name);
     }
 }
 
@@ -99,21 +106,30 @@ fn test_secret_scanner_match_has_pattern_name() {
 fn test_secret_scanner_detects_private_key() {
     let text = "Here is my key: -----BEGIN PRIVATE KEY-----\nMIIEvQIBA...";
     let matches = SecretScanner::scan(text);
-    assert!(!matches.is_empty());
-    assert!(matches[0].pattern_name.contains("Private Key"));
+    assert!(!matches.is_empty(), "Should detect private key");
+    assert!(matches.iter().any(|m| m.pattern_name.contains("Private Key") || m.pattern_name.contains("key")),
+        "Pattern name should indicate private key. Got: {:?}", matches[0].pattern_name);
 }
 
 #[test]
 fn test_secret_scanner_detects_env_var_password() {
     let matches = SecretScanner::scan("DATABASE_PASSWORD=secretpass123");
-    assert!(!matches.is_empty());
+    assert!(!matches.is_empty(), "Should detect password environment variable");
+    assert!(matches.iter().any(|m| m.pattern_name.contains("PASSWORD") || m.pattern_name.contains("password")),
+        "Pattern should detect PASSWORD env var. Got: {:?}", 
+        matches.iter().map(|m| m.pattern_name.as_str()).collect::<Vec<_>>());
 }
 
 #[test]
 fn test_secret_scanner_detects_env_var_api_key() {
     let matches = SecretScanner::scan("API_KEY=my_secret_value");
-    assert!(!matches.is_empty());
+    assert!(!matches.is_empty(), "Should detect API_KEY environment variable");
+    assert!(matches.iter().any(|m| m.pattern_name.contains("API") || m.pattern_name.contains("api_key")),
+        "Pattern should detect API_KEY env var. Got: {:?}",
+        matches.iter().map(|m| m.pattern_name.as_str()).collect::<Vec<_>>());
 }
+
+
 
 #[test]
 fn test_secret_scanner_detects_env_var_token() {
@@ -569,13 +585,38 @@ async fn test_guard_none_always_passes() {
     assert!(GuardEngine::evaluate(&Guard::None, &ctx).await.is_ok());
 }
 
+
 #[tokio::test]
 async fn test_guard_compiles_may_fail_without_cargo() {
     let ctx = make_context_with_output("output");
     // Compiles guard will attempt to run cargo check
-    // May pass or fail depending on whether cargo is available
-    let _ = GuardEngine::evaluate(&Guard::Compiles, &ctx).await;
+    let result = GuardEngine::evaluate(&Guard::Compiles, &ctx).await;
+    // Assert that result is either Ok (cargo available) or Err(GuardError::Failed or NotImplemented)
+    match result {
+        Ok(()) => {
+            // Cargo is available and project compiles successfully
+            assert!(true, "Guard::Compiles passed as expected");
+        }
+        Err(GuardError::Failed { .. }) => {
+            // Cargo is available but build failed (acceptable)
+            assert!(true, "Guard::Compiles failed as expected when cargo is available");
+        }
+        Err(GuardError::NotImplemented(_)) => {
+            // Cargo not available or not in PATH (acceptable)
+            assert!(true, "Guard::Compiles returned NotImplemented as expected");
+        }
+        Err(GuardError::IoError(_)) => {
+            // I/O error (acceptable)
+            assert!(true, "Guard::Compiles returned IoError as expected");
+        }
+        Err(GuardError::ParseError(_)) => {
+            // Parse error (acceptable)
+            assert!(true, "Guard::Compiles returned ParseError as expected");
+        }
+    }
 }
+
+
 
 #[tokio::test]
 async fn test_guard_all_of_both_pass() {

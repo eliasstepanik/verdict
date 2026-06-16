@@ -30,6 +30,7 @@ pub struct SerializableStepContext {
     pub parent_agent: Option<String>,
     
     pub active_skills: Vec<String>,
+    pub allowed_tools: ToolSet,
     
     pub trace: PipelineTrace,
     pub budget: BudgetState,
@@ -37,6 +38,13 @@ pub struct SerializableStepContext {
     /// Conversation history (serializable)
     pub conversation_history: MessageHistory,
     
+    
+    /// Filesystem policy for restored context
+    pub filesystem_policy: FilesystemPolicy,
+    
+    /// Network policy for restored context
+    pub network_policy: NetworkPolicy,
+
     /// Custom metadata for extensions
     pub metadata: Value,
 }
@@ -83,36 +91,85 @@ impl Default for PipelineTrace {
 }
 
 /// Budget/cost tracking state
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Serialize)]
 pub struct BudgetState {
+    pub spent_usd: f64,
     pub remaining_usd: Option<f64>,
     pub llm_calls_used: u32,
     pub tool_calls_used: u32,
-    #[serde(skip, default = "default_instant")]
+    #[serde(skip)]
     pub start_time: std::time::Instant,
+    /// Elapsed time since checkpoint load (in seconds), if any
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub elapsed_secs_since_load: Option<f64>,
 }
 
-fn default_instant() -> std::time::Instant {
-    std::time::Instant::now()
+impl<'de> serde::Deserialize<'de> for BudgetState {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct BudgetStateDe {
+            spent_usd: f64,
+            remaining_usd: Option<f64>,
+            llm_calls_used: u32,
+            tool_calls_used: u32,
+            elapsed_secs_since_load: Option<f64>,
+        }
+        
+        let de = BudgetStateDe::deserialize(deserializer)?;
+        Ok(BudgetState {
+            spent_usd: de.spent_usd,
+            remaining_usd: de.remaining_usd,
+            llm_calls_used: de.llm_calls_used,
+            tool_calls_used: de.tool_calls_used,
+            start_time: std::time::Instant::now(),
+            elapsed_secs_since_load: de.elapsed_secs_since_load,
+        })
+    }
+}
+
+impl Clone for BudgetState {
+    fn clone(&self) -> Self {
+        // When cloning for checkpoint/snapshot, preserve elapsed time but reset start_time to now
+        // This prevents the resumed context from having a fresh budget clock
+        let current_elapsed = self.start_time.elapsed().as_secs_f64();
+        let total_elapsed = current_elapsed + self.elapsed_secs_since_load.unwrap_or(0.0);
+        Self {
+            spent_usd: self.spent_usd,
+            remaining_usd: self.remaining_usd,
+            llm_calls_used: self.llm_calls_used,
+            tool_calls_used: self.tool_calls_used,
+            start_time: std::time::Instant::now(),
+            elapsed_secs_since_load: Some(total_elapsed),
+        }
+    }
 }
 
 impl Default for BudgetState {
     fn default() -> Self {
         Self {
+            spent_usd: 0.0,
             remaining_usd: None,
             llm_calls_used: 0,
             tool_calls_used: 0,
             start_time: std::time::Instant::now(),
+            elapsed_secs_since_load: None,
         }
     }
 }
 
+
 /// Context passed to guard, verdict, and action evaluations
-#[derive(Clone)]
+#[derive(Clone, Debug)]
+
 pub struct StepContext {
     pub agent_name: String,
     pub pipeline_name: String,
     pub step_name: String,
+    pub step_id: String,
+
 
     pub request: Value,
     pub input: Value,
@@ -140,6 +197,9 @@ pub struct StepContext {
 
     /// Conversation history for multi-turn LLM interactions
     pub conversation_history: MessageHistory,
+
+    /// Tools that were actually called during this step execution
+    pub tools_used: Vec<String>,
 }
 
 impl StepContext {
@@ -153,7 +213,10 @@ impl StepContext {
         Self {
             agent_name,
             pipeline_name,
-            step_name,
+            step_name: step_name.clone(),
+            step_id: step_name,
+
+
             request,
             input: Value::Null,
             output: None,
@@ -171,6 +234,7 @@ impl StepContext {
             network_policy: NetworkPolicy::DenyAll,
             llm_client: None,
             conversation_history: MessageHistory::new(),
+            tools_used: vec![],
         }
     }
 
@@ -193,23 +257,39 @@ impl StepContext {
             delegation_depth: self.delegation_depth,
             parent_agent: self.parent_agent.clone(),
             active_skills: self.active_skills.clone(),
+            allowed_tools: self.allowed_tools.clone(),
             trace: self.trace.clone(),
             budget: self.budget.clone(),
             conversation_history: self.conversation_history.clone(),
+            filesystem_policy: self.filesystem_policy.clone(),
+            network_policy: self.network_policy.clone(),
+
             metadata: Value::Object(serde_json::Map::new()),
         }
     }
-
     /// Restore a StepContext from a serializable form.
-    /// Non-serializable fields (registries, llm_client, policies) are re-initialized with defaults.
+    ///
+    /// # Non-serializable Field Restoration
+    ///
+    /// The following fields cannot be serialized and are re-initialized:
+    ///
+    /// - `llm_client`: Defaults to None. If verdict evaluation (Verdict::LlmJudge) or
+    ///   semantic guards are needed, the caller MUST re-inject via PipelineRunner.
+    ///
+    /// All registries (agent, tool, skill) are fresh instances. Caller may need to
+    /// pass these from the original context or runner.
+    /// 
+    /// Filesystem and network policies ARE restored from the serialized context,
+    /// ensuring security policies are preserved across checkpoint/resume cycles.
     pub fn from_serializable(
         serializable: SerializableStepContext,
-        filesystem_policy: FilesystemPolicy,
     ) -> Self {
         Self {
             agent_name: serializable.agent_name,
             pipeline_name: serializable.pipeline_name,
             step_name: serializable.step_name,
+            step_id: serializable.step_id,
+
             request: serializable.request,
             input: serializable.input,
             output: serializable.output,
@@ -219,16 +299,18 @@ impl StepContext {
             skill_registry: Arc::new(SkillRegistry::new()),
             delegation_depth: serializable.delegation_depth,
             parent_agent: serializable.parent_agent,
-            allowed_tools: ToolSet::Full,
+            allowed_tools: serializable.allowed_tools,
             active_skills: serializable.active_skills,
             trace: serializable.trace,
             budget: serializable.budget,
-            filesystem_policy,
-            network_policy: NetworkPolicy::DenyAll,
+            filesystem_policy: serializable.filesystem_policy,
+            network_policy: serializable.network_policy,
             llm_client: None,
             conversation_history: serializable.conversation_history,
+            tools_used: vec![],
         }
     }
+
 }
 
 /// Error type for ContextStore operations.

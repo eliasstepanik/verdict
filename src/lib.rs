@@ -9,19 +9,20 @@ pub mod audit;
 pub mod budget;
 pub mod context;
 pub mod eval;
-pub mod guard;
+pub mod guards;
 pub mod injection;
 pub mod llm;
 pub mod mcp;
 pub mod pipeline;
 pub mod prelude;
 pub mod registry;
+#[path = "runner/mod.rs"]
 pub mod runner;
 pub mod self_update;
 pub mod skills;
-pub mod toolset;
 pub mod tools;
+pub mod toolset;
 pub mod verdict;
 
-pub use prelude::*;
 pub use context::{ContextStore, ContextStoreError};
+pub use prelude::*;

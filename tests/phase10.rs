@@ -4,60 +4,9 @@
 
 use std::sync::{Arc, Mutex};
 use verdict::prelude::*;
-use async_trait::async_trait;
 
-// ============================================================
-// Helper: MockLlmProvider
-// ============================================================
-struct MockLlmProvider {
-    pub expected_response: String,
-    pub captured_request: Mutex<Option<LlmRequest>>,
-}
-
-impl MockLlmProvider {
-    fn new(response: impl Into<String>) -> Self {
-        Self {
-            expected_response: response.into(),
-            captured_request: Mutex::new(None),
-        }
-    }
-}
-
-#[async_trait]
-impl LlmProvider for MockLlmProvider {
-    fn name(&self) -> &str {
-        "mock"
-    }
-
-    fn default_model(&self) -> &str {
-        "mock-model"
-    }
-
-
-    async fn complete(&self, req: LlmRequest) -> Result<LlmResponse, LlmError> {
-        *self.captured_request.lock().unwrap() = Some(req);
-        Ok(LlmResponse {
-            content: self.expected_response.clone(),
-            model: "mock".into(),
-            usage: None,
-            tool_calls: None,
-        })
-    }
-
-    fn stream(
-        &self,
-        request: LlmRequest,
-    ) -> std::pin::Pin<Box<dyn futures::stream::Stream<Item = Result<verdict::LlmChunk, verdict::LlmError>> + Send>> {
-        let response = self.expected_response.clone();
-        *self.captured_request.lock().unwrap() = Some(request);
-        Box::pin(futures::stream::once(async move {
-            Ok(verdict::LlmChunk {
-                delta: response,
-                finish_reason: Some("stop".to_string()),
-            })
-        }))
-    }
-}
+mod common;
+use common::MockLlmProvider;
 
 // ============================================================
 // LLM Provider Tests

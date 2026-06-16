@@ -366,21 +366,17 @@ async fn test_delegation_audit_events_on_success() {
     let result = runner.run(&parent.pipeline, &parent, json!({})).await.unwrap();
 
     let entries = result.audit_log.entries();
-    let event_types: Vec<String> = entries
-        .iter()
-        .map(|e| format!("{:?}", e.event))
-        .collect();
 
     // Should have DelegationStarted and DelegationCompleted entries
-    let has_started = event_types
+    let has_started = entries
         .iter()
-        .any(|e| e.contains("DelegationStarted"));
-    let has_completed = event_types
+        .any(|e| matches!(e.event, AuditEvent::DelegationStarted { .. }));
+    let has_completed = entries
         .iter()
-        .any(|e| e.contains("DelegationCompleted"));
+        .any(|e| matches!(e.event, AuditEvent::DelegationCompleted { .. }));
 
-    assert!(has_started, "Expected DelegationStarted in audit log. Events: {:?}", event_types);
-    assert!(has_completed, "Expected DelegationCompleted in audit log. Events: {:?}", event_types);
+    assert!(has_started, "Expected DelegationStarted in audit log. Events: {:?}", entries.iter().map(|e| &e.event).collect::<Vec<_>>());
+    assert!(has_completed, "Expected DelegationCompleted in audit log. Events: {:?}", entries.iter().map(|e| &e.event).collect::<Vec<_>>());
 }
 
 // ─── Test 11: Delegation failure audit log ───────────────────────────────────
@@ -395,13 +391,11 @@ async fn test_delegation_audit_events_on_failure() {
     let _ = runner.run(&parent.pipeline, &parent, json!({})).await;
 
     let entries = runner.audit_log.entries();
-    let event_types: Vec<String> = entries
-        .iter()
-        .map(|e| format!("{:?}", e.event))
-        .collect();
 
-    let has_failed = event_types.iter().any(|e| e.contains("DelegationFailed"));
-    assert!(has_failed, "Expected DelegationFailed in audit log. Events: {:?}", event_types);
+    let has_failed = entries
+        .iter()
+        .any(|e| matches!(e.event, AuditEvent::DelegationFailed { .. }));
+    assert!(has_failed, "Expected DelegationFailed in audit log. Events: {:?}", entries.iter().map(|e| &e.event).collect::<Vec<_>>());
 }
 
 // ─── Test 12: Child step results merged into parent context ──────────────────

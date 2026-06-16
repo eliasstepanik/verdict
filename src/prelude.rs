@@ -3,7 +3,10 @@
 // Phase 11: Streaming, conversation history, LlmJudge
 pub use crate::llm::{
     LlmProvider, LlmClient, LlmRequest, LlmResponse, LlmError, LlmUsage, ProviderSpec,
-    LlmChunk, ChatRole, ChatMessage, MessageHistory, ConversationRegistry,
+    LlmChunk, ChatRole, ChatMessage, MessageHistory, ConversationRegistry, OpenAiCompatibleProvider,
+    ToolCall,
+
+    ToolSchema,
 };
 
 // Phase 9: Advanced Execution
@@ -22,8 +25,11 @@ pub use crate::self_update::{
 };
 
 // Phase 7: Safety and Production
-pub use crate::injection::{InjectionScanner, InjectionResult, SecretScanner, SecretMatch, RiskLevel};
+pub use crate::injection::{InjectionScanner, InjectionResult, SecretScanner, SecretMatch, RiskLevel, SecretScannerConfig};
 pub use crate::budget::{BudgetTracker, RateLimiter, BudgetError};
+pub use crate::context::SerializableStepContext;
+pub use crate::audit::{CallTreeNode, CallTreeStatus, call_tree_from_audit_log};
+pub use crate::action::StopCondition;
 
 // Core types
 pub use crate::action::{
@@ -36,13 +42,14 @@ pub use crate::agent::{
 };
 pub use crate::skills::{Skill, SkillExample, SkillEval, SkillSet};
 pub use crate::audit::{AuditEntry, AuditEvent, AuditLog};
-pub use crate::context::{BudgetState, PipelineTrace, StepContext, StepResult, TraceEntry};
-pub use crate::guard::{Guard, GuardEngine, GuardError, TestRunner};
+pub use crate::context::{BudgetState, PipelineTrace, StepContext, StepResult, TraceEntry, ContextStore, ContextStoreError};
+pub use crate::guards::{Guard, GuardEngine, GuardError, TestRunner};
 pub use crate::mcp::{McpClient, McpError, McpServerConfig, McpToolAdapter, DiscoveredTool};
 pub use crate::pipeline::{AgentStep, FailureMode, InjectionProtection, Pipeline};
 pub use crate::registry::{AgentRegistry, SkillRegistry, ToolRegistry};
 pub use crate::skills::builtin::{api_design, code_review, refactoring, rust_debugging, test_writing};
-pub use crate::runner::{GuardPhase, PipelineError, PipelineResult, PipelineRunner, OutputSink, OutputEvent};
+pub use crate::runner::{PipelineError, PipelineResult, PipelineRunner, OutputSink, OutputEvent};
+pub use crate::guards::GuardPhase;
 pub use crate::toolset::ToolSet;
 pub use crate::tools::{Tool, ToolContext, ToolError, ToolOutput, ToolSource, FunctionTool, ToolChunk};
 pub use crate::verdict::{Verdict, VerdictEngine, VerdictError};

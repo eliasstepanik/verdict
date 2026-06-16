@@ -1,6 +1,5 @@
 //! Prompt injection protection and secret scanning — Phase 7
 
-use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -24,10 +23,9 @@ impl std::fmt::Display for RiskLevel {
     }
 }
 
-/// A compiled pattern that can match as regex or fallback to string contains
+/// A compiled pattern that matches as a literal substring
 struct CompiledPattern {
     raw: String,
-    regex: Option<Regex>,
 }
 
 impl CompiledPattern {
@@ -36,25 +34,15 @@ impl CompiledPattern {
     /// This prevents special regex characters like `[` and `]` from being interpreted as
     /// character classes or other regex constructs.
     fn new(raw: String) -> Self {
-        CompiledPattern { raw, regex: None }
-    }
-
-    /// Create a pattern that will be treated as a regex.
-    /// This should only be used for patterns that are intentionally designed as regexes.
-    #[allow(dead_code)]
-    fn with_regex(raw: String) -> Self {
-        let regex = Regex::new(&raw).ok();
-        CompiledPattern { raw, regex }
+        CompiledPattern { raw }
     }
 
     /// Check if the pattern matches the input text
     fn is_match(&self, input: &str) -> bool {
-        match &self.regex {
-            Some(r) => r.is_match(input),
-            None => input.contains(&self.raw),
-        }
+        input.contains(&self.raw)
     }
 }
+
 
 /// Result of injection scanning
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -261,14 +249,16 @@ impl SecretScanner {
 
     /// Scan text for common secret patterns (synchronous, static method for backward compatibility)
     pub fn scan(text: &str) -> Vec<SecretMatch> {
-        let _scanner = Self::new();
         let mut matches = Vec::new();
 
         // OpenAI API key pattern: sk-*
         if let Some(pos) = text.find("sk-") {
-            // Check if it looks like a complete key (alphanumeric after sk-)
+            // Keys can contain alphanumeric characters, hyphens, and underscores (e.g., sk-proj-ABC...)
             let remainder = &text[pos + 3..];
-            if remainder.len() > 10 && remainder.chars().take(20).all(|c| c.is_alphanumeric()) {
+            let key_chars: String = remainder.chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '-' || *c == '_')
+                .collect();
+            if key_chars.len() > 20 {
                 matches.push(SecretMatch {
                     pattern_name: "OpenAI API Key".to_string(),
                     redacted: "sk-***".to_string(),
@@ -431,7 +421,7 @@ mod tests {
 
     #[test]
     fn test_secret_scanner_detects_api_key() {
-        let matches = SecretScanner::scan("my_key = sk-1234567890abcdefghij");
+        let matches = SecretScanner::scan("my_key = sk-1234567890abcdefghijk");
         assert!(!matches.is_empty());
         assert!(matches[0].pattern_name.contains("OpenAI"));
     }

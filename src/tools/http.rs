@@ -6,6 +6,9 @@ use crate::agent::NetworkPolicy;
 use crate::tools::{Tool, ToolContext, ToolError, ToolOutput, ToolSource};
 use async_trait::async_trait;
 use serde_json::{json, Value};
+use std::time::Duration;
+use url::Url;
+
 
 /// An HTTP tool that makes HTTP requests.
 pub struct HttpTool {
@@ -13,16 +16,22 @@ pub struct HttpTool {
     pub description: String,
     pub base_url: String,
     pub allowed_paths: Vec<String>,
+    client: reqwest::Client,
 }
 
 impl HttpTool {
     /// Create a new HTTP tool.
     pub fn new(name: impl Into<String>, description: impl Into<String>, base_url: impl Into<String>) -> Self {
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
         Self {
             name: name.into(),
             description: description.into(),
             base_url: base_url.into(),
             allowed_paths: vec![],
+            client,
         }
     }
 
@@ -32,6 +41,7 @@ impl HttpTool {
         self
     }
 }
+
 
 #[async_trait]
 impl Tool for HttpTool {
@@ -49,15 +59,9 @@ impl Tool for HttpTool {
         }
     }
 
-    async fn call(&self, args: Value, ctx: ToolContext) -> Result<ToolOutput, ToolError> {
-        // Check network policy
-        if ctx.network_policy == NetworkPolicy::DenyAll {
-            return Err(ToolError::ExecutionFailed {
-                reason: "network policy denies all HTTP calls".into(),
-            });
-        }
 
-        // Parse arguments
+    async fn call(&self, args: Value, ctx: ToolContext) -> Result<ToolOutput, ToolError> {
+        // Parse arguments first
         let method = args
             .get("method")
             .and_then(|v| v.as_str())
@@ -73,6 +77,37 @@ impl Tool for HttpTool {
                 reason: "missing or invalid 'path'".into(),
             })?;
 
+        // Build URL
+        let url = format!("{}{}", self.base_url, path);
+
+        // Validate URL and check network policy
+        let url_parsed = Url::parse(&url)
+            .map_err(|e| ToolError::SchemaValidationFailed {
+                reason: format!("Invalid URL: {}", e),
+            })?;
+
+        // Check network policy
+        match &ctx.network_policy {
+            NetworkPolicy::DenyAll => {
+                return Err(ToolError::ExecutionFailed {
+                    reason: "network policy denies all outbound connections".into(),
+                });
+            }
+            NetworkPolicy::AllowList(allowed_hosts) => {
+                let host = url_parsed.host_str().unwrap_or("");
+                if !allowed_hosts.iter().any(|pattern| {
+                    host == pattern.as_str() || 
+                    host.ends_with(&format!(".{}", pattern)) ||
+                    url.starts_with(pattern.as_str())
+                }) {
+                    return Err(ToolError::ExecutionFailed {
+                        reason: format!("Host '{}' not in network allowlist", host),
+                    });
+                }
+            }
+            NetworkPolicy::AllowAll => {}
+        }
+
         // Check allowed paths
         if !self.allowed_paths.is_empty() && !self.allowed_paths.contains(&path.to_string()) {
             return Err(ToolError::ExecutionFailed {
@@ -84,18 +119,14 @@ impl Tool for HttpTool {
         let body = args.get("body").cloned();
         let headers = args.get("headers").and_then(|v| v.as_object()).cloned();
 
-        // Build URL
-        let url = format!("{}{}", self.base_url, path);
-
-        // Build HTTP client and request
-        let client = reqwest::Client::new();
+        // Build request using the pre-configured client (with timeout)
         let mut request = match method.as_str() {
-            "GET" => client.get(&url),
-            "POST" => client.post(&url),
-            "PUT" => client.put(&url),
-            "PATCH" => client.patch(&url),
-            "DELETE" => client.delete(&url),
-            "HEAD" => client.head(&url),
+            "GET" => self.client.get(&url),
+            "POST" => self.client.post(&url),
+            "PUT" => self.client.put(&url),
+            "PATCH" => self.client.patch(&url),
+            "DELETE" => self.client.delete(&url),
+            "HEAD" => self.client.head(&url),
             _ => {
                 return Err(ToolError::SchemaValidationFailed {
                     reason: format!("unsupported HTTP method: {}", method),
@@ -140,6 +171,7 @@ impl Tool for HttpTool {
             "body": body_value
         })))
     }
+
 
     fn schema(&self) -> Value {
         json!({

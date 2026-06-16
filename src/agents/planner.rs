@@ -2,7 +2,7 @@
 
 use crate::action::StepAction;
 use crate::agent::{Agent, AgentPolicy, FilesystemPolicy, NetworkPolicy};
-use crate::guard::Guard;
+use crate::guards::Guard;
 use crate::pipeline::{AgentStep, FailureMode, InjectionProtection, Pipeline};
 use crate::skills::skill::SkillSet;
 use crate::toolset::ToolSet;

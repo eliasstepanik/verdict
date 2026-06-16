@@ -174,12 +174,14 @@ impl Tool for WriteFileTool {
             });
         }
 
-        // Check filesystem policy forbidden paths
-        if !ctx.filesystem_policy.is_path_allowed(&full_path) {
+
+        // Check filesystem policy for write access
+        if !ctx.filesystem_policy.is_write_allowed(&full_path) {
             return Err(ToolError::ExecutionFailed {
-                reason: format!("path '{}' is not allowed by filesystem policy (forbidden)", path_str),
+                reason: format!("path '{}' is not allowed for writing by filesystem policy", path_str),
             });
         }
+
 
         // Create parent directories
         if let Some(parent) = full_path.parent() {
@@ -247,6 +249,14 @@ impl Tool for ListDirTool {
                 reason: format!("path '{}' escapes workspace root", path_str),
             });
         }
+
+        // Check filesystem policy for read access
+        if !ctx.filesystem_policy.is_read_allowed(&full_path) {
+            return Err(ToolError::ExecutionFailed {
+                reason: format!("path '{}' is not allowed for reading by filesystem policy", path_str),
+            });
+        }
+
 
         let mut entries = fs::read_dir(&full_path)
             .await
@@ -334,12 +344,14 @@ impl Tool for DeleteFileTool {
             });
         }
 
-        // Check filesystem policy forbidden paths
-        if !ctx.filesystem_policy.is_path_allowed(&full_path) {
+        // Check filesystem policy for write access (deletion is a write operation)
+        if !ctx.filesystem_policy.is_write_allowed(&full_path) {
             return Err(ToolError::ExecutionFailed {
-                reason: format!("path '{}' is not allowed by filesystem policy (forbidden)", path_str),
+                reason: format!("path '{}' is not allowed for deletion by filesystem policy", path_str),
             });
         }
+
+
 
         fs::remove_file(&full_path)
             .await

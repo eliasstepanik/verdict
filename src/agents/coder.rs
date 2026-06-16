@@ -2,7 +2,7 @@
 
 use crate::action::StepAction;
 use crate::agent::{Agent, AgentPolicy, FilesystemPolicy, NetworkPolicy};
-use crate::guard::Guard;
+use crate::guards::Guard;
 use crate::pipeline::{AgentStep, FailureMode, InjectionProtection, Pipeline};
 use crate::skills::skill::SkillSet;
 use crate::toolset::ToolSet;
@@ -26,7 +26,7 @@ pub fn coder_agent() -> Agent {
         guard_out: Guard::NonEmptyOutput,
         verdict: Verdict::Automated(Guard::NonEmptyOutput),
         tools: ToolSet::ReadWrite,
-        injection_protection: InjectionProtection::None,
+        injection_protection: InjectionProtection::Strict,
         output_schema: None,
         dependencies: Vec::new(),
         parallel: false,

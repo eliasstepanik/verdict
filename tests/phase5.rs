@@ -190,9 +190,9 @@ async fn test_use_skill_unknown_skill_returns_error() {
     // Error should be about skill not found
     match result {
         Err(PipelineError::StepFailed { error, .. }) => {
-            assert!(error.to_string().contains("not found"));
+            assert!(matches!(error, StepError::ActionFailed { .. }));
         }
-        _ => panic!("Expected StepFailed error"),
+        _ => panic!("Expected StepFailed error with ActionFailed variant"),
     }
 }
 

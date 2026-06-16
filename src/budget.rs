@@ -1,6 +1,6 @@
 //! Budget tracking and rate limiting — Phase 7
 
-use std::time::Instant;
+use std::time::{Instant, Duration};
 use thiserror::Error;
 
 /// Errors that can occur during budget checking
@@ -108,9 +108,9 @@ impl BudgetTracker {
 
     /// Check if all limits are satisfied
     pub fn check_limits(&self) -> Result<(), BudgetError> {
-        // Check cost
+        // Check cost (>= ensures budget limit is inclusive — at-limit spending fails)
         if let Some(max) = self.max_cost_usd {
-            if self.spent_usd > max {
+            if self.spent_usd >= max {
                 return Err(BudgetError::CostExceeded {
                     spent: self.spent_usd,
                     max,
@@ -118,9 +118,9 @@ impl BudgetTracker {
             }
         }
 
-        // Check LLM calls
+        // Check LLM calls (>= means at-limit is exceeded)
         if let Some(max) = self.max_llm_calls {
-            if self.llm_calls > max {
+            if self.llm_calls >= max {
                 return Err(BudgetError::LlmCallLimitExceeded {
                     used: self.llm_calls,
                     max,
@@ -128,9 +128,9 @@ impl BudgetTracker {
             }
         }
 
-        // Check tool calls
+        // Check tool calls (>= means at-limit is exceeded)
         if let Some(max) = self.max_tool_calls {
-            if self.tool_calls > max {
+            if self.tool_calls >= max {
                 return Err(BudgetError::ToolCallLimitExceeded {
                     used: self.tool_calls,
                     max,
@@ -138,10 +138,10 @@ impl BudgetTracker {
             }
         }
 
-        // Check runtime
+        // Check runtime (>= means at-limit is exceeded)
         if let Some(max_secs) = self.max_runtime_seconds {
             let elapsed = self.start_time.elapsed().as_secs();
-            if elapsed > max_secs {
+            if elapsed >= max_secs {
                 return Err(BudgetError::RuntimeExceeded {
                     elapsed_secs: elapsed,
                     max_secs,
@@ -159,12 +159,24 @@ impl BudgetTracker {
 
     /// Get remaining LLM calls
     pub fn remaining_llm_calls(&self) -> Option<u32> {
-        self.max_llm_calls.map(|max| (max as i32 - self.llm_calls as i32).max(0) as u32)
+        self.max_llm_calls.map(|max| {
+            if self.llm_calls > max {
+                0
+            } else {
+                max - self.llm_calls
+            }
+        })
     }
 
     /// Get remaining tool calls
     pub fn remaining_tool_calls(&self) -> Option<u32> {
-        self.max_tool_calls.map(|max| (max as i32 - self.tool_calls as i32).max(0) as u32)
+        self.max_tool_calls.map(|max| {
+            if self.tool_calls > max {
+                0
+            } else {
+                max - self.tool_calls
+            }
+        })
     }
 
     /// Get elapsed time in seconds
@@ -222,20 +234,24 @@ impl RateLimiter {
 
     /// Check if rate limit is satisfied
     pub fn check_rate_limit(&mut self) -> Result<(), BudgetError> {
-        // Reset window if minute has passed
-        if self.window_start.elapsed().as_secs() >= 60 {
-            self.calls_this_minute = 0;
-            self.window_start = Instant::now();
-        }
+        let now = Instant::now();
 
-        // Check limit
-        if let Some(max) = self.max_calls_per_minute {
-            if self.calls_this_minute >= max {
-                return Err(BudgetError::RateLimitExceeded {
-                    calls_this_minute: self.calls_this_minute,
-                    max_calls: max,
-                });
+        // First check if we're still within the current window
+        if now.duration_since(self.window_start) < Duration::from_secs(60) {
+            // Check limit BEFORE incrementing so error reports current count
+            if let Some(max) = self.max_calls_per_minute {
+                if self.calls_this_minute >= max {
+                    return Err(BudgetError::RateLimitExceeded {
+                        calls_this_minute: self.calls_this_minute,
+                        max_calls: max,
+                    });
+                }
             }
+            self.calls_this_minute += 1;
+        } else {
+            // New window: reset counter and start fresh
+            self.window_start = now;
+            self.calls_this_minute = 1; // count the current call
         }
 
         Ok(())

@@ -7,6 +7,7 @@ use chrono::Utc;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
+
 /// Configuration for self-update operations
 #[derive(Debug, Clone)]
 pub struct SelfUpdateConfig {
@@ -29,7 +30,7 @@ pub struct SelfUpdateConfig {
 impl Default for SelfUpdateConfig {
     fn default() -> Self {
         Self {
-            allowed_paths: vec!["src/agents/".to_string(), "skills/".to_string()],
+            allowed_paths: vec!["src/agents/".to_string(), "src/skills/".to_string()],
             forbidden_paths: vec![
                 "src/runner.rs".to_string(),
                 "src/guard.rs".to_string(),
@@ -81,14 +82,13 @@ pub enum SelfUpdateError {
     #[error("patch touches forbidden path: {path}")]
     ForbiddenPath { path: String },
 
+
     #[error("patch is empty")]
     EmptyPatch,
 
-    #[error("patch application failed: {reason}")]
-    PatchFailed { reason: String },
-
-    #[error("patch apply failed: {0}")]
+    #[error("patch application failed: {0}")]
     PatchApplyFailed(String),
+
 
     #[error("compile validation failed: {reason}")]
     CompileFailed { reason: String },
@@ -96,12 +96,88 @@ pub enum SelfUpdateError {
     #[error("test validation failed: {reason}")]
     TestFailed { reason: String },
 
+
+    #[error("sandbox setup failed: {0}")]
+    SandboxSetupFailed(String),
     #[error("I/O error: {0}")]
     Io(String),
 }
 
+/// Recursively copy a directory from src to dst
+async fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), SelfUpdateError> {
+    // Create destination directory
+    tokio::fs::create_dir_all(dst)
+        .await
+        .map_err(|e| SelfUpdateError::Io(e.to_string()))?;
+
+    let mut entries = tokio::fs::read_dir(src)
+        .await
+        .map_err(|e| SelfUpdateError::Io(e.to_string()))?;
+
+    while let Some(entry) = entries
+        .next_entry()
+        .await
+        .map_err(|e| SelfUpdateError::Io(e.to_string()))?
+    {
+        let path = entry.path();
+        let file_name = entry.file_name();
+        let dst_path = dst.join(&file_name);
+
+        if path.is_dir() {
+            // Recursively copy subdirectory
+            Box::pin(copy_dir_recursive(&path, &dst_path)).await?;
+        } else {
+            // Copy file
+            tokio::fs::copy(&path, &dst_path)
+                .await
+                .map_err(|e| SelfUpdateError::Io(e.to_string()))?;
+        }
+    }
+
+    Ok(())
+}
+/// Normalize a path lexically by resolving `.` and `..` components
+fn normalize_path_lexical(path: &str) -> String {
+    let mut components: Vec<&str> = Vec::new();
+    for part in path.split('/') {
+        match part {
+            ".." => {
+                components.pop();
+            }
+            "." | "" => {}
+            p => components.push(p),
+        }
+    }
+    components.join("/")
+}
+
+/// Extract file paths being modified from a unified diff
+fn extract_modified_paths(patch: &str) -> Vec<String> {
+    patch
+        .lines()
+        .filter_map(|line| {
+            // Match "+++ b/path" and "--- a/path" diff headers
+            if let Some(rest) = line.strip_prefix("+++ b/") {
+                Some(rest.trim().to_string())
+            } else if let Some(rest) = line.strip_prefix("--- a/") {
+                // Skip /dev/null
+                if rest.trim() == "/dev/null" {
+                    None
+                } else {
+                    Some(rest.trim().to_string())
+                }
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+
+
 /// Engine for managing self-updates
 pub struct SelfUpdateEngine;
+
 
 impl SelfUpdateEngine {
     /// Validate a patch proposal against static checks
@@ -121,14 +197,69 @@ impl SelfUpdateEngine {
             return Err(SelfUpdateError::InvalidDiff);
         }
 
-        // Check for forbidden paths in the patch
-        for forbidden_path in &config.forbidden_paths {
-            if proposal.patch.contains(forbidden_path) {
+        // Extract actual file paths from diff headers
+        let modified_paths = extract_modified_paths(&proposal.patch);
+
+        // Fail-closed: if patch is non-empty but no paths found, reject it
+        if modified_paths.is_empty() && !proposal.patch.trim().is_empty() {
+            return Err(SelfUpdateError::InvalidDiff);
+        }
+
+        // Check that all modified paths are within allowed_paths
+        for modified in &modified_paths {
+            let normalized = normalize_path_lexical(modified);
+            let mut found_allowed = false;
+            for allowed in &config.allowed_paths {
+                if normalized.starts_with(allowed) || normalized == *allowed {
+                    found_allowed = true;
+                    break;
+                }
+            }
+            if !found_allowed {
                 return Err(SelfUpdateError::ForbiddenPath {
-                    path: forbidden_path.clone(),
+                    path: modified.clone(),
                 });
             }
         }
+
+        // Check for forbidden paths in the patch
+        for modified in &modified_paths {
+            let normalized = normalize_path_lexical(modified);
+            for forbidden_path in &config.forbidden_paths {
+                if normalized.starts_with(forbidden_path) || normalized == *forbidden_path {
+                    return Err(SelfUpdateError::ForbiddenPath {
+                        path: modified.clone(),
+                    });
+                }
+            }
+        }
+
+
+        // Risk-based validation
+        match proposal.risk_level {
+            RiskLevel::Critical => {
+                // Critical risk: require the patch to be small (max 50 changed lines)
+                let changed_lines = proposal
+                    .patch
+                    .lines()
+                    .filter(|l| {
+                        (l.starts_with('+') && !l.starts_with("+++"))
+                            || (l.starts_with('-') && !l.starts_with("---"))
+                    })
+                    .count();
+                if changed_lines > 50 {
+                    return Err(SelfUpdateError::InvalidDiff);
+                }
+            }
+            RiskLevel::High => {
+                // High risk: ensure patch summary is non-empty
+                if proposal.summary.trim().is_empty() {
+                    return Err(SelfUpdateError::EmptyPatch);
+                }
+            }
+            _ => {}
+        }
+
 
         Ok(())
     }
@@ -137,26 +268,25 @@ impl SelfUpdateEngine {
     pub async fn apply_in_sandbox(
         patch: &str,
         sandbox_dir: &Path,
-        _workspace_root: &Path,
+        workspace_root: &Path,
     ) -> Result<(), SelfUpdateError> {
-        // Ensure sandbox dir exists
-        if !sandbox_dir.exists() {
-            std::fs::create_dir_all(sandbox_dir)
-                .map_err(|e| SelfUpdateError::Io(e.to_string()))?;
-        }
+        // Step 1: Copy workspace_root contents to sandbox_dir
+        copy_dir_recursive(workspace_root, sandbox_dir)
+            .await
+            .map_err(|e| SelfUpdateError::SandboxSetupFailed(e.to_string()))?;
 
-        // Validate patch is a unified diff
-        if !patch.contains("--- ") && !patch.contains("+++ ") && !patch.contains("@@") {
-            return Err(SelfUpdateError::InvalidDiff);
-        }
-
-        // Write the patch to a file in the sandbox
-        let patch_path = sandbox_dir.join("patch.diff");
+        // Step 2: Write the patch file
+        let patch_path = sandbox_dir.join("__verdict_patch__.diff");
         tokio::fs::write(&patch_path, patch)
             .await
             .map_err(|e| SelfUpdateError::Io(e.to_string()))?;
 
-        // Step 1: git apply --check (dry run)
+        // Step 3: Validate patch is a unified diff
+        if !patch.contains("--- ") && !patch.contains("+++ ") && !patch.contains("@@") {
+            return Err(SelfUpdateError::InvalidDiff);
+        }
+
+        // Step 4: git apply --check (dry run)
         let check = tokio::process::Command::new("git")
             .args(["apply", "--check", patch_path.to_str().unwrap()])
             .current_dir(sandbox_dir)
@@ -170,7 +300,7 @@ impl SelfUpdateEngine {
             ));
         }
 
-        // Step 2: git apply
+        // Step 5: git apply (actual apply)
         let apply = tokio::process::Command::new("git")
             .args(["apply", patch_path.to_str().unwrap()])
             .current_dir(sandbox_dir)
@@ -187,21 +317,38 @@ impl SelfUpdateEngine {
         Ok(())
     }
 
+
     /// Create a new AgentVersion from the current agent and a change summary
     pub fn version_agent(
         agent: &Agent,
         change_summary: &str,
         eval_score: Option<f64>,
     ) -> AgentVersion {
+        // No parent version for a freshly created agent version
+        let parent_version = None;
+
+        // Try to get current git HEAD commit hash
+        let git_commit = std::process::Command::new("git")
+            .args(["rev-parse", "--short", "HEAD"])
+            .output()
+            .ok()
+            .and_then(|o| {
+                if o.status.success() {
+                    Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
+                } else {
+                    None
+                }
+            });
+
         AgentVersion {
             agent_name: agent.name.clone(),
             version: chrono::Utc::now()
                 .format("%Y%m%d%H%M%S")
                 .to_string(),
-            parent_version: None,
+            parent_version,
             created_at: Utc::now(),
             change_summary: change_summary.to_string(),
-            git_commit: None,
+            git_commit,
             evaluation_score: eval_score,
         }
     }

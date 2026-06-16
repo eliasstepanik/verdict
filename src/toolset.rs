@@ -25,8 +25,11 @@ pub enum ToolSet {
     /// Explicit allowlist of tool names
     Allow(Vec<String>),
 
-    /// Explicit denylist of tool names (everything except these)
+
+    /// Explicit denylist of tool names (everything except these).
+    /// Note: `Deny(vec![])` denies no tools and is functionally equivalent to `Full` — all tools are allowed.
     Deny(Vec<String>),
+
 
     /// Inherit tools from a named skill
     FromSkill(String),
@@ -45,15 +48,19 @@ impl ToolSet {
     pub fn explicit_names(&self) -> Option<&[String]> {
         match self {
             ToolSet::Allow(names) => Some(names.as_slice()),
+            ToolSet::Deny(names) => Some(names.as_slice()),
             _ => None,
         }
     }
 
 
+
+
     /// Check if a tool is allowed by this toolset.
     ///
-    /// In Phase 1, this is a basic stub that handles the common cases.
-    /// Full enforcement including intersection/union resolution is Phase 2.
+    /// Checks tool membership across all ToolSet variants including
+    /// intersection and union composition. Returns true if the tool is allowed.
+
     pub fn contains(&self, tool_name: &str) -> bool {
         match self {
             ToolSet::None => false,

@@ -1,6 +1,6 @@
 //! Test writing skill
 
-use crate::guard::Guard;
+use crate::guards::Guard;
 use crate::skills::skill::Skill;
 use crate::toolset::ToolSet;
 

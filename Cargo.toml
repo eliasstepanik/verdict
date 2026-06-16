@@ -11,7 +11,6 @@ edition = "2021"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "time", "fs", "process"] }
-tokio-util = "0.7"
 async-trait = "0.1"
 thiserror = "1"
 chrono = { version = "0.4", features = ["serde"] }
@@ -23,7 +22,6 @@ url = "2"
 toml = "0.8"
 serde_yaml = "0.9"
 futures = "0.3"
-regex = "1"
 async-recursion = "1"
 
 [dev-dependencies]

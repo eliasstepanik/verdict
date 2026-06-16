@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::guard::Guard;
+use crate::guards::Guard;
 use crate::pipeline::Pipeline;
 use crate::toolset::ToolSet;
 
@@ -53,6 +53,14 @@ impl From<Vec<&str>> for SkillSet {
     fn from(skills: Vec<&str>) -> Self {
         Self {
             skills: skills.into_iter().map(|s| s.to_string()).collect(),
+        }
+    }
+}
+
+impl<const N: usize> From<[&str; N]> for SkillSet {
+    fn from(arr: [&str; N]) -> Self {
+        SkillSet {
+            skills: arr.iter().map(|s| s.to_string()).collect(),
         }
     }
 }

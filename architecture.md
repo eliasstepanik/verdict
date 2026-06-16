@@ -174,7 +174,7 @@ pub enum StepAction {
     },
 
     /// Delegate to a sub-pipeline directly
-    SubPipeline(Pipeline),
+    SubPipeline(Box<Pipeline>),
 
     /// Loop/iterate until a condition is met
     LoopUntil {

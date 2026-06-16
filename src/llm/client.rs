@@ -86,9 +86,11 @@ impl LlmClient {
                 .ok_or(LlmError::NotConfigured)?
         };
 
+
         let base_url = base_url_override
+            .filter(|u| !u.is_empty())
             .map(|s| s.to_string())
-            .or_else(|| std::env::var("OPENAI_BASE_URL").ok())
+            .or_else(|| std::env::var("OPENAI_BASE_URL").ok().filter(|u| !u.is_empty()))
             .unwrap_or_else(|| "https://api.openai.com".into());
 
         let model = model_override

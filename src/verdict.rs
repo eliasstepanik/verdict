@@ -1,8 +1,8 @@
 use thiserror::Error;
 
 use crate::action::ProviderSpec;
-use crate::guard::{Guard, GuardError, GuardEngine};
 use crate::context::StepContext;
+use crate::guards::{Guard, GuardEngine, GuardError};
 
 /// A verdict: the decision on whether to allow a step to proceed
 #[derive(Clone)]
@@ -50,13 +50,24 @@ impl std::fmt::Debug for Verdict {
                 .field("prompt", prompt)
                 .field("show_diff", show_diff)
                 .finish(),
-            Verdict::LlmJudge { system: _, input_template: _, model, pass_on_pattern } => f
+            Verdict::LlmJudge {
+                system: _,
+                input_template: _,
+                model,
+                pass_on_pattern,
+            } => f
                 .debug_struct("LlmJudge")
                 .field("model", model)
                 .field("pass_on_pattern", pass_on_pattern)
                 .finish(),
-            Verdict::AllOf(vs) => f.debug_tuple("AllOf").field(&format!("[{} verdicts]", vs.len())).finish(),
-            Verdict::AnyOf(vs) => f.debug_tuple("AnyOf").field(&format!("[{} verdicts]", vs.len())).finish(),
+            Verdict::AllOf(vs) => f
+                .debug_tuple("AllOf")
+                .field(&format!("[{} verdicts]", vs.len()))
+                .finish(),
+            Verdict::AnyOf(vs) => f
+                .debug_tuple("AnyOf")
+                .field(&format!("[{} verdicts]", vs.len()))
+                .finish(),
         }
     }
 }
@@ -87,9 +98,6 @@ pub enum VerdictError {
 
     #[error("LlmJudge evaluation failed: {reason}")]
     LlmJudgeFailed { reason: String },
-
-    #[error("LlmJudge pattern error: {0}")]
-    BadPattern(String),
 }
 
 /// Engine for evaluating verdicts
@@ -110,33 +118,52 @@ impl VerdictEngine {
                 Err(VerdictError::UserApprovalRequired { prompt })
             }
 
-
-            Verdict::LlmJudge { system, input_template, model: _, pass_on_pattern } => {
-                let llm_client = ctx.llm_client.as_ref()
-                    .ok_or(VerdictError::NoLlmClient)?;
+            Verdict::LlmJudge {
+                system,
+                input_template,
+                model,
+                pass_on_pattern,
+            } => {
+                let llm_client = ctx.llm_client.as_ref().ok_or(VerdictError::NoLlmClient)?;
 
                 // Render template: replace {output} and {request} placeholders
                 let output_str = ctx.output.as_ref().map(|o| o.raw.as_str()).unwrap_or("");
-                let request_str = ctx.request.as_str().unwrap_or("");
+                let request_str = serde_json::to_string(&ctx.request).unwrap_or_default();
                 let user = input_template
                     .replace("{output}", output_str)
-                    .replace("{request}", request_str);
+                    .replace("{request}", &request_str);
+
+                // Resolve model: use provided override, else LLM client default
+                let resolved_model = model
+                    .as_ref()
+                    .map(|spec| spec.model.clone())
+                    .unwrap_or_else(|| llm_client.default_model().to_string());
 
                 let req = crate::llm::LlmRequest {
                     system: system.clone(),
                     user,
-                    model: "gpt-4o".to_string(),
-                    max_tokens: Some(256),
+                    model: resolved_model,
+                    max_tokens: Some(1024),
                     history: None,
                     temperature: None,
                     tools: None,
                 };
 
-                let response = llm_client.complete(req).await
-                    .map_err(|e| VerdictError::LlmJudgeFailed { reason: e.to_string() })?;
+                let response =
+                    llm_client
+                        .complete(req)
+                        .await
+                        .map_err(|e| VerdictError::LlmJudgeFailed {
+                            reason: e.to_string(),
+                        })?;
 
                 // Pattern matching: substring check (no regex crate available)
-                if response.content.contains(pass_on_pattern.as_str()) {
+                // Case-insensitive pattern matching on first line for strictness
+                let first_line = response.content.lines().next().unwrap_or("");
+                if first_line
+                    .to_lowercase()
+                    .contains(&pass_on_pattern.to_lowercase())
+                {
                     Ok(())
                 } else {
                     Err(VerdictError::LlmJudgeFailed {
@@ -150,7 +177,8 @@ impl VerdictEngine {
 
             Verdict::AllOf(verdicts) => {
                 for verdict in verdicts {
-                    std::pin::Pin::from(Box::new(Self::evaluate(verdict, ctx))).await
+                    std::pin::Pin::from(Box::new(Self::evaluate(verdict, ctx)))
+                        .await
                         .map_err(|e| VerdictError::AllOfFailed {
                             reason: e.to_string(),
                         })?;

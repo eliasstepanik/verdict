@@ -50,6 +50,13 @@ impl Tool for CargoCheckTool {
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
+        if !output.status.success() {
+            let code = output.status.code().unwrap_or(-1);
+            return Err(ToolError::ExecutionFailed {
+                reason: format!("Process exited with code {}: {}", code, stderr),
+            });
+        }
+
         Ok(ToolOutput::text(format!("{}{}", stdout, stderr)))
     }
 
@@ -88,7 +95,17 @@ impl Tool for CargoCheckTool {
             }
         }
 
-        let _ = child.wait().await;
+        let exit_status = child.wait().await
+            .map_err(|e| ToolError::ExecutionFailed {
+                reason: format!("failed to wait for process: {}", e),
+            })?;
+
+        if !exit_status.success() {
+            let code = exit_status.code().unwrap_or(-1);
+            return Err(ToolError::ExecutionFailed {
+                reason: format!("Process exited with code {}", code),
+            });
+        }
 
         chunks.push(ToolChunk {
             delta: String::new(),
@@ -139,6 +156,13 @@ impl Tool for CargoTestTool {
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
+        if !output.status.success() {
+            let code = output.status.code().unwrap_or(-1);
+            return Err(ToolError::ExecutionFailed {
+                reason: format!("Process exited with code {}: {}", code, stderr),
+            });
+        }
+
         Ok(ToolOutput::text(format!("{}{}", stdout, stderr)))
     }
 
@@ -177,7 +201,17 @@ impl Tool for CargoTestTool {
             }
         }
 
-        let _ = child.wait().await;
+        let exit_status = child.wait().await
+            .map_err(|e| ToolError::ExecutionFailed {
+                reason: format!("failed to wait for process: {}", e),
+            })?;
+
+        if !exit_status.success() {
+            let code = exit_status.code().unwrap_or(-1);
+            return Err(ToolError::ExecutionFailed {
+                reason: format!("Process exited with code {}", code),
+            });
+        }
 
         chunks.push(ToolChunk {
             delta: String::new(),
@@ -227,6 +261,13 @@ impl Tool for CargoFmtTool {
 
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+        if !output.status.success() {
+            let code = output.status.code().unwrap_or(-1);
+            return Err(ToolError::ExecutionFailed {
+                reason: format!("Process exited with code {}: {}", code, stderr),
+            });
+        }
 
         Ok(ToolOutput::text(format!("{}{}", stdout, stderr)))
     }
@@ -300,6 +341,13 @@ impl Tool for RunCommandTool {
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
+        if !output.status.success() {
+            let code = output.status.code().unwrap_or(-1);
+            return Err(ToolError::ExecutionFailed {
+                reason: format!("Process exited with code {}: {}", code, stderr),
+            });
+        }
+
         Ok(ToolOutput::text(format!("{}{}", stdout, stderr)))
     }
 
@@ -357,7 +405,170 @@ impl Tool for RunCommandTool {
             }
         }
 
-        let _ = child.wait().await;
+        let exit_status = child.wait().await
+            .map_err(|e| ToolError::ExecutionFailed {
+                reason: format!("failed to wait for process: {}", e),
+            })?;
+
+        if !exit_status.success() {
+            let code = exit_status.code().unwrap_or(-1);
+            return Err(ToolError::ExecutionFailed {
+                reason: format!("Process exited with code {}", code),
+            });
+        }
+
+        chunks.push(ToolChunk {
+            delta: String::new(),
+            is_final: true,
+        });
+
+        Ok(chunks)
+    }
+}
+
+/// Alias for shell.run_command with shorter name
+pub struct ShellRunTool;
+
+#[async_trait]
+impl Tool for ShellRunTool {
+    fn name(&self) -> &str {
+        "shell.run"
+    }
+
+    fn description(&self) -> &str {
+        "Execute an arbitrary shell command (with restrictions)"
+    }
+
+    fn schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "command": {
+                    "type": "string",
+                    "description": "The command to run"
+                },
+                "args": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Command arguments"
+                }
+            },
+            "required": ["command"]
+        })
+    }
+
+    fn source(&self) -> ToolSource {
+        ToolSource::Builtin
+    }
+
+    async fn call(&self, args: Value, ctx: ToolContext) -> Result<ToolOutput, ToolError> {
+        let command = args
+            .get("command")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| ToolError::SchemaValidationFailed {
+                reason: "missing 'command' field".to_string(),
+            })?;
+
+        let cmd_args: Vec<String> = args
+            .get("args")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let workspace_root = &ctx.filesystem_policy.workspace_root;
+
+        let mut cmd = Command::new(command);
+        for arg in cmd_args {
+            cmd.arg(arg);
+        }
+        cmd.current_dir(workspace_root);
+
+        let output = cmd.output().await.map_err(|e| ToolError::ExecutionFailed {
+            reason: format!("failed to execute command: {}", e),
+        })?;
+
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+        if !output.status.success() {
+            let code = output.status.code().unwrap_or(-1);
+            return Err(ToolError::ExecutionFailed {
+                reason: format!("Process exited with code {}: {}", code, stderr),
+            });
+        }
+
+        Ok(ToolOutput::text(format!("{}{}", stdout, stderr)))
+    }
+
+    async fn call_streaming(
+        &self,
+        args: Value,
+        ctx: ToolContext,
+    ) -> Result<Vec<ToolChunk>, ToolError> {
+        let command = args
+            .get("command")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| ToolError::SchemaValidationFailed {
+                reason: "missing 'command' field".to_string(),
+            })?;
+
+        let cmd_args: Vec<String> = args
+            .get("args")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let workspace_root = &ctx.filesystem_policy.workspace_root;
+
+        let mut cmd = Command::new(command);
+        for arg in cmd_args {
+            cmd.arg(arg);
+        }
+        cmd.current_dir(workspace_root)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+
+        let mut child = cmd.spawn().map_err(|e| ToolError::ExecutionFailed {
+            reason: format!("failed to spawn command: {}", e),
+        })?;
+
+        let mut chunks = Vec::new();
+
+        if let Some(stdout) = child.stdout.take() {
+            let mut lines = BufReader::new(stdout).lines();
+            while let Some(line) = lines
+                .next_line()
+                .await
+                .map_err(|e| ToolError::ExecutionFailed {
+                    reason: format!("failed to read stdout: {}", e),
+                })?
+            {
+                chunks.push(ToolChunk {
+                    delta: format!("{}\n", line),
+                    is_final: false,
+                });
+            }
+        }
+
+        let exit_status = child.wait().await
+            .map_err(|e| ToolError::ExecutionFailed {
+                reason: format!("failed to wait for process: {}", e),
+            })?;
+
+        if !exit_status.success() {
+            let code = exit_status.code().unwrap_or(-1);
+            return Err(ToolError::ExecutionFailed {
+                reason: format!("Process exited with code {}", code),
+            });
+        }
 
         chunks.push(ToolChunk {
             delta: String::new(),
@@ -375,5 +586,6 @@ pub fn shell_tools() -> Vec<Arc<dyn Tool>> {
         Arc::new(CargoTestTool),
         Arc::new(CargoFmtTool),
         Arc::new(RunCommandTool),
+        Arc::new(ShellRunTool),
     ]
 }

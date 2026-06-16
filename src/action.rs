@@ -3,20 +3,20 @@ use std::sync::Arc;
 use thiserror::Error;
 
 use crate::context::StepContext;
-use crate::guard::GuardError;
+use crate::guards::GuardError;
 use crate::verdict::VerdictError;
 use crate::pipeline::Pipeline;
-use crate::guard::Guard;
+use crate::guards::Guard;
 
 /// Specification for an LLM provider and model
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ProviderSpec {
     pub model: String,
     pub provider: String,
 }
 
 /// Policy controlling agent delegation
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DelegationPolicy {
     pub max_depth: u32,
     pub allowed_agents: Vec<String>,
@@ -27,7 +27,7 @@ pub struct DelegationPolicy {
 }
 
 /// How to handle iteration failure in LoopUntil
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum IterationFailureMode {
     /// Retry the iteration body immediately
     Retry,
@@ -36,6 +36,8 @@ pub enum IterationFailureMode {
     /// Abort the entire loop and fail
     Abort,
 }
+
+
 
 /// Error from remote agent execution
 #[derive(Error, Debug)]
@@ -54,7 +56,8 @@ pub enum RemoteAgentError {
 }
 
 /// Skill execution mode
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+
 pub enum SkillMode {
     /// Inject skill instructions into the current step's LLM prompt
     PromptOnly,
@@ -164,6 +167,10 @@ pub enum StepAction {
         system: String,
         user: String,
         model: Option<ProviderSpec>,
+        /// Optional conversation ID for multi-turn interactions
+        conversation_id: Option<String>,
+        /// Whether to append the user message and assistant response to conversation history
+        append_to_history: bool,
     },
 
     /// ReAct tool-use loop: iterate until stop condition met
@@ -178,11 +185,12 @@ pub enum StepAction {
 }
 
 /// Stop condition for ToolUseLoop
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum StopCondition {
     /// Stop when LLM returns no tool calls (text-only response)
     TextOnly,
-    /// Stop when output matches a regex pattern
+    /// Stop when output contains a substring pattern (case-sensitive; not a regex)
+
     Pattern(String),
     /// Always run to max_rounds
     MaxRounds,
@@ -197,19 +205,27 @@ impl std::fmt::Debug for StepAction {
                 model,
                 conversation_id,
                 append_to_history,
-            } => f
-                .debug_struct("LlmCall")
-                .field("system", system)
-                .field("user", user)
-                .field("model", model)
-                .field("conversation_id", conversation_id)
-                .field("append_to_history", append_to_history)
-                .finish(),
-            StepAction::ToolCall { tool, args } => f
-                .debug_struct("ToolCall")
-                .field("tool", tool)
-                .field("args", args)
-                .finish(),
+            } => {
+                let sys_preview = if system.len() > 50 {
+                    format!("{}...", &system[..50])
+                } else {
+                    system.clone()
+                };
+                let usr_preview = if user.len() > 50 {
+                    format!("{}...", &user[..50])
+                } else {
+                    user.clone()
+                };
+                f
+                    .debug_struct("LlmCall")
+                    .field("system", &sys_preview)
+                    .field("user", &usr_preview)
+                    .field("model", model)
+                    .field("conversation_id", conversation_id)
+                    .field("append_to_history", append_to_history)
+                    .finish()
+            }
+
             StepAction::DelegateAgent {
                 agent,
                 input,
@@ -270,12 +286,15 @@ impl std::fmt::Debug for StepAction {
                 .field("agent_name", agent_name)
                 .field("payload", payload)
                 .finish(),
-            StepAction::LlmCallStreaming { system, user, model } => f
-                .debug_struct("LlmCallStreaming")
-                .field("system", system)
-                .field("user", user)
-                .field("model", model)
-                .finish(),
+            StepAction::LlmCallStreaming { system, user, model, conversation_id, append_to_history } => f
+                 .debug_struct("LlmCallStreaming")
+                 .field("system", system)
+                 .field("user", user)
+                 .field("model", model)
+                 .field("conversation_id", conversation_id)
+                 .field("append_to_history", append_to_history)
+                 .finish(),
+
             StepAction::ToolUseLoop {
                 system,
                 user,
@@ -292,6 +311,12 @@ impl std::fmt::Debug for StepAction {
                 .field("max_rounds", max_rounds)
                 .field("stop_condition", stop_condition)
                 .finish(),
+            StepAction::ToolCall { tool, args } => f
+                .debug_struct("ToolCall")
+                .field("tool", tool)
+                .field("args", args)
+                .finish(),
+
         }
     }
 }
@@ -310,7 +335,7 @@ pub enum StepError {
 
     #[error("awaiting user approval: {prompt}")]
     AwaitingApproval { prompt: &'static str },
+    #[error("remote agent failed: {0}")]
+    RemoteAgentFailed(#[from] RemoteAgentError),
 
-    #[error("not implemented: {0}")]
-    NotImplemented(String),
 }

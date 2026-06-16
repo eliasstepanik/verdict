@@ -463,7 +463,20 @@ impl AuditLog {
                                     .unwrap_or("")
                                     .to_string(),
                             },
+                            "FallbackTriggered" => AuditEvent::FallbackTriggered {
+                                step: event_obj
+                                    .get("step")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string(),
+                                reason: event_obj
+                                    .get("reason")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string(),
+                            },
                             _ => continue,
+
                         }
                     } else {
                         continue;
@@ -496,107 +509,81 @@ impl Default for AuditLog {
 pub fn call_tree_from_audit_log(entries: &[AuditEntry]) -> Vec<CallTreeNode> {
     use std::collections::HashMap;
 
-    // Map from (parent_agent, child_agent, depth) to node for quick lookup
-    let mut node_map: HashMap<(String, String, u32), CallTreeNode> = HashMap::new();
-    // Track which nodes are root (no parent)
-    let mut root_agents: HashMap<(String, u32), bool> = HashMap::new();
-    // Map to track parent relationships: child key -> parent key
-    let mut parent_map: HashMap<(String, String, u32), (String, String, u32)> = HashMap::new();
+    // Build: child_agent_name -> parent_agent_name
+    let mut parent_of: HashMap<String, String> = HashMap::new();
+    // Build: agent_name -> (started_at, completed_at, status)
+    let mut node_data: HashMap<String, (DateTime<Utc>, Option<DateTime<Utc>>, CallTreeStatus)> = HashMap::new();
 
-    // First pass: identify all nodes and their statuses
     for entry in entries {
         match &entry.event {
             AuditEvent::DelegationStarted {
                 parent_agent,
                 child_agent,
-                depth,
+                ..
             } => {
-                let key = (parent_agent.clone(), child_agent.clone(), *depth);
-                let node = CallTreeNode {
-                    agent_name: child_agent.clone(),
-                    depth: *depth,
-                    started_at: entry.timestamp,
-                    completed_at: None,
-                    status: CallTreeStatus::Running,
-                    children: Vec::new(),
-                };
-                node_map.insert(key.clone(), node);
-                parent_map.insert(
-                    (child_agent.clone(), parent_agent.clone(), *depth),
-                    (parent_agent.clone(), child_agent.clone(), *depth),
-                );
-                root_agents.insert((parent_agent.clone(), depth.saturating_sub(1)), true);
+                parent_of.insert(child_agent.clone(), parent_agent.clone());
+                node_data
+                    .entry(child_agent.clone())
+                    .or_insert((entry.timestamp, None, CallTreeStatus::Running));
+                node_data
+                    .entry(parent_agent.clone())
+                    .or_insert((entry.timestamp, None, CallTreeStatus::Running));
             }
-            AuditEvent::DelegationCompleted {
-                parent_agent,
-                child_agent,
-                depth,
-            } => {
-                let key = (parent_agent.clone(), child_agent.clone(), *depth);
-                if let Some(node) = node_map.get_mut(&key) {
-                    node.status = CallTreeStatus::Completed;
-                    node.completed_at = Some(entry.timestamp);
+            AuditEvent::DelegationCompleted { child_agent, .. } => {
+                if let Some(data) = node_data.get_mut(child_agent) {
+                    data.1 = Some(entry.timestamp);
+                    data.2 = CallTreeStatus::Completed;
                 }
             }
             AuditEvent::DelegationFailed {
-                parent_agent,
-                child_agent,
-                depth,
-                reason,
+                child_agent, reason, ..
             } => {
-                let key = (parent_agent.clone(), child_agent.clone(), *depth);
-                if let Some(node) = node_map.get_mut(&key) {
-                    node.status = CallTreeStatus::Failed {
+                if let Some(data) = node_data.get_mut(child_agent) {
+                    data.1 = Some(entry.timestamp);
+                    data.2 = CallTreeStatus::Failed {
                         reason: reason.clone(),
                     };
-                    node.completed_at = Some(entry.timestamp);
                 }
             }
             _ => {}
         }
     }
 
-    // Second pass: build the tree structure
-    let mut root_nodes = Vec::new();
-    let mut processed: std::collections::HashSet<(String, String, u32)> = std::collections::HashSet::new();
+    // Find roots: agents that are NOT in parent_of values
+    let all_children: std::collections::HashSet<&str> =
+        parent_of.keys().map(|s| s.as_str()).collect();
 
-    // Find all root nodes (those without parents in our map)
-    for (key, node) in &node_map {
-        if !parent_map.contains_key(&(node.agent_name.clone(), key.0.clone(), key.2)) {
-            if !processed.contains(&key) {
-                root_nodes.push((key.clone(), node.clone()));
-                processed.insert(key.clone());
-            }
+    fn build_node(
+        agent_name: &str,
+        node_data: &HashMap<String, (DateTime<Utc>, Option<DateTime<Utc>>, CallTreeStatus)>,
+        parent_of: &HashMap<String, String>,
+    ) -> CallTreeNode {
+        let (started, completed, status) = node_data
+            .get(agent_name)
+            .cloned()
+            .unwrap_or((Utc::now(), None, CallTreeStatus::Running));
+
+        let children: Vec<CallTreeNode> = parent_of
+            .iter()
+            .filter(|(_, parent)| *parent == agent_name)
+            .map(|(child, _)| build_node(child, node_data, parent_of))
+            .collect();
+
+        CallTreeNode {
+            agent_name: agent_name.to_string(),
+            depth: 0, // set by caller if needed
+            started_at: started,
+            completed_at: completed,
+            status,
+            children,
         }
     }
 
-    // Recursively attach children to their parents
-    fn attach_children(
-        parent_node: &mut CallTreeNode,
-        parent_key: &(String, String, u32),
-        node_map: &HashMap<(String, String, u32), CallTreeNode>,
-        processed: &mut std::collections::HashSet<(String, String, u32)>,
-    ) {
-        // Find all children of this node
-        for (key, child_node) in node_map {
-            if key.0 == parent_key.1 && key.2 == parent_key.2 + 1 {
-                // This is a child of our parent node
-                let mut child_copy = child_node.clone();
-                attach_children(&mut child_copy, key, node_map, processed);
-                parent_node.children.push(child_copy);
-                processed.insert(key.clone());
-            }
-        }
-    }
-
-    // Attach children to root nodes
-    let mut final_roots = Vec::new();
-    for (key, mut node) in root_nodes {
-        attach_children(&mut node, &key, &node_map, &mut processed);
-        final_roots.push(node);
-    }
-
-    final_roots
+    node_data
+        .keys()
+        .filter(|name| !all_children.contains(name.as_str()))
+        .map(|root| build_node(root, &node_data, &parent_of))
+        .collect()
 }
 
 /// Monitoring server for Web UI dashboard (Phase 9)
@@ -691,11 +678,16 @@ impl MonitoringServer {
         async fn trace_handler(
             State(state): State<AppState>,
         ) -> Json<serde_json::Value> {
-            let t = state.trace.lock().ok();
-            let entries: Vec<_> = t
-                .map(|tr| tr.entries.clone())
-                .unwrap_or_default();
-            Json(json!({ "entries": entries }))
+            match state.trace.lock() {
+                Ok(t) => {
+                    let entries = t.entries.clone();
+                    Json(json!({ "entries": entries }))
+                }
+                Err(e) => {
+                    eprintln!("ERROR: trace mutex poisoned: {}", e);
+                    Json(json!({ "error": "trace mutex poisoned", "entries": [] }))
+                }
+            }
         }
 
         let app = Router::new()

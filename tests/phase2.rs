@@ -146,13 +146,16 @@ async fn test_fs_read_cargo_toml() {
     assert!(output.raw.contains("verdict"));
 }
 
+
 #[tokio::test]
 async fn test_fs_read_rejects_path_escape() {
     let registry = ToolRegistry::with_builtins();
     let fs_read = registry.get("fs.read").expect("fs.read not found");
 
     let mut fs_policy = FilesystemPolicy::default();
-    fs_policy.workspace_root = workspace_root();
+    // Use a temp directory as workspace_root, not the project root
+    let temp_dir = std::env::temp_dir();
+    fs_policy.workspace_root = temp_dir.clone();
 
     let ctx = ToolContext {
         filesystem_policy: fs_policy,
@@ -161,16 +164,16 @@ async fn test_fs_read_rejects_path_escape() {
         audit_log: Arc::new(Mutex::new(AuditLog::new())),
     };
 
-    // Try to escape workspace
+    // Try to escape workspace using absolute path outside temp_dir
     let result = fs_read
-        .call(json!({ "path": "../../etc/passwd" }), ctx)
+        .call(json!({ "path": "/etc/passwd" }), ctx)
         .await;
 
-    // Should fail or at least not return actual /etc/passwd
-    // (failure is expected)
-    let is_failure_or_safe = result.is_err() || !result.unwrap().raw.contains("root:x:");
-    assert!(is_failure_or_safe);
+    // Should fail because /etc/passwd is outside workspace_root
+    assert!(result.is_err(), "fs.read should reject paths outside workspace_root");
 }
+
+
 
 #[tokio::test]
 async fn test_fs_write_and_read_roundtrip() {
@@ -347,6 +350,8 @@ async fn test_pipeline_with_function_tool_call() {
     };
 
     // Create an agent
+    let mut policy = AgentPolicy::default();
+    policy.allowed_tools = ToolSet::Allow(vec!["greet".to_string()]);
     let agent = Agent {
         name: "test_agent".to_string(),
         description: "Test agent".to_string(),
@@ -355,7 +360,7 @@ async fn test_pipeline_with_function_tool_call() {
         skills: SkillSet {
             skills: vec![],
         },
-        policy: AgentPolicy::default(),
+        policy,
     };
 
     // Run with custom tool registry
@@ -364,7 +369,10 @@ async fn test_pipeline_with_function_tool_call() {
         .run(&pipeline, &agent, json!({ "input": "test" }))
         .await;
 
-    assert!(result.is_ok(), "Pipeline run should succeed");
+    if let Err(ref e) = result {
+        eprintln!("Pipeline error: {:?}", e);
+    }
+    assert!(result.is_ok(), "Pipeline run should succeed: {:?}", result.err());
     let pipeline_result = result.unwrap();
     assert!(pipeline_result.success, "Pipeline should report success");
     assert!(!pipeline_result.steps_passed.is_empty(), "Pipeline should have at least one passed step");
@@ -422,7 +430,10 @@ async fn test_audit_log_records_pipeline_events() {
         skills: SkillSet {
             skills: vec![],
         },
-        policy: AgentPolicy::default(),
+        policy: AgentPolicy {
+            allowed_tools: ToolSet::Allow(vec!["audit_test".to_string()]),
+            ..AgentPolicy::default()
+        },
     };
 
     let mut runner = PipelineRunner::with_tool_registry(Arc::new(registry));
@@ -430,7 +441,10 @@ async fn test_audit_log_records_pipeline_events() {
         .run(&pipeline, &agent, json!({}))
         .await;
 
-    assert!(result.is_ok(), "Pipeline should succeed");
+    if let Err(ref e) = result {
+        eprintln!("Pipeline error: {:?}", e);
+    }
+    assert!(result.is_ok(), "Pipeline should succeed: {:?}", result.err());
 
     // Check audit log for standard pipeline events
     let pipeline_result = result.unwrap();
