@@ -1,6 +1,6 @@
 //! Integration tests: Pipeline Runner end-to-end flows
 //!
-//! Tests the full pipeline execution path via PipelineRunner::run() —
+//! Tests the full pipeline execution path via PipelineRunner::run() â€”
 //! not guard evaluation in isolation. All tests use StepAction::Custom
 //! for deterministic, LLM-free execution unless otherwise noted.
 
@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use verdict::prelude::*;
 use serde_json::json;
 
-// ─── shared helpers ───────────────────────────────────────────────────────────
+// â”€â”€â”€ shared helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 fn custom_step(name: &str, f: impl Fn(&StepContext) -> Result<StepOutput, StepError> + Send + Sync + 'static) -> AgentStep {
     AgentStep {
@@ -23,7 +23,9 @@ fn custom_step(name: &str, f: impl Fn(&StepContext) -> Result<StepOutput, StepEr
         output_schema: None,
         dependencies: vec![],
         parallel: false,
-    }
+            input_processors: vec![],
+            output_processors: vec![],
+        }
 }
 
 fn abort_pipeline(name: &str, steps: Vec<AgentStep>) -> Pipeline {
@@ -43,10 +45,11 @@ fn simple_agent(pipeline: &Pipeline) -> Agent {
         tools: ToolSet::None,
         skills: SkillSet::default(),
         policy: AgentPolicy::default(),
+        scorers: vec![],
     }
 }
 
-// ─── Test 1: 3-step data chain via step_results ───────────────────────────────
+// â”€â”€â”€ Test 1: 3-step data chain via step_results â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 #[tokio::test]
 async fn test_data_flows_step1_to_step2_to_step3_via_step_results() {
@@ -79,7 +82,7 @@ async fn test_data_flows_step1_to_step2_to_step3_via_step_results() {
     assert_eq!(result.step_results["step3"].output.raw, "alpha-beta-gamma");
 }
 
-// ─── Test 2: Retry exhaustion returns MaxRetriesExceeded ─────────────────────
+// â”€â”€â”€ Test 2: Retry exhaustion returns MaxRetriesExceeded â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 #[tokio::test]
 async fn test_retry_exhaustion_returns_max_retries_exceeded() {
@@ -100,7 +103,9 @@ async fn test_retry_exhaustion_returns_max_retries_exceeded() {
         output_schema: None,
         dependencies: vec![],
         parallel: false,
-    };
+            input_processors: vec![],
+            output_processors: vec![],
+        };
 
     let pipeline = Pipeline {
         name: "retry_exhaust".into(),
@@ -119,7 +124,7 @@ async fn test_retry_exhaustion_returns_max_retries_exceeded() {
     assert_eq!(attempts.load(Ordering::SeqCst), 3, "1 initial + 2 retries = 3 attempts");
 }
 
-// ─── Test 3: guard_out NonEmptyOutput blocks empty step ──────────────────────
+// â”€â”€â”€ Test 3: guard_out NonEmptyOutput blocks empty step â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 #[tokio::test]
 async fn test_guard_out_nonempty_blocks_empty_output() {
@@ -134,7 +139,9 @@ async fn test_guard_out_nonempty_blocks_empty_output() {
         output_schema: None,
         dependencies: vec![],
         parallel: false,
-    };
+            input_processors: vec![],
+            output_processors: vec![],
+        };
 
     let pipeline = abort_pipeline("guard_blocks", vec![empty_step]);
     let agent = simple_agent(&pipeline);
@@ -147,7 +154,7 @@ async fn test_guard_out_nonempty_blocks_empty_output() {
     );
 }
 
-// ─── Test 4: guard_out ValidJson passes on valid JSON ────────────────────────
+// â”€â”€â”€ Test 4: guard_out ValidJson passes on valid JSON â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 #[tokio::test]
 async fn test_guard_out_valid_json_passes_on_json_output() {
@@ -164,7 +171,9 @@ async fn test_guard_out_valid_json_passes_on_json_output() {
         output_schema: None,
         dependencies: vec![],
         parallel: false,
-    };
+            input_processors: vec![],
+            output_processors: vec![],
+        };
 
     let pipeline = abort_pipeline("json_ok", vec![json_step]);
     let agent = simple_agent(&pipeline);
@@ -176,7 +185,7 @@ async fn test_guard_out_valid_json_passes_on_json_output() {
     assert_eq!(result.step_results["json_step"].output.raw, r#"{"status":"ok","count":42}"#);
 }
 
-// ─── Test 5: Verdict::None and Verdict::Automated(Guard::None) are equivalent ─
+// â”€â”€â”€ Test 5: Verdict::None and Verdict::Automated(Guard::None) are equivalent â”€
 
 async fn run_with_verdict(verdict: Verdict) -> PipelineResult {
     let step = AgentStep {
@@ -190,7 +199,9 @@ async fn run_with_verdict(verdict: Verdict) -> PipelineResult {
         output_schema: None,
         dependencies: vec![],
         parallel: false,
-    };
+            input_processors: vec![],
+            output_processors: vec![],
+        };
     let pipeline = abort_pipeline("v", vec![step]);
     let agent = simple_agent(&pipeline);
     let mut runner = PipelineRunner::new();
@@ -209,7 +220,7 @@ async fn test_verdict_none_and_automated_none_are_equivalent() {
     assert_eq!(a.steps_failed, b.steps_failed);
 }
 
-// ─── Test 6: Fallback runs in clean context (no prior step_results) ───────────
+// â”€â”€â”€ Test 6: Fallback runs in clean context (no prior step_results) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 #[tokio::test]
 async fn test_fallback_pipeline_runs_in_clean_context() {
@@ -236,7 +247,9 @@ async fn test_fallback_pipeline_runs_in_clean_context() {
         output_schema: None,
         dependencies: vec![],
         parallel: false,
-    };
+            input_processors: vec![],
+            output_processors: vec![],
+        };
 
     let fallback = Pipeline {
         name: "fb".into(),
@@ -261,7 +274,7 @@ async fn test_fallback_pipeline_runs_in_clean_context() {
     assert_eq!(snapshot, 0, "fallback step_results must be clean, got {snapshot} keys");
 }
 
-// ─── Test 7: Both primary and fallback fail → Err propagated ─────────────────
+// â”€â”€â”€ Test 7: Both primary and fallback fail â†’ Err propagated â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 #[tokio::test]
 async fn test_fallback_also_fails_propagates_error() {
@@ -291,7 +304,7 @@ async fn test_fallback_also_fails_propagates_error() {
     assert!(result.is_err(), "fallback failure must propagate as Err");
 }
 
-// ─── Test 8: Skip failure mode → success=false with failed/passed recorded ────
+// â”€â”€â”€ Test 8: Skip failure mode â†’ success=false with failed/passed recorded â”€â”€â”€â”€
 
 #[tokio::test]
 async fn test_skip_on_failure_sets_success_false() {
@@ -316,7 +329,7 @@ async fn test_skip_on_failure_sets_success_false() {
     assert!(!result.step_results["b"].verdict_passed);
 }
 
-// ─── Test 9: InjectionProtection::Strict passes on clean output ───────────────
+// â”€â”€â”€ Test 9: InjectionProtection::Strict passes on clean output â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 #[tokio::test]
 async fn test_injection_protection_strict_passes_on_clean_output() {
@@ -333,7 +346,9 @@ async fn test_injection_protection_strict_passes_on_clean_output() {
         output_schema: None,
         dependencies: vec![],
         parallel: false,
-    };
+            input_processors: vec![],
+            output_processors: vec![],
+        };
 
     let pipeline = abort_pipeline("inj_clean", vec![clean]);
     let agent = simple_agent(&pipeline);
@@ -348,7 +363,7 @@ async fn test_injection_protection_strict_passes_on_clean_output() {
     ));
 }
 
-// ─── Test 10: step_results map is fully populated after 4-step pipeline ────────
+// â”€â”€â”€ Test 10: step_results map is fully populated after 4-step pipeline â”€â”€â”€â”€â”€â”€â”€â”€
 
 #[tokio::test]
 async fn test_step_results_map_is_complete_and_keyed_by_name() {
@@ -372,7 +387,7 @@ async fn test_step_results_map_is_complete_and_keyed_by_name() {
     }
 }
 
-// ─── Test 11: Full success pipeline has correct audit events ──────────────────
+// â”€â”€â”€ Test 11: Full success pipeline has correct audit events â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 #[tokio::test]
 async fn test_full_success_pipeline_audit_contains_started_and_completed() {
@@ -387,7 +402,9 @@ async fn test_full_success_pipeline_audit_contains_started_and_completed() {
         output_schema: None,
         dependencies: vec![],
         parallel: false,
-    };
+            input_processors: vec![],
+            output_processors: vec![],
+        };
     let s2 = AgentStep {
         name: "s2".into(),
         guard_in: Guard::None,
@@ -399,7 +416,9 @@ async fn test_full_success_pipeline_audit_contains_started_and_completed() {
         output_schema: None,
         dependencies: vec![],
         parallel: false,
-    };
+            input_processors: vec![],
+            output_processors: vec![],
+        };
 
     let pipeline = abort_pipeline("happy", vec![s1, s2]);
     let agent = simple_agent(&pipeline);
@@ -418,7 +437,7 @@ async fn test_full_success_pipeline_audit_contains_started_and_completed() {
     )));
 }
 
-// ─── Test 12: ctx.request mirrors the input passed to run() ──────────────────
+// â”€â”€â”€ Test 12: ctx.request mirrors the input passed to run() â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 #[tokio::test]
 async fn test_step_reads_original_request_from_ctx() {
@@ -444,3 +463,4 @@ async fn test_step_reads_original_request_from_ctx() {
     assert_eq!(result.step_results["step1"].output.raw, "task=summarize|priority=high");
     assert_eq!(result.step_results["step2"].output.raw, "echo:task=summarize|priority=high");
 }
+

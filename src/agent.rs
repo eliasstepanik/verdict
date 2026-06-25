@@ -62,6 +62,17 @@ impl FilesystemPolicy {
         self.is_read_allowed(path)
     }
 
+    /// Create a new FilesystemPolicy with a workspace root
+    pub fn new(workspace_root: PathBuf) -> Self {
+        Self {
+            workspace_root,
+            read_paths: vec![],
+            write_paths: vec![],
+            forbidden_paths: vec![],
+            workspace_isolation: WorkspaceIsolation::None,
+        }
+    }
+
     fn check_path_allowed(&self, path: &std::path::Path, access_type: AccessType) -> bool {
         // Check if path is in forbidden list
         for forbidden in &self.forbidden_paths {
@@ -270,6 +281,8 @@ pub struct Agent {
     pub tools: ToolSet,
     pub skills: SkillSet,
     pub policy: AgentPolicy,
+    /// Scorers for online evaluation with sampling (Phase F)
+    pub scorers: Vec<crate::eval::ScorerConfig>,
 }
 
 

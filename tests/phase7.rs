@@ -613,6 +613,10 @@ async fn test_guard_compiles_may_fail_without_cargo() {
             // Parse error (acceptable)
             assert!(true, "Guard::Compiles returned ParseError as expected");
         }
+        Err(GuardError::Multiple(_)) => {
+            // Multiple failures (acceptable)
+            assert!(true, "Guard::Compiles returned Multiple as expected");
+        }
     }
 }
 

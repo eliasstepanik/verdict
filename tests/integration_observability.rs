@@ -1,6 +1,6 @@
 //! Integration tests: AuditLog, BudgetTracker, DAG pipelines, parallel steps, ContextStore
 //!
-//! Deterministic tests — no LLM required. Verifies audit event ordering/counts,
+//! Deterministic tests ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â no LLM required. Verifies audit event ordering/counts,
 //! budget counters, DAG execution order, parallel result merging, and checkpoint files.
 
 use std::sync::{Arc, Mutex};
@@ -10,7 +10,7 @@ use verdict::prelude::*;
 use verdict::ContextStore;
 use serde_json::json;
 
-// ─── helpers ──────────────────────────────────────────────────────────────────
+// ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ helpers ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬
 
 fn ok_step(name: &'static str) -> AgentStep {
     AgentStep {
@@ -24,7 +24,9 @@ fn ok_step(name: &'static str) -> AgentStep {
         output_schema: None,
         dependencies: vec![],
         parallel: false,
-    }
+            input_processors: vec![],
+            output_processors: vec![],
+        }
 }
 
 #[allow(dead_code)]
@@ -40,7 +42,9 @@ fn ok_step_with_deps(name: &'static str, deps: Vec<&'static str>) -> AgentStep {
         output_schema: None,
         dependencies: deps.into_iter().map(String::from).collect(),
         parallel: false,
-    }
+            input_processors: vec![],
+            output_processors: vec![],
+        }
 }
 
 fn simple_agent(pipeline: &Pipeline) -> Agent {
@@ -51,10 +55,11 @@ fn simple_agent(pipeline: &Pipeline) -> Agent {
         tools: ToolSet::None,
         skills: SkillSet::default(),
         policy: AgentPolicy::default(),
+        scorers: vec![],
     }
 }
 
-// ─── Test 1: 3-step success pipeline has exact audit event counts ─────────────
+// ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ Test 1: 3-step success pipeline has exact audit event counts ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬
 
 #[tokio::test]
 async fn test_audit_log_three_step_pipeline_exact_event_counts() {
@@ -95,7 +100,7 @@ async fn test_audit_log_three_step_pipeline_exact_event_counts() {
     assert_eq!(pipe_completed, Some((3, 0)), "PipelineCompleted with 3 passed, 0 failed");
 }
 
-// ─── Test 2: StepFailed emitted on action failure, not StepCompleted ──────────
+// ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ Test 2: StepFailed emitted on action failure, not StepCompleted ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬
 
 #[tokio::test]
 async fn test_audit_log_step_failed_emitted_not_step_completed() {
@@ -109,7 +114,9 @@ async fn test_audit_log_step_failed_emitted_not_step_completed() {
         guard_out: Guard::None, verdict: Verdict::None, tools: ToolSet::None,
         injection_protection: InjectionProtection::None, output_schema: None,
         dependencies: vec![], parallel: false,
-    };
+            input_processors: vec![],
+            output_processors: vec![],
+        };
     let pipeline = Pipeline {
         name: "fail_p".into(),
         steps: vec![good, bad],
@@ -119,7 +126,7 @@ async fn test_audit_log_step_failed_emitted_not_step_completed() {
     let mut runner = PipelineRunner::new();
     let _ = runner.run(&pipeline, &agent, json!(null)).await;
 
-    // On Abort, result is Err — inspect runner.audit_log directly
+    // On Abort, result is Err ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â inspect runner.audit_log directly
     let entries = runner.audit_log.entries();
 
     let good_completed = entries.iter().filter(|e|
@@ -142,7 +149,7 @@ async fn test_audit_log_step_failed_emitted_not_step_completed() {
     assert_eq!(bad_failed_with_boom, 1, "bad step emits StepFailed with reason containing 'boom'");
 }
 
-// ─── Test 3: ToolCallStarted/Completed pair for each FunctionTool call ────────
+// ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ Test 3: ToolCallStarted/Completed pair for each FunctionTool call ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬
 
 #[tokio::test]
 async fn test_audit_log_tool_call_started_and_completed_pairs() {
@@ -170,6 +177,8 @@ async fn test_audit_log_tool_call_started_and_completed_pairs() {
             tools: ToolSet::Allow(vec!["local.echo".into()]),
             injection_protection: InjectionProtection::None,
             output_schema: None, dependencies: vec![], parallel: false,
+            input_processors: vec![],
+            output_processors: vec![],
         }
     }
 
@@ -183,6 +192,7 @@ async fn test_audit_log_tool_call_started_and_completed_pairs() {
         tools: ToolSet::Allow(vec!["local.echo".into()]),
         skills: SkillSet::default(),
         policy: AgentPolicy { allowed_tools: ToolSet::Allow(vec!["local.echo".into()]), ..Default::default() },
+        scorers: vec![],
     };
 
     let result = PipelineRunner::with_tool_registry(Arc::new(tr))
@@ -213,7 +223,7 @@ async fn test_audit_log_tool_call_started_and_completed_pairs() {
     }
 }
 
-// ─── Test 4: GuardFailed event has non-empty reason in payload ────────────────
+// ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ Test 4: GuardFailed event has non-empty reason in payload ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬
 
 #[tokio::test]
 async fn test_audit_log_guard_failed_has_non_empty_reason() {
@@ -226,7 +236,9 @@ async fn test_audit_log_guard_failed_has_non_empty_reason() {
         tools: ToolSet::None,
         injection_protection: InjectionProtection::None,
         output_schema: None, dependencies: vec![], parallel: false,
-    };
+            input_processors: vec![],
+            output_processors: vec![],
+        };
     let pipeline = Pipeline {
         name: "guards".into(), steps: vec![bad_json_step],
         on_failure: FailureMode::Abort, max_retries: 0,
@@ -235,7 +247,7 @@ async fn test_audit_log_guard_failed_has_non_empty_reason() {
     let mut runner = PipelineRunner::new();
     let outcome = runner.run(&pipeline, &agent, json!(null)).await;
 
-    // May return Err (Abort) — inspect runner.audit_log
+    // May return Err (Abort) ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â inspect runner.audit_log
     let entries = runner.audit_log.entries();
     let guard_failed_with_reason = entries.iter().filter(|e|
         matches!(&e.event, AuditEvent::GuardFailed { guard, reason }
@@ -256,7 +268,7 @@ async fn test_audit_log_guard_failed_has_non_empty_reason() {
     }
 }
 
-// ─── Test 5: GuardPassed events emitted for each passing guard ────────────────
+// ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ Test 5: GuardPassed events emitted for each passing guard ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬
 
 #[tokio::test]
 async fn test_audit_log_guard_passed_per_passing_guard() {
@@ -269,7 +281,9 @@ async fn test_audit_log_guard_passed_per_passing_guard() {
         tools: ToolSet::None,
         injection_protection: InjectionProtection::None,
         output_schema: None, dependencies: vec![], parallel: false,
-    };
+            input_processors: vec![],
+            output_processors: vec![],
+        };
     let pipeline = Pipeline {
         name: "gp".into(), steps: vec![step],
         on_failure: FailureMode::Abort, max_retries: 0,
@@ -292,7 +306,7 @@ async fn test_audit_log_guard_passed_per_passing_guard() {
     assert_eq!(completed_pass, 1, "one StepCompleted(passed)");
 }
 
-// ─── Test 6: Diamond DAG — A first, D last, B and C in between ───────────────
+// ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ Test 6: Diamond DAG ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â A first, D last, B and C in between ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬
 
 #[tokio::test]
 async fn test_dag_diamond_execution_order() {
@@ -316,6 +330,8 @@ async fn test_dag_diamond_execution_order() {
             output_schema: None,
             dependencies: deps.into_iter().map(String::from).collect(),
             parallel: false,
+            input_processors: vec![],
+            output_processors: vec![],
         }
     };
 
@@ -348,7 +364,7 @@ async fn test_dag_diamond_execution_order() {
     );
 }
 
-// ─── Test 7: Parallel steps both complete and results are merged ──────────────
+// ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ Test 7: Parallel steps both complete and results are merged ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬
 
 #[tokio::test]
 async fn test_parallel_steps_results_merged_in_step_results() {
@@ -360,6 +376,8 @@ async fn test_parallel_steps_results_merged_in_step_results() {
             guard_out: Guard::None, verdict: Verdict::None,
             tools: ToolSet::None, injection_protection: InjectionProtection::None,
             output_schema: None, dependencies: vec![], parallel: true,
+            input_processors: vec![],
+            output_processors: vec![],
         }
     }
 
@@ -381,7 +399,7 @@ async fn test_parallel_steps_results_merged_in_step_results() {
     assert!(r.step_results["p2"].verdict_passed);
 }
 
-// ─── Test 8: with_context_store writes checkpoint files for each step ─────────
+// ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ Test 8: with_context_store writes checkpoint files for each step ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬
 
 #[tokio::test]
 async fn test_context_store_checkpoint_files_written_per_step() {
@@ -423,7 +441,7 @@ async fn test_context_store_checkpoint_files_written_per_step() {
     let _ = std::fs::remove_dir_all(&tmp);
 }
 
-// ─── Test 9: ContextStore round-trip preserves all serializable fields ─────────
+// ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ Test 9: ContextStore round-trip preserves all serializable fields ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬
 
 #[tokio::test]
 async fn test_context_store_round_trip_preserves_all_fields() {
@@ -478,7 +496,7 @@ async fn test_context_store_round_trip_preserves_all_fields() {
     let _ = std::fs::remove_dir_all(&tmp);
 }
 
-// ─── Test 10: tool_calls_used increments per FunctionTool call ───────────────
+// ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ Test 10: tool_calls_used increments per FunctionTool call ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬
 
 #[tokio::test]
 async fn test_budget_tool_calls_used_increments_per_tool_call() {
@@ -502,6 +520,8 @@ async fn test_budget_tool_calls_used_increments_per_tool_call() {
             tools: ToolSet::Allow(vec!["local.noop".into()]),
             injection_protection: InjectionProtection::None,
             output_schema: None, dependencies: vec![], parallel: false,
+            input_processors: vec![],
+            output_processors: vec![],
         }
     }
 
@@ -517,7 +537,9 @@ async fn test_budget_tool_calls_used_increments_per_tool_call() {
         output_schema: None,
         dependencies: vec!["t1".into(), "t2".into(), "t3".into()],
         parallel: false,
-    };
+            input_processors: vec![],
+            output_processors: vec![],
+        };
 
     let pipeline = Pipeline {
         name: "bud".into(),
@@ -532,6 +554,7 @@ async fn test_budget_tool_calls_used_increments_per_tool_call() {
             allowed_tools: ToolSet::Allow(vec!["local.noop".into()]),
             ..Default::default()
         },
+        scorers: vec![],
     };
 
     let r = PipelineRunner::with_tool_registry(Arc::new(tr))
@@ -543,7 +566,7 @@ async fn test_budget_tool_calls_used_increments_per_tool_call() {
     assert_eq!(tool, 3, "tool_calls_used must equal the number of ToolCall steps (3)");
 }
 
-// ─── Test 11: Missing DAG dependency is rejected ─────────────────────────────
+// ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ Test 11: Missing DAG dependency is rejected ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬
 
 #[tokio::test]
 async fn test_dag_missing_dependency_is_rejected() {
@@ -576,7 +599,7 @@ async fn test_dag_missing_dependency_is_rejected() {
         "runtime error must reference missing dep: {msg}");
 }
 
-// ─── Test 12: Audit event ordering within a single step ──────────────────────
+// ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ Test 12: Audit event ordering within a single step ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬
 
 #[tokio::test]
 async fn test_audit_log_event_ordering_within_step() {
@@ -597,7 +620,9 @@ async fn test_audit_log_event_ordering_within_step() {
         tools: ToolSet::Allow(vec!["local.ping".into()]),
         injection_protection: InjectionProtection::None,
         output_schema: None, dependencies: vec![], parallel: false,
-    };
+            input_processors: vec![],
+            output_processors: vec![],
+        };
     let pipeline = Pipeline {
         name: "ord".into(), steps: vec![step],
         on_failure: FailureMode::Abort, max_retries: 0,
@@ -610,6 +635,7 @@ async fn test_audit_log_event_ordering_within_step() {
             allowed_tools: ToolSet::Allow(vec!["local.ping".into()]),
             ..Default::default()
         },
+        scorers: vec![],
     };
 
     let r = PipelineRunner::with_tool_registry(Arc::new(tr))
@@ -638,3 +664,4 @@ async fn test_audit_log_event_ordering_within_step() {
     assert!(idx_step_started < idx_tool_started,
         "StepStarted must precede ToolCallStarted");
 }
+

@@ -300,6 +300,8 @@ fn test_self_update_version_agent_creates_version() {
             skills: vec![],
         },
         policy: AgentPolicy::default(),
+        scorers: Vec::new(),
+
     };
 
     let version = SelfUpdateEngine::version_agent(&agent, "improved performance", Some(0.95));
@@ -324,6 +326,8 @@ fn test_self_update_version_agent_name_matches() {
         tools: ToolSet::None,
         skills: SkillSet { skills: vec![] },
         policy: AgentPolicy::default(),
+        scorers: Vec::new(),
+
     };
 
     let version = SelfUpdateEngine::version_agent(&agent, "test", None);
@@ -346,6 +350,8 @@ fn test_self_update_version_agent_has_eval_score() {
             skills: vec![],
         },
         policy: AgentPolicy::default(),
+        scorers: Vec::new(),
+
     };
 
     let version_with_score =

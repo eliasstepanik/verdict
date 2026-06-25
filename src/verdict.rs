@@ -147,6 +147,7 @@ impl VerdictEngine {
                     history: None,
                     temperature: None,
                     tools: None,
+                    tool_choice: None,
                 };
 
                 let response =

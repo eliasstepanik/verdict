@@ -118,6 +118,8 @@ impl PipelineRunner {
             conversation_registry: self.conversation_registry.clone(),
             context_store: self.context_store.clone(),
             plugin_registry: self.plugin_registry.clone(),
+            auto_title_llm: self.auto_title_llm.clone(),
+            memory: self.memory.clone(),
         };
 
         // Step 6: Run child agent pipeline with increased delegation depth

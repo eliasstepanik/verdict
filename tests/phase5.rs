@@ -26,6 +26,8 @@ fn skill_pipeline(skill_name: &str, mode: SkillMode) -> Pipeline {
             output_schema: None,
             dependencies: Vec::new(),
             parallel: false,
+            input_processors: vec![],
+            output_processors: vec![],
         }],
         on_failure: FailureMode::Abort,
         max_retries: 0,
@@ -40,6 +42,8 @@ fn dummy_agent(name: &str, pipeline: Pipeline) -> Agent {
         tools: ToolSet::Full,
         skills: SkillSet::default(),
         policy: AgentPolicy::default(),
+        scorers: Vec::new(),
+
     }
 }
 
@@ -245,6 +249,8 @@ async fn test_use_skill_pipeline_mode_with_pipeline_executes_it() {
             output_schema: None,
             dependencies: Vec::new(),
             parallel: false,
+            input_processors: vec![],
+            output_processors: vec![],
         }],
         on_failure: FailureMode::Abort,
         max_retries: 0,

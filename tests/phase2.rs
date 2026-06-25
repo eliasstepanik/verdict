@@ -344,6 +344,8 @@ async fn test_pipeline_with_function_tool_call() {
             output_schema: None,
             dependencies: Vec::new(),
             parallel: false,
+            input_processors: vec![],
+            output_processors: vec![],
         }],
         on_failure: FailureMode::Abort,
         max_retries: 0,
@@ -361,6 +363,7 @@ async fn test_pipeline_with_function_tool_call() {
             skills: vec![],
         },
         policy,
+        scorers: vec![],
     };
 
     // Run with custom tool registry
@@ -417,6 +420,8 @@ async fn test_audit_log_records_pipeline_events() {
             output_schema: None,
             dependencies: Vec::new(),
             parallel: false,
+            input_processors: vec![],
+            output_processors: vec![],
         }],
         on_failure: FailureMode::Abort,
         max_retries: 0,
@@ -434,6 +439,7 @@ async fn test_audit_log_records_pipeline_events() {
             allowed_tools: ToolSet::Allow(vec!["audit_test".to_string()]),
             ..AgentPolicy::default()
         },
+        scorers: vec![],
     };
 
     let mut runner = PipelineRunner::with_tool_registry(Arc::new(registry));
@@ -466,4 +472,5 @@ async fn test_audit_log_records_pipeline_events() {
     assert!(has_pipeline_completed, "Audit log should contain PipelineCompleted event");
     assert!(has_step_started, "Audit log should contain StepStarted event");
 }
+
 

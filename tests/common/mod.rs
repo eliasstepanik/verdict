@@ -1,10 +1,12 @@
 //! Shared test utilities and mock implementations
 #![allow(dead_code, unused_imports)]
 
-use std::sync::Mutex;
+use std::sync::{Mutex, atomic::{AtomicUsize, Ordering}};
 use verdict::prelude::*;
 use async_trait::async_trait;
 use std::sync::Arc;
+use serde_json::json;
+
 
 /// Mock LLM provider for testing
 pub struct MockLlmProvider {
@@ -54,7 +56,114 @@ impl LlmProvider for MockLlmProvider {
             })
         }))
     }
+
 }
+
+/// A single scripted LLM response
+pub struct ScriptedResponse {
+    pub content: String,
+    pub tool_calls: Option<Vec<(String, serde_json::Value)>>, // (tool_name, args)
+}
+
+impl ScriptedResponse {
+    /// Create a text-only response
+    pub fn text(content: impl Into<String>) -> Self {
+        Self {
+            content: content.into(),
+            tool_calls: None,
+        }
+    }
+
+    /// Create a response with a single tool call
+    pub fn tool_call(tool_name: impl Into<String>, args: serde_json::Value) -> Self {
+        Self {
+            content: String::new(),
+            tool_calls: Some(vec![(tool_name.into(), args)]),
+        }
+    }
+
+    /// Create a response with multiple tool calls
+    pub fn multi_tool_call(calls: Vec<(String, serde_json::Value)>) -> Self {
+        Self {
+            content: String::new(),
+            tool_calls: Some(calls),
+        }
+    }
+}
+
+/// A scripted mock LLM provider that returns different responses in sequence.
+/// Each call to `complete()` returns the next response in the script.
+/// The script can include tool calls (via tool_calls field) or plain text.
+pub struct ScriptedMockLlmProvider {
+    /// Pre-programmed responses, returned in order.
+    pub responses: Vec<ScriptedResponse>,
+    /// Index of the next response to return.
+    pub call_index: AtomicUsize,
+}
+
+impl ScriptedMockLlmProvider {
+    pub fn new(responses: Vec<ScriptedResponse>) -> Self {
+        Self {
+            responses,
+            call_index: AtomicUsize::new(0),
+        }
+    }
+}
+
+#[async_trait]
+impl LlmProvider for ScriptedMockLlmProvider {
+    fn name(&self) -> &str {
+        "scripted-mock"
+    }
+
+    fn default_model(&self) -> &str {
+        "scripted-mock-model"
+    }
+
+    async fn complete(&self, _req: LlmRequest) -> Result<LlmResponse, LlmError> {
+        let idx = self.call_index.fetch_add(1, Ordering::SeqCst);
+        if idx >= self.responses.len() {
+            // Out of script — return a default text response
+            return Ok(LlmResponse {
+                content: "Done.".to_string(),
+                model: "scripted-mock".into(),
+                usage: None,
+                tool_calls: None,
+            });
+        }
+        let r = &self.responses[idx];
+        let tool_calls = r.tool_calls.as_ref().map(|calls| {
+            calls
+                .iter()
+                .enumerate()
+                .map(|(i, (name, args))| ToolCall {
+                    name: name.clone(),
+                    arguments: args.clone(),
+                    id: Some(format!("call_{}", i)),
+                })
+                .collect::<Vec<_>>()
+        });
+        Ok(LlmResponse {
+            content: r.content.clone(),
+            model: "scripted-mock".into(),
+            usage: None,
+            tool_calls,
+        })
+    }
+
+    fn stream(
+        &self,
+        _req: LlmRequest,
+    ) -> std::pin::Pin<Box<dyn futures::stream::Stream<Item = Result<verdict::LlmChunk, verdict::LlmError>> + Send>> {
+        Box::pin(futures::stream::once(async {
+            Ok(verdict::LlmChunk {
+                delta: "Done.".into(),
+                finish_reason: Some("stop".into()),
+            })
+        }))
+    }
+}
+
 
 /// Create a dummy McpClient for tests that don't actually call MCP tools
 /// This is a minimal config with no command or URL, so it won't spawn processes or make HTTP calls

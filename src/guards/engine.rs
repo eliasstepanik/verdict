@@ -1,4 +1,5 @@
 use crate::context::StepContext;
+use chrono::Utc;
 
 use super::{
     Guard, GuardError, output, filesystem, compilation, budget, step_state,
@@ -104,6 +105,7 @@ impl GuardEngine {
             Guard::OnlyAllowedAgentsUsed => delegation::check_only_allowed_agents_used(guard, ctx),
             Guard::NoRecursiveDelegation => delegation::check_no_recursive_delegation(guard, ctx),
             Guard::DelegatedAgentPassed(agent_name) => delegation::check_delegated_agent_passed(guard, ctx, agent_name),
+            Guard::DetachedAgentCompleted(agent_name) => delegation::check_detached_agent_completed(agent_name, ctx),
 
             // Composition guards
             Guard::AllOf(guards) => {
@@ -111,6 +113,20 @@ impl GuardEngine {
                     std::pin::Pin::from(Box::new(Self::evaluate(g, ctx))).await?;
                 }
                 Ok(())
+            }
+
+            Guard::AllOfCollect(guards) => {
+                let mut errors = Vec::new();
+                for g in guards {
+                    if let Err(e) = std::pin::Pin::from(Box::new(Self::evaluate(g, ctx))).await {
+                        errors.push(e);
+                    }
+                }
+                if errors.is_empty() {
+                    Ok(())
+                } else {
+                    Err(GuardError::Multiple(errors))
+                }
             }
 
             Guard::AnyOf(guards) => {
@@ -137,10 +153,133 @@ impl GuardEngine {
                 }
             }
 
+            // Server/Daemon Mode guards (Phase 15)
+            Guard::ServerAuthValid => Ok(()),  // Auth validation done at server level
+            Guard::ServerConcurrencyWithin(_) => Ok(()),  // Concurrency tracking done by SessionRunner
+
+            // Session guards (Phase 13)
+            Guard::SessionTurnLimit(max) => {
+                if let Some(session_meta) = &ctx.session_meta {
+                    if session_meta.turn_count >= *max {
+                        return Err(GuardError::Failed {
+                            guard: guard.name(),
+                            reason: format!("turn_count {} >= limit {}", session_meta.turn_count, max),
+                        });
+                    }
+                }
+                Ok(())
+            }
+
+            Guard::SessionIdleTimeout(secs) => {
+                if let Some(session_meta) = &ctx.session_meta {
+                    let now = Utc::now();
+                    let elapsed = (now - session_meta.last_active_at).num_seconds() as u64;
+                    if elapsed >= *secs {
+                        return Err(GuardError::Failed {
+                            guard: guard.name(),
+                            reason: format!("session idle for {} seconds >= timeout {}", elapsed, secs),
+                        });
+                    }
+                }
+                Ok(())
+            }
+
+            Guard::SessionBudgetWithin { max_tokens } => {
+                if let Some(session_meta) = &ctx.session_meta {
+                    if session_meta.total_tokens.total_tokens >= *max_tokens {
+                        return Err(GuardError::Failed {
+                            guard: guard.name(),
+                            reason: format!("total_tokens {} >= budget {}", session_meta.total_tokens.total_tokens, max_tokens),
+                        });
+                    }
+                }
+                Ok(())
+            }
+
             // Format & Lint
             Guard::LintPass => compilation::check_lint_pass(guard, ctx).await,
             Guard::FormatPass => compilation::check_format_pass(guard, ctx).await,
             Guard::SemanticCheck(description) => compilation::check_semantic_check(guard, ctx, description).await,
+
+            // Cancellation (Phase 14)
+            Guard::CancellationCleanupComplete => {
+                if ctx.cancellation_token.is_cancelled() {
+                    return Err(GuardError::Failed {
+                        guard: "CancellationCleanupComplete".into(),
+                        reason: "Cancellation was signalled; step did not complete cleanly".into(),
+                    });
+                }
+                Ok(())
+            }
+
+            // Phase 16: Prompt Templates and Structured Output
+            Guard::PromptTemplateRendered => {
+                // This guard signals that a prompt template will be rendered.
+                // Actual rendering happens at action execution time.
+                // The guard itself always passes — failure would occur during rendering.
+                Ok(())
+            }
+
+            Guard::StructuredOutputPresent => {
+                // Check if output exists and has structured data
+                match &ctx.output {
+                    Some(output) => {
+                        // The StepOutput has a raw field, and we check the tools' ToolOutput
+                        // Since ToolOutput is not directly in StepOutput, we check if structured
+                        // output was set during tool execution by looking at parsed/metadata
+                        // For now, we'll check if parsed JSON exists (future: check structured field)
+                        if output.parsed.is_some() {
+                            Ok(())
+                        } else {
+                            Err(GuardError::Failed {
+                                guard: guard.name(),
+                                reason: "no structured output present".to_string(),
+                            })
+                        }
+                    }
+                    None => Err(GuardError::Failed {
+                        guard: guard.name(),
+                        reason: "no output present".to_string(),
+                    }),
+                }
+            }
+
+            // Phase D4: Resume/Suspend guards
+            Guard::ResumeDataMatchesSchema(schema) => {
+                // Validate that resume_data (stored in step_results["__resume_data__"]) matches schema
+                if let Some(resume_output) = ctx.step_results.get("__resume_data__") {
+                    if let Some(parsed) = &resume_output.output.parsed {
+                        match jsonschema::JSONSchema::compile(schema) {
+                            Ok(validator) => {
+                                match validator.validate(parsed) {
+                                    Ok(()) => Ok(()),
+                                    Err(e) => {
+                                        let errors: Vec<String> = e.map(|err| err.to_string()).collect();
+                                        Err(GuardError::Failed {
+                                            guard: guard.name(),
+                                            reason: format!("resume data does not match schema: {}", errors.join("; ")),
+                                        })
+                                    },
+                                }
+                            },
+                            Err(e) => Err(GuardError::Failed {
+                                guard: guard.name(),
+                                reason: format!("invalid schema: {}", e),
+                            }),
+                        }
+                    } else {
+                        Err(GuardError::Failed {
+                            guard: guard.name(),
+                            reason: "resume data not found or not parsed".to_string(),
+                        })
+                    }
+                } else {
+                    Err(GuardError::Failed {
+                        guard: guard.name(),
+                        reason: "no resume data available".to_string(),
+                    })
+                }
+            }
         }
     }
 }

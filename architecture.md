@@ -1798,6 +1798,156 @@ pub trait LlmProvider: Send + Sync {
     ) -> Result<Pin<Box<dyn Stream<Item = Result<LlmChunk, LlmError>> + Send>>, LlmError>;
 }
 
+
+---
+
+# Phase C1: Multi-Tier Memory System
+
+The memory system enables agents to persist and retrieve different types of information across sessions and steps:
+
+## MemoryStore Trait
+
+```rust
+#[async_trait]
+pub trait MemoryStore: Send + Sync {
+    async fn save_message(&self, thread_id: &str, resource_id: &str, msg: MemoryMessage) -> Result<(), MemoryError>;
+    async fn get_thread(&self, thread_id: &str, last_n: Option<usize>) -> Result<Vec<MemoryMessage>, MemoryError>;
+    async fn save_working_memory(&self, resource_id: &str, data: Value) -> Result<(), MemoryError>;
+    async fn get_working_memory(&self, resource_id: &str) -> Result<Option<Value>, MemoryError>;
+    async fn upsert_embedding(&self, id: &str, text: &str, embedding: Vec<f32>, metadata: Value) -> Result<(), MemoryError>;
+    async fn search_semantic(&self, query_embedding: Vec<f32>, top_k: usize) -> Result<Vec<SemanticResult>, MemoryError>;
+    async fn save_observation(&self, thread_id: &str, observation: &str) -> Result<(), MemoryError>;
+    async fn get_observations(&self, thread_id: &str) -> Result<Vec<String>, MemoryError>;
+}
+```
+
+## Core Types
+
+```rust
+pub struct MemoryMessage {
+    pub id: String,
+    pub thread_id: String,
+    pub resource_id: String,
+    pub role: MemoryRole,
+    pub content: String,
+    pub timestamp: DateTime<Utc>,
+    pub metadata: Value,
+}
+
+pub enum MemoryRole { User, Assistant, System, Tool }
+
+pub struct SemanticResult {
+    pub id: String,
+    pub text: String,
+    pub score: f32,  // cosine similarity
+    pub metadata: Value,
+}
+
+pub enum MemoryError {
+    Io(String),
+    Serialization(String),
+    NotFound(String),
+    Backend(String),
+}
+```
+
+## Memory Tiers
+
+Each tier provides a specialized interface over `Arc<dyn MemoryStore>`:
+
+- **ThreadMemory**: conversation history with optional `last_n` limit
+  - Methods: `push(thread_id, resource_id, role, content)`, `get(thread_id)`
+  
+- **WorkingMemory**: structured JSON state per resource
+  - Methods: `set(resource_id, value)`, `get(resource_id)`
+  
+- **SemanticMemory**: embeddings with cosine similarity search
+  - Methods: `upsert(id, text, embedding, metadata)`, `search(query_embedding, top_k)`
+  
+- **ObservationalMemory**: LLM-compressed summaries
+  - Methods: `save(thread_id, observation)`, `get(thread_id)`
+
+## Implementations
+
+### InMemoryStore
+- HashMap-based, no persistence
+- Thread-safe via `Arc<Mutex<...>>`
+- Cosine similarity computed in-process
+- Suitable for testing and development
+
+### SqliteMemoryStore
+- Feature-gated: `"sqlite"` in Cargo.toml
+- Schema: messages, working_memory, embeddings (BLOB of f32), observations tables
+- Embeddings stored as little-endian f32 bytes
+- Cosine similarity computed in-process after loading embeddings
+- Indexes on thread_id for fast retrieval
+
+## Integration with PipelineRunner
+
+```rust
+pub struct PipelineRunner {
+    // ... existing fields ...
+    pub memory: Option<Arc<dyn MemoryStore>>,
+}
+
+impl PipelineRunner {
+    pub fn with_memory(mut self, store: Arc<dyn MemoryStore>) -> Self {
+        self.memory = Some(store);
+        self
+    }
+}
+```
+
+## Integration with StepContext
+
+```rust
+pub struct StepContext {
+    // ... existing fields ...
+    #[serde(skip)]
+    pub memory: Option<Arc<dyn MemoryStore>>,
+}
+```
+
+Memory is initialized from runner in `run_internal()`.
+
+## Built-in Memory Tools
+
+Auto-registered when runner has memory:
+- `memory.get_thread` — retrieve thread history with optional limit
+- `memory.search` — search semantic memory by embedding
+- `memory.set_working` — save working memory JSON
+- `memory.get_working` — retrieve working memory
+- `memory.save_message` — save message to thread
+
+## Workspace Structure
+
+```
+verdict-memory/
+├── Cargo.toml
+└── src/
+    ├── lib.rs
+    ├── in_memory.rs           # InMemoryStore
+    ├── sqlite.rs              # SqliteMemoryStore (feature: sqlite)
+    ├── tiers/
+    │   ├── mod.rs
+    │   ├── thread.rs          # ThreadMemory
+    │   ├── working.rs         # WorkingMemory
+    │   ├── semantic.rs        # SemanticMemory
+    │   └── observational.rs   # ObservationalMemory
+    └── tools.rs               # Memory tool implementations
+```
+
+> **Phase C1 implementation decisions:**
+> - Memory trait defined in `verdict/src/memory.rs` (core crate) to avoid circular dependency
+> - Implementations and tiers in `verdict-memory` sub-crate
+> - `MemoryStore` is object-safe (uses `#[async_trait]`) for trait objects
+> - Cosine similarity computed in Rust for both in-memory and SQLite (no SQL functions)
+> - Embeddings stored as BLOB of `f32` little-endian bytes in SQLite
+> - No new dependencies added to main `verdict` crate (async-trait already present)
+> - UUID crate used for message IDs (already in verdict)
+> - Memory field marked `#[serde(skip)]` since `Arc<dyn Trait>` is not serializable
+> - All existing tests continue to pass with memory field defaulting to `None`
+
 pub struct LlmChunk {
     pub delta: String,
     pub finish_reason: Option<String>,
@@ -3498,6 +3648,281 @@ All six Phase 12 items from the deferred backlog are now implemented and verifie
 Replaced the Phase 11 heuristic with a real LLM call. `GuardEngine::evaluate()` now:
 1. Requires `ctx.llm_client` to be set; returns `GuardError::Failed` if absent.
 2. Builds a system prompt: "You are a semantic quality judge. Reply PASS if the output satisfies the assertion, otherwise reply FAIL followed by a short reason."
+
+
+---
+
+## Phase A — Quick Wins (Independent Features)
+
+Phase A adds 8 independent, high-value low-effort improvements to the Verdict framework. Each feature adds optional capabilities without breaking existing code.
+
+### A1 — Step-Level Tool Approval API
+
+**Status**: ✅ Implemented
+
+Tool approval allows runtime blocking on sensitive tool calls:
+
+```rust
+pub trait ToolRegistry {
+    /// Register a tool that requires human approval before each call
+    pub fn register_with_approval(&mut self, tool: Arc<dyn Tool>);
+
+    /// Check if a tool requires approval
+    pub fn requires_approval(&self, name: &str) -> bool;
+}
+```
+
+**New OutputEvent variant** (for streaming approval requests):
+```rust
+OutputEvent::ToolApprovalRequired {
+    step: String,
+    tool: String,
+    args: Value,
+}
+```
+
+**New AuditEvent variants**:
+- `ToolApprovalRequested { tool: String }`
+- `ToolApprovalGranted { tool: String }`
+- `ToolApprovalDenied { tool: String }`
+
+**Implementation note**: In the runner, before executing `StepAction::ToolCall`, check `tool_registry.requires_approval(name)`. If true, emit `OutputEvent::ToolApprovalRequired`, read stdin with prompt `"Tool '{name}' requires approval. Args: {args}\nProceed? [y/N]: "`, and log the decision.
+
+### A2 — Delegation Hooks in DelegationPolicy
+
+**Status**: ✅ Implemented
+
+Add optional hooks to intercept and modify delegation behavior:
+
+```rust
+pub struct DelegationPolicy {
+    // ... existing fields ...
+
+    /// Hook called before delegation starts
+    pub on_delegation_start: Option<Arc<dyn Fn(&DelegationContext) -> DelegationDecision + Send + Sync>>,
+
+    /// Hook called after delegation completes  
+    pub on_delegation_complete: Option<Arc<dyn Fn(&DelegationResult) -> DelegationFeedback + Send + Sync>>,
+
+    /// Hook called after each LoopUntil iteration completes
+    pub on_iteration_complete: Option<Arc<dyn Fn(&IterationContext) -> IterationDecision + Send + Sync>>,
+
+    /// Optional message filter for conversation history
+    pub message_filter: Option<Arc<dyn Fn(&MessageHistory) -> MessageHistory + Send + Sync>>,
+}
+
+pub enum DelegationDecision {
+    Proceed,
+    Reject { reason: String },
+    ModifyInput(Value),
+}
+
+pub enum DelegationFeedback {
+    Continue,
+    Bail { reason: String },
+    InjectFeedback(String),
+}
+
+pub enum IterationDecision {
+    Continue,
+    Stop,
+}
+```
+
+**Implementation note**: Wire hooks into `runner::execute_delegation()` to intercept inputs/outputs and loop conditions.
+
+### A3 — Sleep / SleepUntil Step Actions
+
+**Status**: ✅ Implemented
+
+Add pause/delay primitives:
+
+```rust
+pub enum StepAction {
+    // ... existing variants ...
+    
+    /// Sleep for a duration
+    Sleep { duration_ms: u64 },
+
+    /// Sleep until a specific timestamp
+    SleepUntil { timestamp: chrono::DateTime<chrono::Utc> },
+}
+```
+
+**Implementation**: 
+- `Sleep { duration_ms }`: `tokio::time::sleep(Duration::from_millis(duration_ms)).await`
+- `SleepUntil { timestamp }`: calculate duration from now to timestamp, sleep if positive, return immediately if past
+
+### A4 — ForEach Step Action
+
+**Status**: ✅ Implemented
+
+Iterate over array items with optional concurrency:
+
+```rust
+pub enum StepAction {
+    // ... existing variants ...
+    
+    ForEach {
+        input_array_key: String,   // key into step_results for the array
+        body: Box<StepAction>,     // executed for each item
+        concurrency: usize,        // 1 = sequential, >1 = concurrent with semaphore
+        collect_results: bool,     // if true, output is JSON array of all results
+    },
+}
+```
+
+**Implementation**: 
+1. Resolve `input_array_key` from `ctx.step_results` → `Vec<Value>`
+2. If `concurrency == 1`: sequential loop, each iteration clones context and executes body with item as input
+3. If `concurrency > 1`: spawn tasks with bounded semaphore, collect results
+4. If `collect_results`: output = JSON array of all results; else = last result
+
+### A5 — Guard::AllOfCollect
+
+**Status**: ✅ Implemented
+
+Like `AllOf` but collects all failures instead of short-circuiting:
+
+```rust
+pub enum Guard {
+    // ... existing variants ...
+    
+    AllOfCollect(Vec<Guard>),  // runs all, collects all failures
+}
+
+pub enum GuardError {
+    // ... existing variants ...
+    
+    Multiple(Vec<GuardError>),  // multiple guard failures
+}
+```
+
+**Implementation** in `GuardEngine::evaluate()`:
+```rust
+Guard::AllOfCollect(guards) => {
+    let mut errors = Vec::new();
+    for guard in guards {
+        if let Err(e) = Self::evaluate(guard, ctx).await {
+            errors.push(e);
+        }
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(GuardError::Multiple(errors))
+    }
+}
+```
+
+### A6 — Cost Reporting in PipelineResult
+
+**Status**: ✅ Implemented
+
+Surface cost data in pipeline results:
+
+```rust
+pub struct PipelineResult {
+    // ... existing fields ...
+    pub total_cost_usd: f64,
+    pub total_tokens_used: u32,
+}
+```
+
+**Implementation**: In runner, accumulate costs from `ctx.budget.spent_usd` and token counts from LLM responses, set on result at completion.
+
+### A7 — Structured Logging with Trace Correlation
+
+**Status**: ✅ Implemented
+
+Add structured log entries with trace/span IDs:
+
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum LogLevel {
+    Trace, Debug, Info, Warn, Error,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LogEntry {
+    pub timestamp: DateTime<Utc>,
+    pub level: LogLevel,
+    pub pipeline: String,
+    pub step: String,
+    pub trace_id: String,   // pipeline run UUID
+    pub span_id: String,    // step UUID
+    pub message: String,
+    pub fields: Value,
+}
+```
+
+**New OutputEvent variant**:
+```rust
+OutputEvent::Log(LogEntry),
+```
+
+**New PipelineResult field**:
+```rust
+pub struct PipelineResult {
+    // ... existing fields ...
+    pub log: Vec<LogEntry>,
+}
+```
+
+**Implementation**: Generate `trace_id` once per pipeline run; generate `span_id` per step. Emit `LogLevel::Info` entries at step start/complete, `Warn` on guard failures in skip mode, `Error` on step failure.
+
+### A8 — Thread Title Auto-Generation
+
+**Status**: ✅ Implemented
+
+Automatically generate conversation titles via LLM:
+
+```rust
+pub struct PipelineRunner {
+    // ... existing fields ...
+    pub auto_title_llm: Option<Arc<LlmClient>>,
+}
+
+impl PipelineRunner {
+    pub fn with_auto_title_model(mut self, client: Arc<LlmClient>) -> Self {
+        self.auto_title_llm = Some(client);
+        self
+    }
+}
+
+pub struct ConversationRegistry {
+    // ... existing fields ...
+    titles: HashMap<String, String>,
+    
+    pub fn get_title(&self, id: &str) -> Option<&str> { ... }
+    pub fn set_title(&mut self, id: String, title: String) { ... }
+}
+```
+
+**Implementation**: After the first LLM call in a new `conversation_id` (when `append_to_history: true`):
+1. Check if title already exists for this conversation_id
+2. If not, spawn a background task that calls LLM with system="Generate a concise 5-word title for this conversation. Reply with ONLY the title, no quotes." and user="{first_user_message}"
+3. Store result in `conversation_registry.set_title(id, title)`
+4. This is fire-and-forget — does not block main pipeline
+
+---
+
+## Phase A Summary
+
+| Feature | Type | Effort | Value |
+|---------|------|--------|-------|
+| A1 Tool Approval | API | Low | High (security) |
+| A2 Delegation Hooks | API | Low | Medium (control) |
+| A3 Sleep/SleepUntil | Actions | Low | Medium (workflows) |
+| A4 ForEach | Action | Medium | High (loops) |
+| A5 AllOfCollect | Guard | Low | Medium (diagnostics) |
+| A6 Cost Reporting | Data | Low | High (observability) |
+| A7 Structured Logging | Data | Low | High (observability) |
+| A8 Auto Title | Feature | Low | Medium (UX) |
+
+**Phase A is a set of independent features that can be mixed and matched. No feature depends on another.**
+
+
 3. Calls `llm_client.complete()` with the assertion and step output.
 4. Returns `Ok(())` if response contains "PASS"; `Err(GuardError::Failed)` otherwise.
 

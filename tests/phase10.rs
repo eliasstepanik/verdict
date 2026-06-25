@@ -1,4 +1,4 @@
-//! Phase 10 integration tests — stub completion verification.
+//! Phase 10 integration tests â€” stub completion verification.
 //! Tests cover: LLM provider/client, HTTP tool, MCP client, eval closures,
 //! self-update sandbox, and DelegateAgent in nested contexts.
 
@@ -23,6 +23,8 @@ async fn test_llm_provider_trait_object_dispatch() {
         history: None,
         temperature: None,
         tools: None,
+        tool_choice: None,
+
     };
     let resp = provider.complete(req).await.unwrap();
     assert_eq!(resp.content, "hello");
@@ -138,6 +140,10 @@ async fn test_eval_custom_closure_pass() {
         step_results: std::collections::HashMap::new(),
         audit_log: AuditLog::new(),
         success: true,
+        total_cost_usd: 0.0,
+        total_tokens_used: 0,
+        log: vec![],
+        suspended: None,
     };
     
     // Evaluate
@@ -166,6 +172,10 @@ async fn test_eval_custom_closure_fail() {
         step_results: std::collections::HashMap::new(),
         audit_log: AuditLog::new(),
         success: false,
+        total_cost_usd: 0.0,
+        total_tokens_used: 0,
+        log: vec![],
+        suspended: None,
     };
     
     match &expected {
@@ -283,6 +293,8 @@ async fn test_llm_call_without_client() {
             output_schema: None,
             dependencies: vec![],
             parallel: false,
+            input_processors: vec![],
+            output_processors: vec![],
         }],
         on_failure: FailureMode::Abort,
         max_retries: 0,
@@ -295,6 +307,7 @@ async fn test_llm_call_without_client() {
         tools: ToolSet::None,
         skills: Default::default(),
         policy: Default::default(),
+        scorers: vec![],
     };
     
     // Run should fail without llm_client
@@ -333,6 +346,8 @@ async fn test_llm_call_with_mock_client() {
             output_schema: None,
             dependencies: vec![],
             parallel: false,
+            input_processors: vec![],
+            output_processors: vec![],
         }],
         on_failure: FailureMode::Abort,
         max_retries: 0,
@@ -345,6 +360,7 @@ async fn test_llm_call_with_mock_client() {
         tools: ToolSet::None,
         skills: Default::default(),
         policy: Default::default(),
+        scorers: vec![],
     };
     
     let result = runner.run(&pipeline, &agent, serde_json::json!({})).await;
@@ -370,3 +386,4 @@ async fn test_delegate_agent_placeholder() {
     // 3. Assert it doesn't return "not yet supported" error
     assert!(true, "Placeholder for full DelegateAgent nested test");
 }
+

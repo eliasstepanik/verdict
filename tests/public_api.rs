@@ -259,6 +259,7 @@ fn test_function_tool_new() {
                 Ok(ToolOutput {
                     raw: "result".into(),
                     parsed: None,
+                    structured: None,
                 })
             })
         },

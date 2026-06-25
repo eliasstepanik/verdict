@@ -264,6 +264,8 @@ async fn test_pipeline_sequential_3steps() {
             output_schema: None,
             dependencies: Vec::new(),
             parallel: false,
+            input_processors: vec![],
+            output_processors: vec![],
         }
     };
 
@@ -285,6 +287,8 @@ async fn test_pipeline_sequential_3steps() {
             output_schema: None,
             dependencies: Vec::new(),
             parallel: false,
+            input_processors: vec![],
+            output_processors: vec![],
         }
     };
 
@@ -306,6 +310,8 @@ async fn test_pipeline_sequential_3steps() {
             output_schema: None,
             dependencies: Vec::new(),
             parallel: false,
+            input_processors: vec![],
+            output_processors: vec![],
         }
     };
 
@@ -323,6 +329,8 @@ async fn test_pipeline_sequential_3steps() {
         tools: ToolSet::Full,
         skills: Default::default(),
         policy: Default::default(),
+        scorers: Vec::new(),
+
     };
 
     let mut runner = PipelineRunner::new();
@@ -352,6 +360,8 @@ async fn test_pipeline_abort_on_failure() {
         output_schema: None,
             dependencies: Vec::new(),
             parallel: false,
+            input_processors: vec![],
+            output_processors: vec![],
         };
 
     let step2 = AgentStep {
@@ -369,6 +379,8 @@ async fn test_pipeline_abort_on_failure() {
         output_schema: None,
             dependencies: Vec::new(),
             parallel: false,
+            input_processors: vec![],
+            output_processors: vec![],
         };
 
     let step3 = AgentStep {
@@ -384,6 +396,8 @@ async fn test_pipeline_abort_on_failure() {
         output_schema: None,
             dependencies: Vec::new(),
             parallel: false,
+            input_processors: vec![],
+            output_processors: vec![],
         };
 
     let pipeline = Pipeline {
@@ -400,6 +414,7 @@ async fn test_pipeline_abort_on_failure() {
         tools: ToolSet::Full,
         skills: Default::default(),
         policy: Default::default(),
+        scorers: vec![],
     };
 
     let mut runner = PipelineRunner::new();
@@ -428,6 +443,8 @@ async fn test_pipeline_skip_on_failure() {
             output_schema: None,
             dependencies: Vec::new(),
             parallel: false,
+            input_processors: vec![],
+            output_processors: vec![],
         }
     };
 
@@ -449,6 +466,8 @@ async fn test_pipeline_skip_on_failure() {
             output_schema: None,
             dependencies: Vec::new(),
             parallel: false,
+            input_processors: vec![],
+            output_processors: vec![],
         }
     };
 
@@ -468,6 +487,8 @@ async fn test_pipeline_skip_on_failure() {
             output_schema: None,
             dependencies: Vec::new(),
             parallel: false,
+            input_processors: vec![],
+            output_processors: vec![],
         }
     };
 
@@ -485,6 +506,7 @@ async fn test_pipeline_skip_on_failure() {
         tools: ToolSet::Full,
         skills: Default::default(),
         policy: Default::default(),
+        scorers: vec![],
     };
 
     let mut runner = PipelineRunner::new();
@@ -527,6 +549,8 @@ async fn test_pipeline_retry_then_fail() {
             output_schema: None,
             dependencies: Vec::new(),
             parallel: false,
+            input_processors: vec![],
+            output_processors: vec![],
         }
     };
 
@@ -544,6 +568,7 @@ async fn test_pipeline_retry_then_fail() {
         tools: ToolSet::Full,
         skills: Default::default(),
         policy: Default::default(),
+        scorers: vec![],
     };
 
     let mut runner = PipelineRunner::new();
@@ -574,6 +599,8 @@ async fn test_pipeline_sub_pipeline() {
                 output_schema: None,
             dependencies: Vec::new(),
             parallel: false,
+            input_processors: vec![],
+            output_processors: vec![],
         },
             AgentStep {
                 name: "inner_step2".into(),
@@ -588,6 +615,8 @@ async fn test_pipeline_sub_pipeline() {
                 output_schema: None,
             dependencies: Vec::new(),
             parallel: false,
+            input_processors: vec![],
+            output_processors: vec![],
         },
         ],
         on_failure: FailureMode::Abort,
@@ -607,6 +636,8 @@ async fn test_pipeline_sub_pipeline() {
             output_schema: None,
             dependencies: Vec::new(),
             parallel: false,
+            input_processors: vec![],
+            output_processors: vec![],
         }],
         on_failure: FailureMode::Abort,
         max_retries: 0,
@@ -619,6 +650,7 @@ async fn test_pipeline_sub_pipeline() {
         tools: ToolSet::Full,
         skills: Default::default(),
         policy: Default::default(),
+        scorers: vec![],
     };
 
     let mut runner = PipelineRunner::new();
@@ -676,6 +708,8 @@ async fn test_loop_until_passes() {
         output_schema: None,
             dependencies: Vec::new(),
             parallel: false,
+            input_processors: vec![],
+            output_processors: vec![],
         };
 
     let pipeline = Pipeline {
@@ -692,6 +726,7 @@ async fn test_loop_until_passes() {
         tools: ToolSet::Full,
         skills: Default::default(),
         policy: Default::default(),
+        scorers: vec![],
     };
 
     let mut runner = PipelineRunner::new();
@@ -741,6 +776,8 @@ async fn test_loop_until_max_iterations() {
         output_schema: None,
             dependencies: Vec::new(),
             parallel: false,
+            input_processors: vec![],
+            output_processors: vec![],
         };
 
     let pipeline = Pipeline {
@@ -757,6 +794,7 @@ async fn test_loop_until_max_iterations() {
         tools: ToolSet::Full,
         skills: Default::default(),
         policy: Default::default(),
+        scorers: vec![],
     };
 
     let mut runner = PipelineRunner::new();
@@ -785,6 +823,8 @@ async fn test_audit_log_populated() {
         output_schema: None,
             dependencies: Vec::new(),
             parallel: false,
+            input_processors: vec![],
+            output_processors: vec![],
         };
 
     let pipeline = Pipeline {
@@ -801,6 +841,7 @@ async fn test_audit_log_populated() {
         tools: ToolSet::Full,
         skills: Default::default(),
         policy: Default::default(),
+        scorers: vec![],
     };
 
     let mut runner = PipelineRunner::new();
@@ -884,4 +925,5 @@ async fn test_toolset_union() {
     assert!(union.contains("fs.write"));
     assert!(!union.contains("shell.execute"));
 }
+
 

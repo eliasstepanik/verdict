@@ -1,6 +1,6 @@
 //! Integration tests: Agent delegation, AgentRegistry, DelegationPolicy, multi-agent pipelines
 //!
-//! All tests use StepAction::Custom for child agents — no LLM required.
+//! All tests use StepAction::Custom for child agents Ã¢â‚¬â€ no LLM required.
 //! Tests verify delegation depth, allowlists, tool scope inheritance,
 //! step_result namespacing, schema validation, and audit event ordering.
 
@@ -8,7 +8,7 @@ use std::sync::Arc;
 use verdict::prelude::*;
 use serde_json::json;
 
-// ─── helpers ──────────────────────────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ helpers Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 fn custom_step_simple(name: &str, output: &'static str) -> AgentStep {
     AgentStep {
@@ -22,7 +22,9 @@ fn custom_step_simple(name: &str, output: &'static str) -> AgentStep {
         output_schema: None,
         dependencies: vec![],
         parallel: false,
-    }
+            input_processors: vec![],
+            output_processors: vec![],
+        }
 }
 
 fn leaf_agent(name: &str, step_name: &str, output: &'static str) -> Agent {
@@ -40,6 +42,7 @@ fn leaf_agent(name: &str, step_name: &str, output: &'static str) -> Agent {
         tools: ToolSet::None,
         skills: SkillSet::default(),
         policy: AgentPolicy::default(),
+        scorers: vec![],
     }
 }
 
@@ -58,7 +61,13 @@ fn delegate_step(step_name: &str, agent_name: &str, input: serde_json::Value, ma
                 inherit_tool_scope: true,
                 inherit_budget: false,
                 require_user_approval: false,
+                on_delegation_start: None,
+                on_delegation_complete: None,
+                on_iteration_complete: None,
+                message_filter: None,
+                memory_isolation: MemoryIsolation::Isolated,
             },
+            detached: false,
         },
         guard_out: Guard::None,
         verdict: Verdict::None,
@@ -67,10 +76,12 @@ fn delegate_step(step_name: &str, agent_name: &str, input: serde_json::Value, ma
         output_schema: None,
         dependencies: vec![],
         parallel: false,
-    }
+            input_processors: vec![],
+            output_processors: vec![],
+        }
 }
 
-// ─── Test 1: Two-level delegation depth increments in audit log ───────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Test 1: Two-level delegation depth increments in audit log Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 #[tokio::test]
 async fn test_delegation_two_level_depth_in_audit_log() {
@@ -88,6 +99,7 @@ async fn test_delegation_two_level_depth_in_audit_log() {
         name: "B".into(), description: "middle agent".into(),
         pipeline: b_pipeline.clone(), tools: ToolSet::None,
         skills: SkillSet::default(), policy: AgentPolicy::default(),
+        scorers: vec![],
     };
 
     // A: delegates to B
@@ -101,6 +113,7 @@ async fn test_delegation_two_level_depth_in_audit_log() {
         name: "A".into(), description: "top agent".into(),
         pipeline: a_pipeline.clone(), tools: ToolSet::None,
         skills: SkillSet::default(), policy: AgentPolicy::default(),
+        scorers: vec![],
     };
 
     let mut reg = AgentRegistry::new();
@@ -125,7 +138,7 @@ async fn test_delegation_two_level_depth_in_audit_log() {
     assert_eq!(starts[1], ("B".into(), "C".into(), 2));
 }
 
-// ─── Test 2: max_depth=1 inside B blocks B→C delegation ─────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Test 2: max_depth=1 inside B blocks BÃ¢â€ â€™C delegation Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 #[tokio::test]
 async fn test_delegation_max_depth_blocks_grandchild() {
@@ -146,12 +159,20 @@ async fn test_delegation_max_depth_blocks_grandchild() {
                 inherit_tool_scope: true,
                 inherit_budget: false,
                 require_user_approval: false,
+                on_delegation_start: None,
+                on_delegation_complete: None,
+                on_iteration_complete: None,
+                message_filter: None,
+                memory_isolation: MemoryIsolation::Isolated,
             },
+            detached: false,
         },
         guard_out: Guard::None, verdict: Verdict::None, tools: ToolSet::None,
         injection_protection: InjectionProtection::None, output_schema: None,
         dependencies: vec![], parallel: false,
-    };
+            input_processors: vec![],
+            output_processors: vec![],
+        };
     let b_pipeline = Pipeline {
         name: "B_pipeline".into(), steps: vec![b_step],
         on_failure: FailureMode::Abort, max_retries: 0,
@@ -160,6 +181,7 @@ async fn test_delegation_max_depth_blocks_grandchild() {
         name: "B".into(), description: "middle".into(),
         pipeline: b_pipeline.clone(), tools: ToolSet::None,
         skills: SkillSet::default(), policy: AgentPolicy::default(),
+        scorers: vec![],
     };
 
     // A delegates to B with Skip so we can inspect both outcomes
@@ -172,6 +194,7 @@ async fn test_delegation_max_depth_blocks_grandchild() {
         name: "A".into(), description: "top".into(),
         pipeline: a_pipeline.clone(), tools: ToolSet::None,
         skills: SkillSet::default(), policy: AgentPolicy::default(),
+        scorers: vec![],
     };
 
     let mut reg = AgentRegistry::new();
@@ -181,13 +204,13 @@ async fn test_delegation_max_depth_blocks_grandchild() {
     let mut runner = PipelineRunner::with_agent_registry(Arc::new(reg));
     let result = runner.run(&a_pipeline, &agent_a, json!({})).await.unwrap();
 
-    // The B→C delegation fails, which cascades up, so delegate_to_b is failed
+    // The BÃ¢â€ â€™C delegation fails, which cascades up, so delegate_to_b is failed
     assert!(!result.success);
     assert!(result.steps_failed.contains(&"delegate_to_b".to_string()),
         "delegation step should fail: {:?}", result.steps_failed);
 }
 
-// ─── Test 3: allowed_agents restricts which agents can be delegated to ────────
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Test 3: allowed_agents restricts which agents can be delegated to Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 #[tokio::test]
 async fn test_delegation_allowed_agents_blocks_disallowed_target() {
@@ -198,7 +221,7 @@ async fn test_delegation_allowed_agents_blocks_disallowed_target() {
     reg.register(planner);
     reg.register(coder);
 
-    // Step 1: try to delegate to coder (NOT in allowed list) → fails
+    // Step 1: try to delegate to coder (NOT in allowed list) Ã¢â€ â€™ fails
     let blocked_step = AgentStep {
         name: "delegate_to_coder".into(),
         guard_in: Guard::None,
@@ -213,13 +236,21 @@ async fn test_delegation_allowed_agents_blocks_disallowed_target() {
                 inherit_tool_scope: true,
                 inherit_budget: false,
                 require_user_approval: false,
+                on_delegation_start: None,
+                on_delegation_complete: None,
+                on_iteration_complete: None,
+                message_filter: None,
+                memory_isolation: MemoryIsolation::Isolated,
             },
+            detached: false,
         },
         guard_out: Guard::None, verdict: Verdict::None, tools: ToolSet::None,
         injection_protection: InjectionProtection::None, output_schema: None,
         dependencies: vec![], parallel: false,
-    };
-    // Step 2: delegate to planner (IS in allowed list) → succeeds
+            input_processors: vec![],
+            output_processors: vec![],
+        };
+    // Step 2: delegate to planner (IS in allowed list) Ã¢â€ â€™ succeeds
     let allowed_step = delegate_step("delegate_to_planner", "planner", json!({}), 3,
         vec!["planner".into()]);
 
@@ -233,6 +264,7 @@ async fn test_delegation_allowed_agents_blocks_disallowed_target() {
         name: "root".into(), description: "root".into(),
         pipeline: pipeline.clone(), tools: ToolSet::None,
         skills: SkillSet::default(), policy: AgentPolicy::default(),
+        scorers: vec![],
     };
 
     let mut runner = PipelineRunner::with_agent_registry(Arc::new(reg));
@@ -251,7 +283,7 @@ async fn test_delegation_allowed_agents_blocks_disallowed_target() {
         "coder step result must NOT be present");
 }
 
-// ─── Test 4: inherit_tool_scope=true lets child use parent's tool ─────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Test 4: inherit_tool_scope=true lets child use parent's tool Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 #[tokio::test]
 async fn test_delegation_inherit_tool_scope_true_child_calls_parent_tool() {
@@ -273,7 +305,9 @@ async fn test_delegation_inherit_tool_scope_true_child_calls_parent_tool() {
         tools: ToolSet::Full,
         injection_protection: InjectionProtection::None,
         output_schema: None, dependencies: vec![], parallel: false,
-    };
+            input_processors: vec![],
+            output_processors: vec![],
+        };
     let child_pipeline = Pipeline {
         name: "child_pipeline".into(), steps: vec![child_step],
         on_failure: FailureMode::Abort, max_retries: 0,
@@ -283,6 +317,7 @@ async fn test_delegation_inherit_tool_scope_true_child_calls_parent_tool() {
         pipeline: child_pipeline.clone(),
         tools: ToolSet::Full, skills: SkillSet::default(),
         policy: AgentPolicy { allowed_tools: ToolSet::Full, ..Default::default() },
+        scorers: vec![],
     };
 
     let mut agent_reg = AgentRegistry::new();
@@ -301,12 +336,20 @@ async fn test_delegation_inherit_tool_scope_true_child_calls_parent_tool() {
                 require_output_schema: false,
                 inherit_tool_scope: true, // key: child gets parent's ToolRegistry
                 inherit_budget: false, require_user_approval: false,
+                on_delegation_start: None,
+                on_delegation_complete: None,
+                on_iteration_complete: None,
+                message_filter: None,
+                memory_isolation: MemoryIsolation::Isolated,
             },
+            detached: false,
         },
         guard_out: Guard::None, verdict: Verdict::None, tools: ToolSet::Full,
         injection_protection: InjectionProtection::None, output_schema: None,
         dependencies: vec![], parallel: false,
-    };
+            input_processors: vec![],
+            output_processors: vec![],
+        };
     let parent_pipeline = Pipeline {
         name: "parent_pipeline".into(), steps: vec![parent_step],
         on_failure: FailureMode::Abort, max_retries: 0,
@@ -316,6 +359,7 @@ async fn test_delegation_inherit_tool_scope_true_child_calls_parent_tool() {
         pipeline: parent_pipeline.clone(),
         tools: ToolSet::Full, skills: SkillSet::default(),
         policy: AgentPolicy { allowed_tools: ToolSet::Full, ..Default::default() },
+        scorers: vec![],
     };
 
     let mut runner = PipelineRunner::with_registries(
@@ -331,7 +375,7 @@ async fn test_delegation_inherit_tool_scope_true_child_calls_parent_tool() {
     assert_eq!(result.step_results["child.use_tool"].output.raw, "pong");
 }
 
-// ─── Test 5: Child step results namespaced as "{agent}.{step}" ───────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Test 5: Child step results namespaced as "{agent}.{step}" Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 #[tokio::test]
 async fn test_delegation_step_results_namespaced_correctly() {
@@ -347,6 +391,7 @@ async fn test_delegation_step_results_namespaced_correctly() {
         name: "worker".into(), description: "worker".into(),
         pipeline: worker_pipeline.clone(), tools: ToolSet::None,
         skills: SkillSet::default(), policy: AgentPolicy::default(),
+        scorers: vec![],
     };
 
     let mut reg = AgentRegistry::new();
@@ -361,6 +406,7 @@ async fn test_delegation_step_results_namespaced_correctly() {
         name: "parent".into(), description: "parent".into(),
         pipeline: parent_pipeline.clone(), tools: ToolSet::None,
         skills: SkillSet::default(), policy: AgentPolicy::default(),
+        scorers: vec![],
     };
 
     let mut runner = PipelineRunner::with_agent_registry(Arc::new(reg));
@@ -385,7 +431,7 @@ async fn test_delegation_step_results_namespaced_correctly() {
     assert!(!result.step_results.contains_key("phase_b"), "phase_b must not appear without namespace");
 }
 
-// ─── Test 6: Child pipeline failure causes parent step to fail ────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Test 6: Child pipeline failure causes parent step to fail Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 #[tokio::test]
 async fn test_delegation_child_failure_aborts_parent() {
@@ -398,7 +444,9 @@ async fn test_delegation_child_failure_aborts_parent() {
         guard_out: Guard::None, verdict: Verdict::None, tools: ToolSet::None,
         injection_protection: InjectionProtection::None, output_schema: None,
         dependencies: vec![], parallel: false,
-    };
+            input_processors: vec![],
+            output_processors: vec![],
+        };
     let child_pipeline = Pipeline {
         name: "child_pipeline".into(), steps: vec![failing_step],
         on_failure: FailureMode::Abort, max_retries: 0,
@@ -407,6 +455,7 @@ async fn test_delegation_child_failure_aborts_parent() {
         name: "child".into(), description: "child".into(),
         pipeline: child_pipeline.clone(), tools: ToolSet::None,
         skills: SkillSet::default(), policy: AgentPolicy::default(),
+        scorers: vec![],
     };
 
     let mut reg = AgentRegistry::new();
@@ -421,6 +470,7 @@ async fn test_delegation_child_failure_aborts_parent() {
         name: "parent".into(), description: "parent".into(),
         pipeline: parent_pipeline.clone(), tools: ToolSet::None,
         skills: SkillSet::default(), policy: AgentPolicy::default(),
+        scorers: vec![],
     };
 
     let mut runner = PipelineRunner::with_agent_registry(Arc::new(reg));
@@ -437,7 +487,7 @@ async fn test_delegation_child_failure_aborts_parent() {
     }
 }
 
-// ─── Test 7: Delegation to unknown agent returns DelegationFailed ─────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Test 7: Delegation to unknown agent returns DelegationFailed Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 #[tokio::test]
 async fn test_delegation_unknown_agent_fails_gracefully() {
@@ -452,6 +502,7 @@ async fn test_delegation_unknown_agent_fails_gracefully() {
         name: "parent".into(), description: "parent".into(),
         pipeline: parent_pipeline.clone(), tools: ToolSet::None,
         skills: SkillSet::default(), policy: AgentPolicy::default(),
+        scorers: vec![],
     };
 
     let mut runner = PipelineRunner::with_agent_registry(Arc::new(reg));
@@ -469,7 +520,7 @@ async fn test_delegation_unknown_agent_fails_gracefully() {
     );
 }
 
-// ─── Test 8: Sequential plan→code→review delegation, all results in step_results ─
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Test 8: Sequential planÃ¢â€ â€™codeÃ¢â€ â€™review delegation, all results in step_results Ã¢â€â‚¬
 
 #[tokio::test]
 async fn test_delegation_sequential_plan_code_review() {
@@ -495,6 +546,7 @@ async fn test_delegation_sequential_plan_code_review() {
         name: "orchestrator".into(), description: "orchestrator".into(),
         pipeline: pipeline.clone(), tools: ToolSet::None,
         skills: SkillSet::default(), policy: AgentPolicy::default(),
+        scorers: vec![],
     };
 
     let mut runner = PipelineRunner::with_agent_registry(Arc::new(reg));
@@ -523,7 +575,7 @@ async fn test_delegation_sequential_plan_code_review() {
     ], "delegation events must be in correct order: {delegation_events:?}");
 }
 
-// ─── Test 9: Downstream step reads child output from step_results ─────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Test 9: Downstream step reads child output from step_results Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 #[tokio::test]
 async fn test_delegation_downstream_step_reads_child_output() {
@@ -547,7 +599,9 @@ async fn test_delegation_downstream_step_reads_child_output() {
         guard_out: Guard::None, verdict: Verdict::None, tools: ToolSet::None,
         injection_protection: InjectionProtection::None, output_schema: None,
         dependencies: vec![], parallel: false,
-    };
+            input_processors: vec![],
+            output_processors: vec![],
+        };
 
     let pipeline = Pipeline {
         name: "p".into(),
@@ -558,6 +612,7 @@ async fn test_delegation_downstream_step_reads_child_output() {
         name: "root".into(), description: "root".into(),
         pipeline: pipeline.clone(), tools: ToolSet::None,
         skills: SkillSet::default(), policy: AgentPolicy::default(),
+        scorers: vec![],
     };
 
     let mut runner = PipelineRunner::with_agent_registry(Arc::new(reg));
@@ -567,7 +622,7 @@ async fn test_delegation_downstream_step_reads_child_output() {
     assert_eq!(result.step_results["consume"].output.raw, "4242");
 }
 
-// ─── Test 10: Audit DelegationStarted always precedes DelegationCompleted ─────
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Test 10: Audit DelegationStarted always precedes DelegationCompleted Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 #[tokio::test]
 async fn test_delegation_audit_started_precedes_completed_invariant() {
@@ -582,6 +637,7 @@ async fn test_delegation_audit_started_precedes_completed_invariant() {
         name: "B".into(), description: "B".into(),
         pipeline: b_pipeline.clone(), tools: ToolSet::None,
         skills: SkillSet::default(), policy: AgentPolicy::default(),
+        scorers: vec![],
     };
 
     let a_step = delegate_step("delegate_to_b", "B", json!({}), 5, vec![]);
@@ -593,6 +649,7 @@ async fn test_delegation_audit_started_precedes_completed_invariant() {
         name: "A".into(), description: "A".into(),
         pipeline: a_pipeline.clone(), tools: ToolSet::None,
         skills: SkillSet::default(), policy: AgentPolicy::default(),
+        scorers: vec![],
     };
 
     let mut reg = AgentRegistry::new();
@@ -629,3 +686,4 @@ async fn test_delegation_audit_started_precedes_completed_invariant() {
     }
     assert!(open.is_empty(), "unclosed delegations (Started without Completed): {open:?}");
 }
+

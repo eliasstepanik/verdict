@@ -22,3 +22,20 @@ pub fn check_delegated_agent_passed(
 ) -> Result<(), GuardError> {
     Ok(())
 }
+
+/// Phase D3: Check if a detached agent has completed (by name)
+pub fn check_detached_agent_completed(
+    agent_name: &str,
+    ctx: &StepContext,
+) -> Result<(), GuardError> {
+    // Check if DelegationCompleted event exists for this agent in audit log
+    for entry in &ctx.trace.entries {
+        if entry.step_name == agent_name && entry.status == "completed" {
+            return Ok(());
+        }
+    }
+    Err(GuardError::Failed {
+        guard: format!("DetachedAgentCompleted({})", agent_name),
+        reason: format!("Detached agent '{}' has not yet completed", agent_name),
+    })
+}

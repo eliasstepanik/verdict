@@ -29,6 +29,10 @@ impl AgentRegistry {
     pub fn list(&self) -> Vec<String> {
         self.agents.keys().cloned().collect()
     }
+
+    pub fn list_agents(&self) -> Vec<Arc<Agent>> {
+        self.agents.values().cloned().collect()
+    }
 }
 
 impl Default for AgentRegistry {
@@ -40,6 +44,8 @@ impl Default for AgentRegistry {
 /// Registry of available tools
 pub struct ToolRegistry {
     tools: HashMap<String, Arc<dyn Tool>>,
+    /// Tools that require approval before execution (A1)
+    requires_approval: std::collections::HashSet<String>,
 }
 
 impl std::fmt::Debug for ToolRegistry {
@@ -54,6 +60,7 @@ impl ToolRegistry {
     pub fn new() -> Self {
         Self {
             tools: HashMap::new(),
+            requires_approval: std::collections::HashSet::new(),
         }
     }
 
@@ -64,6 +71,18 @@ impl ToolRegistry {
 
     pub fn register_arc(&mut self, tool: Arc<dyn Tool>) {
         self.tools.insert(tool.name().to_string(), tool);
+    }
+
+    /// Register a tool that requires human approval before each call (A1)
+    pub fn register_with_approval(&mut self, tool: Arc<dyn Tool>) {
+        let name = tool.name().to_string();
+        self.tools.insert(name.clone(), tool);
+        self.requires_approval.insert(name);
+    }
+
+    /// Check if a tool requires approval (A1)
+    pub fn requires_approval(&self, name: &str) -> bool {
+        self.requires_approval.contains(name)
     }
 
     pub fn get(&self, name: &str) -> Option<Arc<dyn Tool>> {
@@ -106,6 +125,11 @@ impl ToolRegistry {
         }
         
         registry
+    }
+
+    /// Clear the approval-required set (useful for testing)
+    pub fn clear_approvals(&mut self) {
+        self.requires_approval.clear();
     }
 }
 

@@ -88,6 +88,18 @@ pub enum AuditEvent {
         step: String,
         reason: String,
     },
+    /// Tool approval requested (A1)
+    ToolApprovalRequested {
+        tool: String,
+    },
+    /// Tool approval granted (A1)
+    ToolApprovalGranted {
+        tool: String,
+    },
+    /// Tool approval denied (A1)
+    ToolApprovalDenied {
+        tool: String,
+    },
 }
 
 /// A single audit log entry
@@ -196,6 +208,15 @@ impl AuditLog {
                     }
                     AuditEvent::FallbackTriggered { step, reason } => {
                         json!({ "type": "FallbackTriggered", "step": step, "reason": reason })
+                    }
+                    AuditEvent::ToolApprovalRequested { tool } => {
+                        json!({ "type": "ToolApprovalRequested", "tool": tool })
+                    }
+                    AuditEvent::ToolApprovalGranted { tool } => {
+                        json!({ "type": "ToolApprovalGranted", "tool": tool })
+                    }
+                    AuditEvent::ToolApprovalDenied { tool } => {
+                        json!({ "type": "ToolApprovalDenied", "tool": tool })
                     }
                 };
 
@@ -586,10 +607,12 @@ pub fn call_tree_from_audit_log(entries: &[AuditEntry]) -> Vec<CallTreeNode> {
         .collect()
 }
 
-/// Monitoring server for Web UI dashboard (Phase 9)
+/// Monitoring server for Web UI dashboard (Phase E)
 pub struct MonitoringServer {
     audit_log: std::sync::Arc<std::sync::Mutex<AuditLog>>,
     trace: std::sync::Arc<std::sync::Mutex<crate::context::PipelineTrace>>,
+    agent_registry: Option<std::sync::Arc<crate::registry::AgentRegistry>>,
+    conversation_registry: Option<std::sync::Arc<std::sync::Mutex<crate::llm::ConversationRegistry>>>,
 }
 
 impl MonitoringServer {
@@ -598,7 +621,21 @@ impl MonitoringServer {
         Self {
             audit_log: std::sync::Arc::new(std::sync::Mutex::new(audit_log)),
             trace: std::sync::Arc::new(std::sync::Mutex::new(trace)),
+            agent_registry: None,
+            conversation_registry: None,
         }
+    }
+
+    /// Add agent registry to monitoring server
+    pub fn with_agent_registry(mut self, registry: std::sync::Arc<crate::registry::AgentRegistry>) -> Self {
+        self.agent_registry = Some(registry);
+        self
+    }
+
+    /// Add conversation registry to monitoring server
+    pub fn with_conversation_registry(mut self, registry: std::sync::Arc<std::sync::Mutex<crate::llm::ConversationRegistry>>) -> Self {
+        self.conversation_registry = Some(registry);
+        self
     }
 
     /// Start the monitoring HTTP server on the given address
@@ -613,17 +650,23 @@ impl MonitoringServer {
 
         let audit_log = self.audit_log.clone();
         let trace = self.trace.clone();
+        let agent_registry = self.agent_registry.clone();
+        let conversation_registry = self.conversation_registry.clone();
 
         // App state structure
         #[derive(Clone)]
         struct AppState {
             audit_log: std::sync::Arc<std::sync::Mutex<AuditLog>>,
             trace: std::sync::Arc<std::sync::Mutex<crate::context::PipelineTrace>>,
+            agent_registry: Option<std::sync::Arc<crate::registry::AgentRegistry>>,
+            conversation_registry: Option<std::sync::Arc<std::sync::Mutex<crate::llm::ConversationRegistry>>>,
         }
 
         let app_state = AppState {
             audit_log: audit_log.clone(),
             trace: trace.clone(),
+            agent_registry: agent_registry.clone(),
+            conversation_registry: conversation_registry.clone(),
         };
 
         // Handlers
@@ -640,10 +683,21 @@ impl MonitoringServer {
         .entry { padding: 10px; border-left: 3px solid #0066cc; margin: 5px 0; }
         .error { border-left-color: #cc0000; }
         .success { border-left-color: #00cc00; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 8px; text-align: left; border-bottom: 1px solid #ddd; }
+        th { background-color: #f2f2f2; }
     </style>
 </head>
 <body>
     <h1>Verdict Monitoring Dashboard</h1>
+    <div class="section">
+        <h2>Registered Agents</h2>
+        <p><a href="/api/agents">View all agents (JSON)</a></p>
+    </div>
+    <div class="section">
+        <h2>Conversations</h2>
+        <p><a href="/api/conversations">View conversations (JSON)</a></p>
+    </div>
     <div class="section">
         <h2>Recent Audit Entries</h2>
         <p><a href="/api/entries">View all entries (JSON)</a></p>
@@ -690,10 +744,57 @@ impl MonitoringServer {
             }
         }
 
+        async fn agents_handler(
+            State(state): State<AppState>,
+        ) -> Json<serde_json::Value> {
+            if let Some(registry) = &state.agent_registry {
+                let agents = registry.list_agents();
+                let agent_list: Vec<serde_json::Value> = agents
+                    .iter()
+                    .map(|agent| {
+                        json!({
+                            "name": agent.name,
+                            "description": agent.description,
+                        })
+                    })
+                    .collect();
+                Json(json!({ "agents": agent_list }))
+            } else {
+                Json(json!({ "agents": [], "error": "agent registry not available" }))
+            }
+        }
+
+        async fn conversations_handler(
+            State(state): State<AppState>,
+        ) -> Json<serde_json::Value> {
+            if let Some(registry) = &state.conversation_registry {
+                match registry.lock() {
+                    Ok(r) => {
+                        let conversations = r.list_conversations();
+                        let conv_list: Vec<serde_json::Value> = conversations
+                            .iter()
+                            .map(|(id, history)| {
+                                json!({
+                                    "id": id,
+                                    "message_count": history.messages.len(),
+                                })
+                            })
+                            .collect();
+                        Json(json!({ "conversations": conv_list }))
+                    }
+                    Err(_) => Json(json!({ "conversations": [], "error": "registry mutex poisoned" })),
+                }
+            } else {
+                Json(json!({ "conversations": [], "error": "conversation registry not available" }))
+            }
+        }
+
         let app = Router::new()
             .route("/", get(index_handler))
             .route("/api/entries", get(entries_handler))
             .route("/api/trace", get(trace_handler))
+            .route("/api/agents", get(agents_handler))
+            .route("/api/conversations", get(conversations_handler))
             .with_state(app_state);
 
         let listener = tokio::net::TcpListener::bind(addr).await?;

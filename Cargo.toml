@@ -1,5 +1,5 @@
 [workspace]
-members = ["."]
+members = [".", "verdict-workspace", "verdict-app", "verdict-cli", "verdict-memory", "verdict-telemetry", "verdict-server"]
 resolver = "2"
 
 [package]
@@ -23,6 +23,8 @@ toml = "0.8"
 serde_yaml = "0.9"
 futures = "0.3"
 async-recursion = "1"
+uuid = { version = "1", features = ["v4", "serde"] }
+regex = "1"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }

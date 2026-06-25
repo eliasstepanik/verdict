@@ -7,7 +7,7 @@ use std::sync::Arc;
 use verdict::prelude::*;
 use serde_json::json;
 
-// ─── helpers ──────────────────────────────────────────────────────────────────
+// â”€â”€â”€ helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 fn tool_step(name: &str, tool: &str, args: serde_json::Value, scope: ToolSet) -> AgentStep {
     AgentStep {
@@ -21,7 +21,9 @@ fn tool_step(name: &str, tool: &str, args: serde_json::Value, scope: ToolSet) ->
         output_schema: None,
         dependencies: vec![],
         parallel: false,
-    }
+            input_processors: vec![],
+            output_processors: vec![],
+        }
 }
 
 fn make_agent(pipeline: &Pipeline, agent_tools: ToolSet, policy_tools: ToolSet) -> Agent {
@@ -34,10 +36,11 @@ fn make_agent(pipeline: &Pipeline, agent_tools: ToolSet, policy_tools: ToolSet) 
         tools: agent_tools,
         skills: SkillSet::default(),
         policy,
+        scorers: vec![],
     }
 }
 
-// ─── Test 1: FunctionTool output becomes step output ─────────────────────────
+// â”€â”€â”€ Test 1: FunctionTool output becomes step output â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 #[tokio::test]
 async fn test_function_tool_output_becomes_step_output() {
@@ -70,7 +73,7 @@ async fn test_function_tool_output_becomes_step_output() {
     ));
 }
 
-// ─── Test 2: Step scope blocks tool not in Allow list ─────────────────────────
+// â”€â”€â”€ Test 2: Step scope blocks tool not in Allow list â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 #[tokio::test]
 async fn test_step_scope_allow_blocks_other_registered_tool() {
@@ -119,7 +122,7 @@ async fn test_step_scope_allow_blocks_other_registered_tool() {
     }
 }
 
-// ─── Test 3: Intersection(Allow(a,b), Allow(b,c)) → only b is accessible ─────
+// â”€â”€â”€ Test 3: Intersection(Allow(a,b), Allow(b,c)) â†’ only b is accessible â”€â”€â”€â”€â”€
 
 #[tokio::test]
 async fn test_toolset_intersection_only_common_tool_accessible() {
@@ -149,20 +152,20 @@ async fn test_toolset_intersection_only_common_tool_accessible() {
         PipelineRunner::with_tool_registry(reg).run(&p, &agent, json!({})).await
     };
 
-    // local.b is in both sets → accessible
+    // local.b is in both sets â†’ accessible
     let ok = run_tool("local.b", Arc::clone(&reg), scope.clone()).await.unwrap();
     assert_eq!(ok.step_results["s"].output.raw, "B");
 
-    // local.a is only in left set → blocked
+    // local.a is only in left set â†’ blocked
     assert!(run_tool("local.a", Arc::clone(&reg), scope.clone()).await.is_err(),
         "local.a not in intersection should be blocked");
 
-    // local.c is only in right set → blocked
+    // local.c is only in right set â†’ blocked
     assert!(run_tool("local.c", Arc::clone(&reg), scope.clone()).await.is_err(),
         "local.c not in intersection should be blocked");
 }
 
-// ─── Test 4: step=Full + policy=None → tool blocked ──────────────────────────
+// â”€â”€â”€ Test 4: step=Full + policy=None â†’ tool blocked â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 #[tokio::test]
 async fn test_step_full_with_policy_none_blocks_tool() {
@@ -177,7 +180,7 @@ async fn test_step_full_with_policy_none_blocks_tool() {
         steps: vec![tool_step("s", "local.t", json!({}), ToolSet::Full)],
         on_failure: FailureMode::Abort, max_retries: 0,
     };
-    // policy.allowed_tools = None → intersection with Full = None
+    // policy.allowed_tools = None â†’ intersection with Full = None
     let agent = make_agent(&p, ToolSet::Full, ToolSet::None);
 
     let err = PipelineRunner::with_tool_registry(Arc::new(reg))
@@ -194,7 +197,7 @@ async fn test_step_full_with_policy_none_blocks_tool() {
     }
 }
 
-// ─── Test 5: step=Full + policy=Full → tool accessible ───────────────────────
+// â”€â”€â”€ Test 5: step=Full + policy=Full â†’ tool accessible â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 #[tokio::test]
 async fn test_step_full_with_policy_full_allows_tool() {
@@ -220,7 +223,7 @@ async fn test_step_full_with_policy_full_allows_tool() {
     ));
 }
 
-// ─── Test 6: FunctionTool returning JSON → output parses as JSON ─────────────
+// â”€â”€â”€ Test 6: FunctionTool returning JSON â†’ output parses as JSON â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 #[tokio::test]
 async fn test_function_tool_returns_structured_json() {
@@ -253,7 +256,7 @@ async fn test_function_tool_returns_structured_json() {
     assert_eq!(items[1], "b");
 }
 
-// ─── Test 7: ExecutionFailed error surfaces as StepFailed ────────────────────
+// â”€â”€â”€ Test 7: ExecutionFailed error surfaces as StepFailed â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 #[tokio::test]
 async fn test_function_tool_execution_failed_surfaces_as_step_failed() {
@@ -284,7 +287,7 @@ async fn test_function_tool_execution_failed_surfaces_as_step_failed() {
     }
 }
 
-// ─── Test 8: Tool registration and retrieval works end-to-end ────────────────
+// â”€â”€â”€ Test 8: Tool registration and retrieval works end-to-end â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 #[tokio::test]
 async fn test_arc_registered_tool_callable_via_pipeline() {
@@ -312,7 +315,7 @@ async fn test_arc_registered_tool_callable_via_pipeline() {
     assert_eq!(r.step_results["s"].output.raw, "arcd-ok");
 }
 
-// ─── Test 9: Sequential multi-tool steps each record correct output ───────────
+// â”€â”€â”€ Test 9: Sequential multi-tool steps each record correct output â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 #[tokio::test]
 async fn test_multiple_sequential_tool_steps_each_record_correct_output() {
@@ -359,7 +362,7 @@ async fn test_multiple_sequential_tool_steps_each_record_correct_output() {
     assert_eq!(completed, vec!["local.one", "local.two", "local.three"]);
 }
 
-// ─── Test 10: ReadOnly step scope blocks fs.write ────────────────────────────
+// â”€â”€â”€ Test 10: ReadOnly step scope blocks fs.write â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 #[tokio::test]
 async fn test_readonly_step_scope_blocks_fs_write() {
@@ -392,7 +395,7 @@ async fn test_readonly_step_scope_blocks_fs_write() {
     assert!(!target.exists(), "fs.write must not have created the target file");
 }
 
-// ─── Test 11: Built-in fs.read reads Cargo.toml ──────────────────────────────
+// â”€â”€â”€ Test 11: Built-in fs.read reads Cargo.toml â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 #[tokio::test]
 async fn test_builtin_fs_read_reads_cargo_toml_in_pipeline() {
@@ -421,7 +424,7 @@ async fn test_builtin_fs_read_reads_cargo_toml_in_pipeline() {
     ));
 }
 
-// ─── Test 12: FunctionTool echoes args back and validates schema ──────────────
+// â”€â”€â”€ Test 12: FunctionTool echoes args back and validates schema â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 #[tokio::test]
 async fn test_function_tool_echoes_args_and_validates_schema() {
@@ -454,9 +457,10 @@ async fn test_function_tool_echoes_args_and_validates_schema() {
     let r = run_with(json!({"value": "hello-world"}), Arc::clone(&reg), scope.clone()).await.unwrap();
     assert_eq!(r.step_results["s"].output.raw, "hello-world");
 
-    // Missing required field → schema validation fails
+    // Missing required field â†’ schema validation fails
     let err = run_with(json!({}), Arc::clone(&reg), scope.clone()).await.unwrap_err();
     let msg = format!("{err:?}");
     assert!(msg.to_lowercase().contains("schema") || msg.to_lowercase().contains("invalid") || msg.contains("StepFailed"),
         "missing arg should produce a schema/validation error: {msg}");
 }
+

@@ -205,6 +205,7 @@ pub async fn check_semantic_check(
         history: None,
         temperature: None,
         tools: None,
+        tool_choice: None,
     };
 
     let response = llm_client.complete(req).await.map_err(|e| GuardError::Failed {

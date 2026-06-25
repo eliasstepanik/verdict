@@ -23,7 +23,29 @@ pub enum ChatRole {
 pub struct ChatMessage {
     pub role: ChatRole,
     pub content: String,
+    /// For assistant messages that invoked tools: the raw tool_calls JSON array
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_calls_json: Option<serde_json::Value>,
+    /// For tool result messages: the tool_call_id this result corresponds to
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
 }
+
+impl ChatMessage {
+    pub fn user(content: String) -> Self {
+        Self { role: ChatRole::User, content, tool_calls_json: None, tool_call_id: None }
+    }
+    pub fn assistant(content: String) -> Self {
+        Self { role: ChatRole::Assistant, content, tool_calls_json: None, tool_call_id: None }
+    }
+    pub fn assistant_with_tool_calls(content: String, tool_calls: serde_json::Value) -> Self {
+        Self { role: ChatRole::Assistant, content, tool_calls_json: Some(tool_calls), tool_call_id: None }
+    }
+    pub fn tool_result(tool_call_id: String, content: String) -> Self {
+        Self { role: ChatRole::Tool, content, tool_calls_json: None, tool_call_id: Some(tool_call_id) }
+    }
+}
+
 
 /// Conversation history for multi-turn LLM interactions
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -39,8 +61,9 @@ impl MessageHistory {
     }
 
     /// Append a message to the history
+    /// Append a message to the history
     pub fn push(&mut self, role: ChatRole, content: String) {
-        self.messages.push(ChatMessage { role, content });
+        self.messages.push(ChatMessage { role, content, tool_calls_json: None, tool_call_id: None });
     }
 
     /// Returns true if the history has no messages
@@ -53,6 +76,8 @@ impl MessageHistory {
 /// Enables multi-turn conversations within a single pipeline run.
 #[derive(Debug, Clone, Default)]
 pub struct ConversationRegistry {
+    /// Auto-generated titles for conversations (Phase A8)
+    titles: std::collections::HashMap<String, String>,
     conversations: std::collections::HashMap<String, MessageHistory>,
 }
 
@@ -77,6 +102,24 @@ impl ConversationRegistry {
     /// Insert or replace a conversation
     pub fn insert(&mut self, id: String, history: MessageHistory) {
         self.conversations.insert(id, history);
+    }
+
+    /// Get the auto-generated title for a conversation (Phase A8)
+    pub fn get_title(&self, id: &str) -> Option<&str> {
+        self.titles.get(id).map(|s| s.as_str())
+    }
+
+    /// Set the auto-generated title for a conversation (Phase A8)
+    pub fn set_title(&mut self, id: String, title: String) {
+        self.titles.insert(id, title);
+    }
+
+    /// List all conversations as (id, history) pairs
+    pub fn list_conversations(&self) -> Vec<(String, MessageHistory)> {
+        self.conversations
+            .iter()
+            .map(|(id, history)| (id.clone(), history.clone()))
+            .collect()
     }
 }
 
@@ -114,6 +157,10 @@ pub struct LlmRequest {
     /// When present, the LLM may respond with tool_calls instead of plain text.
     #[serde(default)]
     pub tools: Option<Vec<ToolSchema>>,
+    /// Optional tool_choice override. "auto" (default when tools provided), "required" (force tool use), or "none".
+    #[serde(default)]
+    pub tool_choice: Option<String>,
+
 }
 
 /// A tool call extracted from LLM response
@@ -152,14 +199,15 @@ pub enum LlmError {
     #[error("invalid response: {0}")]
     InvalidResponse(String),
 
-    #[error("rate limited")]
+    #[error("rate limited (HTTP 429) — check your quota or try again later")]
     RateLimited,
 
-    #[error("auth failed")]
+    #[error("authentication failed — check your API key (OPENAI_API_KEY)")]
     AuthFailed,
 
-    #[error("LLM not configured")]
+    #[error("LLM not configured — set OPENAI_API_KEY or add api_key to ~/.config/verdict-app/config.toml")]
     NotConfigured,
+
 }
 
 
@@ -289,10 +337,32 @@ impl LlmProvider for OpenAiCompatibleProvider {
                     ChatRole::Assistant => "assistant",
                     ChatRole::Tool => "tool",
                 };
-                messages.push(serde_json::json!({"role": role_str, "content": msg.content}));
+                
+                if let Some(tool_calls) = &msg.tool_calls_json {
+                    // Assistant message that made tool calls
+                    messages.push(serde_json::json!({
+                        "role": role_str,
+                        "content": if msg.content.is_empty() { serde_json::Value::Null } else { serde_json::json!(msg.content) },
+                        "tool_calls": tool_calls
+                    }));
+                } else if let Some(tool_call_id) = &msg.tool_call_id {
+                    // Tool result message
+                    messages.push(serde_json::json!({
+                        "role": "tool",
+                        "tool_call_id": tool_call_id,
+                        "content": msg.content
+                    }));
+                } else {
+                    messages.push(serde_json::json!({"role": role_str, "content": msg.content}));
+                }
             }
         }
-        messages.push(serde_json::json!({"role": "user", "content": req.user}));
+        // Only push user message if non-empty — Claude/OpenAI APIs reject empty user messages
+        // when the conversation ends with tool result messages (round > 0 in ToolUseLoop).
+        if !req.user.is_empty() {
+            messages.push(serde_json::json!({"role": "user", "content": req.user}));
+        }
+
 
         // Use default model if req.model is empty
         let model = if req.model.is_empty() {
@@ -333,13 +403,24 @@ impl LlmProvider for OpenAiCompatibleProvider {
                 .collect();
             if !tools_json.is_empty() {
                 body["tools"] = serde_json::json!(tools_json);
-                body["tool_choice"] = serde_json::json!("auto");
+                let choice = req.tool_choice.as_deref().unwrap_or("auto");
+                body["tool_choice"] = serde_json::json!(choice);
+
             }
         }
+
+        // Debug: log whether tools are included in request
+        eprintln!("[llm-req] model={} tools_count={} tool_choice={}", 
+            model,
+            body.get("tools").and_then(|t| t.as_array()).map(|a| a.len()).unwrap_or(0),
+            body.get("tool_choice").map(|v| v.to_string()).unwrap_or_else(|| "none".into()));
+
 
         // Construct the URL — strip any trailing /v1 from base_url to avoid double-path
         let base = self.base_url.trim_end_matches('/').trim_end_matches("/v1");
         let url = format!("{}/v1/chat/completions", base);
+
+
 
         // Make the HTTP request
         let response = self
@@ -359,27 +440,43 @@ impl LlmProvider for OpenAiCompatibleProvider {
                 }
             })?;
 
-        // Check status code
+        // Check status code — always read the body for error context
         let status = response.status();
-        if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-            return Err(LlmError::AuthFailed);
-        }
-        if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-            return Err(LlmError::RateLimited);
-        }
         if !status.is_success() {
-            let error_text = response
+            let body = response
                 .text()
                 .await
-                .unwrap_or_else(|_| "unknown error".to_string());
-            return Err(LlmError::RequestFailed(error_text));
+                .unwrap_or_else(|_| String::from("(could not read response body)"));
+            if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+                return Err(LlmError::AuthFailed);
+            }
+            if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+                return Err(LlmError::RequestFailed(format!(
+                    "HTTP 429 from {url}: {body}"
+                )));
+            }
+            return Err(LlmError::RequestFailed(format!(
+                "HTTP {status} from {url}: {body}"
+            )));
         }
 
-        // Deserialize the response
-        let api_response: OpenAiResponse = response
-            .json()
-            .await
+
+        // Read raw body so we can deserialize
+        let raw_body = response.text().await
             .map_err(|e| LlmError::InvalidResponse(e.to_string()))?;
+
+        // Debug: log first 300 chars of raw response to see if tool_calls are present
+        let preview_end = raw_body.char_indices().nth(300).map(|(i,_)| i).unwrap_or(raw_body.len());
+        eprintln!("[llm-raw] status={} has_tool_calls={} body_preview={}", 
+            status,
+            raw_body.contains("\"tool_calls\""),
+            &raw_body[..preview_end]);
+
+        // Deserialize the response
+        let api_response: OpenAiResponse = serde_json::from_str(&raw_body)
+            .map_err(|e| LlmError::InvalidResponse(format!("{}: body={}", e, &raw_body[..raw_body.len().min(500)])))?;
+
+
 
         // Extract first choice
         let first_choice = api_response
@@ -455,7 +552,24 @@ impl LlmProvider for OpenAiCompatibleProvider {
                     ChatRole::Assistant => "assistant",
                     ChatRole::Tool => "tool",
                 };
-                messages.push(serde_json::json!({"role": role_str, "content": msg.content}));
+                
+                if let Some(tool_calls) = &msg.tool_calls_json {
+                    // Assistant message that made tool calls
+                    messages.push(serde_json::json!({
+                        "role": role_str,
+                        "content": if msg.content.is_empty() { serde_json::Value::Null } else { serde_json::json!(msg.content) },
+                        "tool_calls": tool_calls
+                    }));
+                } else if let Some(tool_call_id) = &msg.tool_call_id {
+                    // Tool result message
+                    messages.push(serde_json::json!({
+                        "role": "tool",
+                        "tool_call_id": tool_call_id,
+                        "content": msg.content
+                    }));
+                } else {
+                    messages.push(serde_json::json!({"role": role_str, "content": msg.content}));
+                }
             }
         }
         messages.push(serde_json::json!({"role": "user", "content": request.user}));
@@ -489,12 +603,17 @@ impl LlmProvider for OpenAiCompatibleProvider {
                     .map_err(|e| LlmError::NetworkError(e.to_string()))?;
 
                 let status = resp.status();
-                if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-                    return Err(LlmError::AuthFailed);
-                }
                 if !status.is_success() {
-                    return Err(LlmError::RequestFailed(format!("HTTP {}", status.as_u16())));
+                    let body_text = resp.text().await
+                        .unwrap_or_else(|_| String::from("(could not read response body)"));
+                    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+                        return Err(LlmError::AuthFailed);
+                    }
+                    return Err(LlmError::RequestFailed(format!(
+                        "HTTP {status} from {url}: {body_text}"
+                    )));
                 }
+
 
                 // Get the full text response (unfortunate but necessary for now without proper SSE lib)
                 let full_text = resp.text().await

@@ -7,7 +7,7 @@ pub mod filesystem;
 pub mod search;
 pub mod http;
 
-pub use tool::{Tool, ToolOutput, ToolError, ToolContext, ToolSource, ToolChunk};
+pub use tool::{Tool, ToolOutput, ToolError, ToolContext, ToolSource, ToolChunk, DiagnosticSeverity, DiagnosticEntry, StructuredOutput};
 pub use function::FunctionTool;
 pub use shell::{CargoCheckTool, CargoTestTool, CargoFmtTool, RunCommandTool};
 pub use filesystem::{ReadFileTool, WriteFileTool, ListDirTool, DeleteFileTool};

@@ -9,7 +9,7 @@ use verdict::prelude::*;
 use serde_json::json;
 use tempfile::TempDir;
 
-// ─── helpers ──────────────────────────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ helpers Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 fn make_step(name: &str, guard_in: Guard, action: StepAction, guard_out: Guard) -> AgentStep {
     AgentStep {
@@ -23,7 +23,9 @@ fn make_step(name: &str, guard_in: Guard, action: StepAction, guard_out: Guard) 
         output_schema: None,
         dependencies: vec![],
         parallel: false,
-    }
+            input_processors: vec![],
+            output_processors: vec![],
+        }
 }
 
 fn ok_action(output: &'static str) -> StepAction {
@@ -51,6 +53,7 @@ fn abort_pipeline(name: &str, steps: Vec<AgentStep>) -> (Pipeline, Agent) {
         tools: ToolSet::Full,
         skills: SkillSet::default(),
         policy: AgentPolicy { allowed_tools: ToolSet::Full, ..Default::default() },
+        scorers: vec![],
     };
     (pipeline, agent)
 }
@@ -70,11 +73,12 @@ fn skip_pipeline(name: &str, steps: Vec<AgentStep>) -> (Pipeline, Agent) {
         tools: ToolSet::Full,
         skills: SkillSet::default(),
         policy: AgentPolicy { allowed_tools: ToolSet::Full, ..Default::default() },
+        scorers: vec![],
     };
     (pipeline, agent)
 }
 
-// ─── Test 1: AllOf - all three guards pass ───────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Test 1: AllOf - all three guards pass Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 #[tokio::test]
 async fn test_allof_all_guards_pass() {
@@ -96,7 +100,7 @@ async fn test_allof_all_guards_pass() {
     assert!(result.step_results["composed"].verdict_passed);
 }
 
-// ─── Test 2: AllOf - one guard fails, pipeline aborts ────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Test 2: AllOf - one guard fails, pipeline aborts Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 #[tokio::test]
 async fn test_allof_one_guard_fails_aborts_pipeline() {
@@ -123,7 +127,9 @@ async fn test_allof_one_guard_fails_aborts_pipeline() {
         output_schema: None,
         dependencies: vec![],
         parallel: false,
-    };
+            input_processors: vec![],
+            output_processors: vec![],
+        };
 
     let (pipeline, agent) = abort_pipeline("allof_fail", vec![step_a, step_b]);
     let err = PipelineRunner::new().run(&pipeline, &agent, json!({})).await.unwrap_err();
@@ -133,7 +139,7 @@ async fn test_allof_one_guard_fails_aborts_pipeline() {
     assert!(!downstream_ran.load(Ordering::SeqCst), "downstream must not run after abort");
 }
 
-// ─── Test 3: AnyOf - first fails, second passes → step proceeds ───────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Test 3: AnyOf - first fails, second passes Ã¢â€ â€™ step proceeds Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 #[tokio::test]
 async fn test_anyof_first_fails_second_passes_proceeds() {
@@ -150,7 +156,7 @@ async fn test_anyof_first_fails_second_passes_proceeds() {
     assert_eq!(result.step_results["any_of_step"].output.raw, "plain text");
 }
 
-// ─── Test 4: Not(ValidJson) passes on plain text, fails on JSON ──────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Test 4: Not(ValidJson) passes on plain text, fails on JSON Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 #[tokio::test]
 async fn test_not_validjson_passes_on_plain_text_fails_on_json() {
@@ -166,6 +172,8 @@ async fn test_not_validjson_passes_on_plain_text_fails_on_json() {
             output_schema: None,
             dependencies: vec![],
             parallel: false,
+            input_processors: vec![],
+            output_processors: vec![],
         };
         let pipeline = Pipeline {
             name: "p".into(), steps: vec![step],
@@ -175,6 +183,7 @@ async fn test_not_validjson_passes_on_plain_text_fails_on_json() {
             name: "a".into(), description: "a".into(), pipeline: pipeline.clone(),
             tools: ToolSet::Full, skills: SkillSet::default(),
             policy: AgentPolicy { allowed_tools: ToolSet::Full, ..Default::default() },
+            scorers: vec![],
         };
         PipelineRunner::new().run(&pipeline, &agent, json!({})).await
     }
@@ -186,17 +195,17 @@ async fn test_not_validjson_passes_on_plain_text_fails_on_json() {
     );
 }
 
-// ─── Test 5: guard_in failure blocks action execution (counter stays at 0) ────
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Test 5: guard_in failure blocks action execution (counter stays at 0) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 #[tokio::test]
 async fn test_guard_in_failure_blocks_action_execution() {
     let action_calls = Arc::new(AtomicU32::new(0));
     let counter = Arc::clone(&action_calls);
 
-    // guard_in = ValidJson but ctx has no output → ValidJson fails (checks output.raw)
+    // guard_in = ValidJson but ctx has no output Ã¢â€ â€™ ValidJson fails (checks output.raw)
     // Actually, guard_in is evaluated with the step context BEFORE action, so output is None.
     // NonEmptyOutput guard on input: use a guard that always fails deterministically.
-    // Use MaxOutputBytes(0) — any output (even empty from ctx.output=None) will be evaluated.
+    // Use MaxOutputBytes(0) Ã¢â‚¬â€ any output (even empty from ctx.output=None) will be evaluated.
     // Simplest: use a Custom guard.
     let step = AgentStep {
         name: "protected".into(),
@@ -215,7 +224,9 @@ async fn test_guard_in_failure_blocks_action_execution() {
         output_schema: None,
         dependencies: vec![],
         parallel: false,
-    };
+            input_processors: vec![],
+            output_processors: vec![],
+        };
 
     let (pipeline, agent) = abort_pipeline("guard_in_block", vec![step]);
     let err = PipelineRunner::new().run(&pipeline, &agent, json!({})).await.unwrap_err();
@@ -227,7 +238,7 @@ async fn test_guard_in_failure_blocks_action_execution() {
     assert_eq!(action_calls.load(Ordering::SeqCst), 0, "action must NOT run when guard_in fails");
 }
 
-// ─── Test 6: guard_out fails after action already executed ───────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Test 6: guard_out fails after action already executed Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 #[tokio::test]
 async fn test_guard_out_fails_after_action_executes() {
@@ -248,7 +259,9 @@ async fn test_guard_out_fails_after_action_executes() {
         output_schema: None,
         dependencies: vec![],
         parallel: false,
-    };
+            input_processors: vec![],
+            output_processors: vec![],
+        };
 
     let (pipeline, agent) = abort_pipeline("guard_out_fail", vec![step]);
     let err = PipelineRunner::new().run(&pipeline, &agent, json!({})).await.unwrap_err();
@@ -260,7 +273,7 @@ async fn test_guard_out_fails_after_action_executes() {
     assert!(action_ran.load(Ordering::SeqCst), "action must have executed before guard_out");
 }
 
-// ─── Test 7: FileExists guard verifies prior step's file write ───────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Test 7: FileExists guard verifies prior step's file write Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 #[tokio::test]
 async fn test_fileexists_guard_reads_prior_step_artifact() {
@@ -285,7 +298,9 @@ async fn test_fileexists_guard_reads_prior_step_artifact() {
         output_schema: None,
         dependencies: vec![],
         parallel: false,
-    };
+            input_processors: vec![],
+            output_processors: vec![],
+        };
 
     let step_b = AgentStep {
         name: "consume_file".into(),
@@ -298,7 +313,9 @@ async fn test_fileexists_guard_reads_prior_step_artifact() {
         output_schema: None,
         dependencies: vec![],
         parallel: false,
-    };
+            input_processors: vec![],
+            output_processors: vec![],
+        };
 
     let pipeline = Pipeline {
         name: "fs_handoff".into(),
@@ -319,6 +336,7 @@ async fn test_fileexists_guard_reads_prior_step_artifact() {
         tools: ToolSet::Full,
         skills: SkillSet::default(),
         policy,
+        scorers: vec![],
     };
 
     let result = PipelineRunner::new().run(&pipeline, &agent, json!({})).await.unwrap();
@@ -327,7 +345,7 @@ async fn test_fileexists_guard_reads_prior_step_artifact() {
     assert!(artifact.exists());
 }
 
-// ─── Test 8: MaxLines(3) blocks 4-line output, passes 3-line output ──────────
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Test 8: MaxLines(3) blocks 4-line output, passes 3-line output Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 #[tokio::test]
 async fn test_maxlines_blocks_four_lines_passes_three() {
@@ -343,6 +361,8 @@ async fn test_maxlines_blocks_four_lines_passes_three() {
             output_schema: None,
             dependencies: vec![],
             parallel: false,
+            input_processors: vec![],
+            output_processors: vec![],
         };
         let pipeline = Pipeline {
             name: "p".into(), steps: vec![step],
@@ -352,14 +372,15 @@ async fn test_maxlines_blocks_four_lines_passes_three() {
             name: "a".into(), description: "a".into(), pipeline: pipeline.clone(),
             tools: ToolSet::Full, skills: SkillSet::default(),
             policy: AgentPolicy { allowed_tools: ToolSet::Full, ..Default::default() },
+            scorers: vec![],
         };
         PipelineRunner::new().run(&pipeline, &agent, json!({})).await
     }
 
-    // 3 lines — passes
+    // 3 lines Ã¢â‚¬â€ passes
     assert!(run_with_output("a\nb\nc").await.is_ok(), "3 lines should pass MaxLines(3)");
 
-    // 4 lines — fails
+    // 4 lines Ã¢â‚¬â€ fails
     let err = run_with_output("a\nb\nc\nd").await.unwrap_err();
     assert!(
         matches!(err, PipelineError::GuardFailed { phase: GuardPhase::Out, .. }),
@@ -367,7 +388,7 @@ async fn test_maxlines_blocks_four_lines_passes_three() {
     );
 }
 
-// ─── Test 9: MatchesSchema validates structured JSON output ──────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Test 9: MatchesSchema validates structured JSON output Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 #[tokio::test]
 async fn test_matches_schema_validates_structured_json_output() {
@@ -392,6 +413,8 @@ async fn test_matches_schema_validates_structured_json_output() {
             output_schema: None,
             dependencies: vec![],
             parallel: false,
+            input_processors: vec![],
+            output_processors: vec![],
         };
         let pipeline = Pipeline {
             name: "p".into(), steps: vec![step],
@@ -401,6 +424,7 @@ async fn test_matches_schema_validates_structured_json_output() {
             name: "a".into(), description: "a".into(), pipeline: pipeline.clone(),
             tools: ToolSet::Full, skills: SkillSet::default(),
             policy: AgentPolicy { allowed_tools: ToolSet::Full, ..Default::default() },
+            scorers: vec![],
         };
         PipelineRunner::new().run(&pipeline, &agent, json!({})).await
     }
@@ -421,7 +445,7 @@ async fn test_matches_schema_validates_structured_json_output() {
     );
 }
 
-// ─── Test 10: NoSecretsInOutput passes on clean, fails on leaked key ──────────
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Test 10: NoSecretsInOutput passes on clean, fails on leaked key Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 #[tokio::test]
 async fn test_no_secrets_in_output_clean_passes_leaked_fails() {
@@ -437,6 +461,8 @@ async fn test_no_secrets_in_output_clean_passes_leaked_fails() {
             output_schema: None,
             dependencies: vec![],
             parallel: false,
+            input_processors: vec![],
+            output_processors: vec![],
         };
         let pipeline = Pipeline {
             name: "p".into(), steps: vec![step],
@@ -446,13 +472,14 @@ async fn test_no_secrets_in_output_clean_passes_leaked_fails() {
             name: "a".into(), description: "a".into(), pipeline: pipeline.clone(),
             tools: ToolSet::Full, skills: SkillSet::default(),
             policy: AgentPolicy { allowed_tools: ToolSet::Full, ..Default::default() },
+            scorers: vec![],
         };
         PipelineRunner::new().run(&pipeline, &agent, json!({})).await
     }
 
     assert!(run_with_output("the answer is 42").await.is_ok(), "clean output should pass");
 
-    // OpenAI-style key — should be detected as a secret
+    // OpenAI-style key Ã¢â‚¬â€ should be detected as a secret
     let result = run_with_output(
         "api key: sk-proj-abcdef1234567890abcdef1234567890abcdef12"
     ).await;
@@ -462,7 +489,7 @@ async fn test_no_secrets_in_output_clean_passes_leaked_fails() {
     );
 }
 
-// ─── Test 11: StepPassed gates downstream execution ──────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Test 11: StepPassed gates downstream execution Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 #[tokio::test]
 async fn test_step_passed_gates_downstream_execution() {
@@ -485,6 +512,8 @@ async fn test_step_passed_gates_downstream_execution() {
             output_schema: None,
             dependencies: vec![],
             parallel: false,
+            input_processors: vec![],
+            output_processors: vec![],
         };
         let counter = Arc::clone(&b_ran);
         let step_b = AgentStep {
@@ -501,6 +530,8 @@ async fn test_step_passed_gates_downstream_execution() {
             output_schema: None,
             dependencies: vec![],
             parallel: false,
+            input_processors: vec![],
+            output_processors: vec![],
         };
         let pipeline = Pipeline {
             name: "p".into(), steps: vec![step_a, step_b],
@@ -510,17 +541,18 @@ async fn test_step_passed_gates_downstream_execution() {
             name: "a".into(), description: "a".into(), pipeline: pipeline.clone(),
             tools: ToolSet::Full, skills: SkillSet::default(),
             policy: AgentPolicy { allowed_tools: ToolSet::Full, ..Default::default() },
+            scorers: vec![],
         };
         PipelineRunner::new().run(&pipeline, &agent, json!({})).await.unwrap()
     }
 
-    // A passes → B runs
+    // A passes Ã¢â€ â€™ B runs
     let b_count = Arc::new(AtomicU32::new(0));
     let r = run(false, Arc::clone(&b_count)).await;
     assert_eq!(b_count.load(Ordering::SeqCst), 1, "step_b must run when step_a passed");
     assert!(r.steps_passed.contains(&"step_b".to_string()));
 
-    // A fails → B's guard_in (StepPassed) fails → B blocked
+    // A fails Ã¢â€ â€™ B's guard_in (StepPassed) fails Ã¢â€ â€™ B blocked
     let b_count2 = Arc::new(AtomicU32::new(0));
     let r2 = run(true, Arc::clone(&b_count2)).await;
     assert_eq!(b_count2.load(Ordering::SeqCst), 0, "step_b must NOT run when step_a failed");
@@ -528,7 +560,7 @@ async fn test_step_passed_gates_downstream_execution() {
     assert!(r2.steps_failed.contains(&"step_b".to_string()));
 }
 
-// ─── Test 12: StepFailed gates recovery step ─────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Test 12: StepFailed gates recovery step Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 #[tokio::test]
 async fn test_step_failed_gates_recovery_step() {
@@ -551,6 +583,8 @@ async fn test_step_failed_gates_recovery_step() {
             output_schema: None,
             dependencies: vec![],
             parallel: false,
+            input_processors: vec![],
+            output_processors: vec![],
         };
         let counter = Arc::clone(&recovery_ran);
         let recovery = AgentStep {
@@ -567,6 +601,8 @@ async fn test_step_failed_gates_recovery_step() {
             output_schema: None,
             dependencies: vec![],
             parallel: false,
+            input_processors: vec![],
+            output_processors: vec![],
         };
         let pipeline = Pipeline {
             name: "p".into(), steps: vec![step_a, recovery],
@@ -576,21 +612,23 @@ async fn test_step_failed_gates_recovery_step() {
             name: "a".into(), description: "a".into(), pipeline: pipeline.clone(),
             tools: ToolSet::Full, skills: SkillSet::default(),
             policy: AgentPolicy { allowed_tools: ToolSet::Full, ..Default::default() },
+            scorers: vec![],
         };
         PipelineRunner::new().run(&pipeline, &agent, json!({})).await.unwrap()
     }
 
-    // A fails → recovery runs
+    // A fails Ã¢â€ â€™ recovery runs
     let rec_count = Arc::new(AtomicU32::new(0));
     let r = run(true, Arc::clone(&rec_count)).await;
     assert_eq!(rec_count.load(Ordering::SeqCst), 1, "recovery must run when step_a failed");
     assert!(r.steps_passed.contains(&"recovery".to_string()));
     assert!(r.steps_failed.contains(&"step_a".to_string()));
 
-    // A passes → recovery's guard_in (StepFailed) fails → recovery blocked
+    // A passes Ã¢â€ â€™ recovery's guard_in (StepFailed) fails Ã¢â€ â€™ recovery blocked
     let rec_count2 = Arc::new(AtomicU32::new(0));
     let r2 = run(false, Arc::clone(&rec_count2)).await;
     assert_eq!(rec_count2.load(Ordering::SeqCst), 0, "recovery must NOT run when step_a passed");
     assert!(r2.steps_passed.contains(&"step_a".to_string()));
     assert!(r2.steps_failed.contains(&"recovery".to_string()));
 }
+

@@ -3,6 +3,7 @@
 //! Core Tool trait and types
 
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::{Arc, Mutex};
 use thiserror::Error;
@@ -48,6 +49,55 @@ pub enum ToolError {
     IoError(String),
 }
 
+/// Severity level for diagnostics
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum DiagnosticSeverity {
+    Error,
+    Warning,
+    Info,
+    Hint,
+}
+
+/// A single diagnostic entry (error, warning, info, hint)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiagnosticEntry {
+    pub severity: DiagnosticSeverity,
+    pub message: String,
+    pub file: Option<String>,
+    pub line: Option<u32>,
+}
+
+/// Structured output formats for tool results
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum StructuredOutput {
+    Text(String),
+    Markdown(String),
+    Code {
+        language: String,
+        source: String,
+    },
+    Diff {
+        unified: String,
+    },
+    Diagnostics(Vec<DiagnosticEntry>),
+    FileSnippet {
+        path: String,
+        start_line: u32,
+        end_line: u32,
+        content: String,
+        language: Option<String>,
+    },
+    Table {
+        headers: Vec<String>,
+        rows: Vec<Vec<String>>,
+    },
+    Custom {
+        schema: String,
+        value: Value,
+    },
+}
+
 /// Output from a tool call
 #[derive(Debug, Clone)]
 pub struct ToolOutput {
@@ -55,6 +105,8 @@ pub struct ToolOutput {
     pub raw: String,
     /// Optionally parsed JSON representation
     pub parsed: Option<Value>,
+    /// Optionally structured output (Phase 16)
+    pub structured: Option<StructuredOutput>,
 }
 
 /// A chunk of output from a streaming tool call
@@ -69,7 +121,11 @@ pub struct ToolChunk {
 impl ToolOutput {
     /// Create a text-only output
     pub fn text(raw: String) -> Self {
-        Self { raw, parsed: None }
+        Self {
+            raw,
+            parsed: None,
+            structured: None,
+        }
     }
 
     /// Create output from JSON value
@@ -78,6 +134,16 @@ impl ToolOutput {
         Self {
             raw,
             parsed: Some(value),
+            structured: None,
+        }
+    }
+
+    /// Create output with structured data
+    pub fn with_structured(raw: String, structured: StructuredOutput) -> Self {
+        Self {
+            raw,
+            parsed: None,
+            structured: Some(structured),
         }
     }
 
@@ -89,6 +155,11 @@ impl ToolOutput {
     /// Get output as JSON value if available
     pub fn as_json(&self) -> Option<&Value> {
         self.parsed.as_ref()
+    }
+
+    /// Get structured output if available
+    pub fn as_structured(&self) -> Option<&StructuredOutput> {
+        self.structured.as_ref()
     }
 }
 

@@ -426,7 +426,7 @@ impl Tool for RunCommandTool {
     }
 }
 
-/// Alias for shell.run_command with shorter name
+/// Alias for shell_run_command with shorter name
 pub struct ShellRunTool;
 
 #[async_trait]

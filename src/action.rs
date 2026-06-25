@@ -15,8 +15,25 @@ pub struct ProviderSpec {
     pub provider: String,
 }
 
+/// Memory isolation strategy for delegated agents — Phase D
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+pub enum MemoryIsolation {
+    /// Fresh conversation_id per delegation (default)
+    Isolated,
+    /// Share parent's conversation_id
+    Shared,
+    /// "{parent_conversation_id}/{depth}/{agent_name}/{step_name}"
+    NamespacedByAgent,
+}
+
+impl Default for MemoryIsolation {
+    fn default() -> Self {
+        Self::Isolated
+    }
+}
+
 /// Policy controlling agent delegation
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct DelegationPolicy {
     pub max_depth: u32,
     pub allowed_agents: Vec<String>,
@@ -24,6 +41,107 @@ pub struct DelegationPolicy {
     pub inherit_tool_scope: bool,
     pub inherit_budget: bool,
     pub require_user_approval: bool,
+    /// Memory isolation strategy for delegated agents — Phase D1
+    pub memory_isolation: MemoryIsolation,
+    
+    /// Hook called before delegation starts; can modify input or reject delegation
+    #[serde(skip)]
+    pub on_delegation_start: Option<Arc<dyn Fn(&DelegationContext) -> DelegationDecision + Send + Sync>>,
+    
+    /// Hook called after delegation completes; can inject feedback or bail out
+    #[serde(skip)]
+    pub on_delegation_complete: Option<Arc<dyn Fn(&DelegationResult) -> DelegationFeedback + Send + Sync>>,
+    
+    /// Hook called after each LoopUntil iteration completes
+    #[serde(skip)]
+    pub on_iteration_complete: Option<Arc<dyn Fn(&IterationContext) -> IterationDecision + Send + Sync>>,
+    
+    /// Optional message filter to transform conversation history before passing to child agent
+    #[serde(skip)]
+    pub message_filter: Option<Arc<dyn Fn(&crate::llm::MessageHistory) -> crate::llm::MessageHistory + Send + Sync>>,
+}
+
+impl Default for DelegationPolicy {
+    fn default() -> Self {
+        Self {
+            max_depth: 3,
+            allowed_agents: Vec::new(),
+            require_output_schema: false,
+            inherit_tool_scope: true,
+            inherit_budget: true,
+            require_user_approval: false,
+            memory_isolation: MemoryIsolation::Isolated,
+            on_delegation_start: None,
+            on_delegation_complete: None,
+            on_iteration_complete: None,
+            message_filter: None,
+        }
+    }
+}
+
+impl std::fmt::Debug for DelegationPolicy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DelegationPolicy")
+            .field("max_depth", &self.max_depth)
+            .field("allowed_agents", &self.allowed_agents)
+            .field("require_output_schema", &self.require_output_schema)
+            .field("inherit_tool_scope", &self.inherit_tool_scope)
+            .field("inherit_budget", &self.inherit_budget)
+            .field("require_user_approval", &self.require_user_approval)
+            .field("memory_isolation", &self.memory_isolation)
+            .field("on_delegation_start", &self.on_delegation_start.as_ref().map(|_| "<function>"))
+            .field("on_delegation_complete", &self.on_delegation_complete.as_ref().map(|_| "<function>"))
+            .field("on_iteration_complete", &self.on_iteration_complete.as_ref().map(|_| "<function>"))
+            .field("message_filter", &self.message_filter.as_ref().map(|_| "<function>"))
+            .finish()
+    }
+}
+
+/// Context passed to delegation hooks (A2)
+#[derive(Debug, Clone)]
+pub struct DelegationContext {
+    pub agent: String,
+    pub input: Value,
+    pub depth: u32,
+}
+
+/// Decision from delegation start hook
+#[derive(Debug)]
+pub enum DelegationDecision {
+    Proceed,
+    Reject { reason: String },
+    ModifyInput(Value),
+}
+
+/// Result from delegation completion
+#[derive(Debug, Clone)]
+pub struct DelegationResult {
+    pub agent: String,
+    pub output: StepOutput,
+    pub success: bool,
+}
+
+/// Feedback from delegation complete hook
+#[derive(Debug)]
+pub enum DelegationFeedback {
+    Continue,
+    Bail { reason: String },
+    InjectFeedback(String),
+}
+
+/// Context for loop iteration hook
+#[derive(Debug, Clone)]
+pub struct IterationContext {
+    pub iteration: u32,
+    pub agent: String,
+    pub output: StepOutput,
+}
+
+/// Decision for loop iteration
+#[derive(Debug)]
+pub enum IterationDecision {
+    Continue,
+    Stop,
 }
 
 /// How to handle iteration failure in LoopUntil
@@ -118,6 +236,9 @@ pub enum StepAction {
         input: Value,
         expected_output_schema: Option<Value>,
         delegation_policy: DelegationPolicy,
+        /// If true, spawn child agent as fire-and-forget task (Phase D3)
+        detached: bool,
+
     },
 
     /// Execute a sub-pipeline
@@ -182,6 +303,36 @@ pub enum StepAction {
         max_rounds: usize,
         stop_condition: StopCondition,
     },
+
+    /// Sleep for a duration (A3)
+    Sleep { duration_ms: u64 },
+
+    /// Sleep until a specific timestamp (A3)
+    SleepUntil { timestamp: chrono::DateTime<chrono::Utc> },
+
+    /// ForEach: iterate over array items with optional concurrency (A4)
+    ForEach {
+        input_array_key: String,   // key into step_results for the array
+        body: Box<StepAction>,     // executed for each item
+        concurrency: usize,        // 1 = sequential, >1 = concurrent with semaphore
+        collect_results: bool,     // if true, output is JSON array of all results
+    },
+
+    /// Suspend pipeline execution and save state for later resume (Phase D4)
+    Suspend {
+        reason: String,
+        resume_schema: Option<Value>,  // JSON schema the resume_data must match
+        timeout_seconds: Option<u64>,
+    },
+
+    /// Self-correction loop: execute body, judge output against rubric, iterate (Phase F)
+    RubricLoop {
+        body: Box<StepAction>,
+        rubric: Vec<crate::eval::RubricItem>,
+        max_iterations: u32,
+        judge_model: Option<ProviderSpec>,  // None = use runner's default
+    },
+
 }
 
 /// Stop condition for ToolUseLoop
@@ -231,12 +382,14 @@ impl std::fmt::Debug for StepAction {
                 input,
                 expected_output_schema,
                 delegation_policy,
+                detached,
             } => f
                 .debug_struct("DelegateAgent")
                 .field("agent", agent)
                 .field("input", input)
                 .field("expected_output_schema", expected_output_schema)
                 .field("delegation_policy", delegation_policy)
+                .field("detached", detached)
                 .finish(),
             StepAction::SubPipeline(pipeline) => f
                 .debug_tuple("SubPipeline")
@@ -316,6 +469,56 @@ impl std::fmt::Debug for StepAction {
                 .field("tool", tool)
                 .field("args", args)
                 .finish(),
+
+            StepAction::Sleep { duration_ms } => f
+                .debug_struct("Sleep")
+                .field("duration_ms", duration_ms)
+                .finish(),
+
+            StepAction::SleepUntil { timestamp } => f
+                .debug_struct("SleepUntil")
+                .field("timestamp", timestamp)
+                .finish(),
+
+            StepAction::ForEach {
+                input_array_key,
+                body: _,
+                concurrency,
+                collect_results,
+            } => f
+                .debug_struct("ForEach")
+                .field("input_array_key", input_array_key)
+                .field("body", &"<action>")
+                .field("concurrency", concurrency)
+                .field("collect_results", collect_results)
+                .finish(),
+
+            StepAction::Suspend {
+                reason,
+                resume_schema,
+                timeout_seconds,
+            } => f
+                .debug_struct("Suspend")
+                .field("reason", reason)
+                .field("resume_schema", resume_schema)
+                .field("timeout_seconds", timeout_seconds)
+                .finish(),
+
+            StepAction::RubricLoop {
+                body: _,
+                rubric,
+                max_iterations,
+                judge_model,
+            } => f
+                .debug_struct("RubricLoop")
+                .field("body", &"<action>")
+                .field("rubric", rubric)
+                .field("max_iterations", max_iterations)
+                .field("judge_model", judge_model)
+                .finish(),
+
+
+
 
         }
     }

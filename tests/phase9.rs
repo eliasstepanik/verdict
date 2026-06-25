@@ -28,7 +28,9 @@ fn test_dag_topological_sort_basic() {
         output_schema: None,
         dependencies: Vec::new(),
         parallel: false,
-    };
+            input_processors: vec![],
+            output_processors: vec![],
+        };
 
     let mut step_b = step_a.clone();
     step_b.name = "step_b".into();
@@ -80,7 +82,9 @@ fn test_dag_circular_dependency_detection() {
         output_schema: None,
         dependencies: vec!["step_c".into()],  // Circular
         parallel: false,
-    };
+            input_processors: vec![],
+            output_processors: vec![],
+        };
 
     let mut step_b = step_a.clone();
     step_b.name = "step_b".into();
@@ -333,7 +337,9 @@ fn test_agent_step_has_dag_fields() {
         output_schema: None,
         dependencies: vec!["step_a".into()],
         parallel: true,
-    };
+            input_processors: vec![],
+            output_processors: vec![],
+        };
 
     assert_eq!(step.dependencies, vec![String::from("step_a")]);
     assert_eq!(step.parallel, true);
@@ -387,7 +393,9 @@ async fn test_pipeline_execution_with_dag_support() {
         output_schema: None,
         dependencies: Vec::new(),
         parallel: false,
-    };
+            input_processors: vec![],
+            output_processors: vec![],
+        };
 
     // Create step2: depends on step1
     let order_clone2 = Arc::clone(&execution_order);
@@ -405,7 +413,9 @@ async fn test_pipeline_execution_with_dag_support() {
         output_schema: None,
         dependencies: vec!["first".into()],
         parallel: false,
-    };
+            input_processors: vec![],
+            output_processors: vec![],
+        };
 
     // Create step3: depends on both step1 and step2
     let order_clone3 = Arc::clone(&execution_order);
@@ -423,7 +433,9 @@ async fn test_pipeline_execution_with_dag_support() {
         output_schema: None,
         dependencies: vec!["first".into(), "second".into()],
         parallel: false,
-    };
+            input_processors: vec![],
+            output_processors: vec![],
+        };
 
     let pipeline = Pipeline {
         name: "dag_pipeline".into(),
@@ -475,4 +487,5 @@ fn test_prelude_exports() {
     };
     let _handle = HotReloadHandle::new(pipeline);
 }
+
 

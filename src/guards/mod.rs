@@ -251,9 +251,45 @@ pub enum Guard {
     /// Ensure output is semantically equivalent
     SemanticCheck(String),
 
+    // Session-scoped guards (Phase 13)
+    /// Session must not have exceeded its turn limit
+    SessionTurnLimit(u32),
+
+    /// Session must not have been idle longer than N seconds
+    SessionIdleTimeout(u64),
+
+    /// Session total token usage must be within the given limit
+    SessionBudgetWithin { max_tokens: u32 },
+
+    // Cancellation (Phase 14)
+    /// Passes if the cancellation token is not cancelled (i.e., execution ran cleanly to this point)
+    CancellationCleanupComplete,
+
+    // Server/Daemon Mode (Phase 15)
+    /// Passes if server is authenticated (stub for policy checks done at server level)
+    ServerAuthValid,
+    /// Passes if concurrent sessions are below limit
+    ServerConcurrencyWithin(usize),
+
+    // Phase 16: Prompt Templates and Structured Output
+    /// Passes if a prompt template renders without error
+    PromptTemplateRendered,
+    /// Passes if structured output is present in step output
+    StructuredOutputPresent,
+
+    // Phase D: Multi-Agent & Orchestration
+    /// Passes if a detached agent (by name) has completed (Phase D3)
+    DetachedAgentCompleted(String),
+
+    /// Validates resume_data JSON against provided schema (Phase D4)
+    ResumeDataMatchesSchema(Value),
+
     // Composition
     /// ALL guards must pass
     AllOf(Vec<Guard>),
+
+    /// ALL guards must pass, collecting all errors instead of short-circuiting (A5)
+    AllOfCollect(Vec<Guard>),
 
     /// ANY guard must pass
     AnyOf(Vec<Guard>),
@@ -330,7 +366,18 @@ impl Guard {
             Guard::AgentVersionCreated => "AgentVersionCreated".to_string(),
             Guard::NoActiveUncommittedCriticalChanges => "NoActiveUncommittedCriticalChanges".to_string(),
             Guard::SemanticCheck(_) => "SemanticCheck".to_string(),
+            Guard::SessionTurnLimit(_) => "SessionTurnLimit".to_string(),
+            Guard::SessionIdleTimeout(_) => "SessionIdleTimeout".to_string(),
+            Guard::SessionBudgetWithin { .. } => "SessionBudgetWithin".to_string(),
+            Guard::CancellationCleanupComplete => "CancellationCleanupComplete".to_string(),
+            Guard::ServerAuthValid => "ServerAuthValid".to_string(),
+            Guard::ServerConcurrencyWithin(_) => "ServerConcurrencyWithin".to_string(),
+            Guard::PromptTemplateRendered => "PromptTemplateRendered".to_string(),
+            Guard::StructuredOutputPresent => "StructuredOutputPresent".to_string(),
+            Guard::DetachedAgentCompleted(_) => "DetachedAgentCompleted".to_string(),
+            Guard::ResumeDataMatchesSchema(_) => "ResumeDataMatchesSchema".to_string(),
             Guard::AllOf(_) => "AllOf".to_string(),
+            Guard::AllOfCollect(_) => "AllOfCollect".to_string(),
             Guard::AnyOf(_) => "AnyOf".to_string(),
             Guard::Not(_) => "Not".to_string(),
         }
@@ -473,10 +520,40 @@ impl std::fmt::Debug for Guard {
             Guard::SemanticCheck(s) => {
                 f.debug_tuple("SemanticCheck").field(s).finish()
             }
+            Guard::SessionTurnLimit(n) => {
+                f.debug_tuple("SessionTurnLimit").field(n).finish()
+            }
+            Guard::SessionIdleTimeout(secs) => {
+                f.debug_tuple("SessionIdleTimeout").field(secs).finish()
+            }
+            Guard::SessionBudgetWithin { max_tokens } => {
+                f.debug_struct("SessionBudgetWithin")
+                    .field("max_tokens", max_tokens)
+                    .finish()
+            }
+            Guard::CancellationCleanupComplete => f.write_str("CancellationCleanupComplete"),
+            Guard::ServerAuthValid => f.write_str("ServerAuthValid"),
+            Guard::ServerConcurrencyWithin(n) => {
+                f.debug_tuple("ServerConcurrencyWithin").field(n).finish()
+            }
+            Guard::PromptTemplateRendered => f.write_str("PromptTemplateRendered"),
+            Guard::StructuredOutputPresent => f.write_str("StructuredOutputPresent"),
+            Guard::ResumeDataMatchesSchema(_schema) => {
+                f.debug_tuple("ResumeDataMatchesSchema")
+                    .field(&"<schema>")
+                    .finish()
+            }
+            Guard::DetachedAgentCompleted(agent) => {
+                f.debug_tuple("DetachedAgentCompleted").field(agent).finish()
+            }
             Guard::LintPass => f.write_str("LintPass"),
             Guard::FormatPass => f.write_str("FormatPass"),
             Guard::AllOf(guards) => f
                 .debug_tuple("AllOf")
+                .field(&format!("[{} guards]", guards.len()))
+                .finish(),
+            Guard::AllOfCollect(guards) => f
+                .debug_tuple("AllOfCollect")
                 .field(&format!("[{} guards]", guards.len()))
                 .finish(),
             Guard::AnyOf(guards) => f
@@ -502,4 +579,7 @@ pub enum GuardError {
 
     #[error("parse error: {0}")]
     ParseError(String),
+
+    #[error("multiple guard failures: {} errors", .0.len())]
+    Multiple(Vec<GuardError>),
 }

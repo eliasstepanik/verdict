@@ -318,6 +318,8 @@ async fn test_parallel_steps_true_concurrency() {
         injection_protection: InjectionProtection::None,
         output_schema: None,
         tools: ToolSet::None,
+        input_processors: vec![],
+        output_processors: vec![],
     };
 
     let times2 = Arc::clone(&execution_times);
@@ -336,6 +338,8 @@ async fn test_parallel_steps_true_concurrency() {
         injection_protection: InjectionProtection::None,
         output_schema: None,
         tools: ToolSet::None,
+        input_processors: vec![],
+        output_processors: vec![],
     };
 
     let times3 = Arc::clone(&execution_times);
@@ -354,6 +358,8 @@ async fn test_parallel_steps_true_concurrency() {
         injection_protection: InjectionProtection::None,
         output_schema: None,
         tools: ToolSet::None,
+        input_processors: vec![],
+        output_processors: vec![],
     };
 
     let pipeline = Pipeline {
@@ -375,6 +381,7 @@ async fn test_parallel_steps_true_concurrency() {
         tools: ToolSet::None,
         skills: Default::default(),
         policy: Default::default(),
+        scorers: vec![],
     };
 
     let start = Instant::now();
@@ -454,3 +461,4 @@ async fn test_phase12_integrated_scenario() {
 
     assert!(guard_result.is_ok(), "Semantic check should pass");
 }
+

@@ -51,6 +51,8 @@ fn rust_debugging_pipeline() -> Pipeline {
                 output_schema: None,
                 dependencies: Vec::new(),
                 parallel: false,
+                input_processors: Vec::new(),
+                output_processors: Vec::new(),
             },
             AgentStep {
                 name: "run_tests".to_string(),
@@ -66,6 +68,8 @@ fn rust_debugging_pipeline() -> Pipeline {
                 output_schema: None,
                 dependencies: Vec::new(),
                 parallel: false,
+                input_processors: Vec::new(),
+                output_processors: Vec::new(),
             },
         ],
         max_retries: 2,

@@ -25,6 +25,8 @@ async fn test_guard_path_within_workspace_rejects_traversal() {
         injection_protection: InjectionProtection::None,
         output_schema: None,
         tools: ToolSet::None,
+        input_processors: vec![],
+        output_processors: vec![],
     };
 
     let pipeline = Pipeline {
@@ -46,6 +48,7 @@ async fn test_guard_path_within_workspace_rejects_traversal() {
         tools: ToolSet::None,
         skills: Default::default(),
         policy: Default::default(),
+        scorers: vec![],
     };
     let mut runner = PipelineRunner::new();
 
@@ -77,6 +80,8 @@ unknown-crate = "1.0"
         injection_protection: InjectionProtection::None,
         output_schema: None,
         tools: ToolSet::None,
+        input_processors: vec![],
+        output_processors: vec![],
     };
 
     let pipeline = Pipeline {
@@ -98,6 +103,7 @@ unknown-crate = "1.0"
         tools: ToolSet::None,
         skills: Default::default(),
         policy: Default::default(),
+        scorers: vec![],
     };
     let mut runner = PipelineRunner::new();
 
@@ -122,6 +128,8 @@ async fn test_guard_shell_command_allowlist_rejects_unlisted() {
         injection_protection: InjectionProtection::None,
         output_schema: None,
         tools: ToolSet::None,
+        input_processors: vec![],
+        output_processors: vec![],
     };
 
     let pipeline = Pipeline {
@@ -143,6 +151,7 @@ async fn test_guard_shell_command_allowlist_rejects_unlisted() {
         tools: ToolSet::None,
         skills: Default::default(),
         policy: Default::default(),
+        scorers: vec![],
     };
     let mut runner = PipelineRunner::new();
 
@@ -170,6 +179,8 @@ openssl-sys-1.0.0 = "1.0""#.to_string(),
         injection_protection: InjectionProtection::None,
         output_schema: None,
         tools: ToolSet::None,
+        input_processors: vec![],
+        output_processors: vec![],
     };
 
     let pipeline = Pipeline {
@@ -191,6 +202,7 @@ openssl-sys-1.0.0 = "1.0""#.to_string(),
         tools: ToolSet::None,
         skills: Default::default(),
         policy: Default::default(),
+        scorers: vec![],
     };
     let mut runner = PipelineRunner::new();
 
@@ -224,6 +236,8 @@ async fn test_budget_llm_calls_incremented() {
         injection_protection: InjectionProtection::None,
         output_schema: None,
         tools: ToolSet::None,
+        input_processors: vec![],
+        output_processors: vec![],
     };
 
     let pipeline = Pipeline {
@@ -245,6 +259,7 @@ async fn test_budget_llm_calls_incremented() {
         tools: ToolSet::None,
         skills: Default::default(),
         policy: Default::default(),
+        scorers: vec![],
     };
     let mut runner = PipelineRunner::new().with_llm_client(llm_client);
 
@@ -278,6 +293,8 @@ async fn test_guard_max_llm_calls_enforces_limit() {
         injection_protection: InjectionProtection::None,
         output_schema: None,
         tools: ToolSet::None,
+        input_processors: vec![],
+        output_processors: vec![],
     };
 
     let pipeline = Pipeline {
@@ -299,6 +316,7 @@ async fn test_guard_max_llm_calls_enforces_limit() {
         tools: ToolSet::None,
         skills: Default::default(),
         policy: Default::default(),
+        scorers: vec![],
     };
     let mut runner = PipelineRunner::new().with_llm_client(llm_client);
 
@@ -325,6 +343,8 @@ async fn test_fallback_pipeline_executes_on_step_failure() {
         injection_protection: InjectionProtection::None,
         output_schema: None,
         tools: ToolSet::None,
+        input_processors: vec![],
+        output_processors: vec![],
     };
 
     let fallback_step = AgentStep {
@@ -340,6 +360,8 @@ async fn test_fallback_pipeline_executes_on_step_failure() {
         injection_protection: InjectionProtection::None,
         output_schema: None,
         tools: ToolSet::None,
+        input_processors: vec![],
+        output_processors: vec![],
     };
 
     let fallback_pipeline = Pipeline {
@@ -368,6 +390,7 @@ async fn test_fallback_pipeline_executes_on_step_failure() {
         tools: ToolSet::None,
         skills: Default::default(),
         policy: Default::default(),
+        scorers: vec![],
     };
     let mut runner = PipelineRunner::new();
 
@@ -400,6 +423,8 @@ async fn test_verdict_llm_judge_passes_on_pattern() {
         injection_protection: InjectionProtection::None,
         output_schema: None,
         tools: ToolSet::None,
+        input_processors: vec![],
+        output_processors: vec![],
     };
 
     let pipeline = Pipeline {
@@ -416,6 +441,7 @@ async fn test_verdict_llm_judge_passes_on_pattern() {
         tools: ToolSet::None,
         skills: Default::default(),
         policy: Default::default(),
+        scorers: vec![],
     };
     let mut runner = PipelineRunner::new().with_llm_client(llm_client);
 
@@ -447,6 +473,8 @@ async fn test_verdict_llm_judge_fails_without_pattern() {
         injection_protection: InjectionProtection::None,
         output_schema: None,
         tools: ToolSet::None,
+        input_processors: vec![],
+        output_processors: vec![],
     };
 
     let pipeline = Pipeline {
@@ -463,6 +491,7 @@ async fn test_verdict_llm_judge_fails_without_pattern() {
         tools: ToolSet::None,
         skills: Default::default(),
         policy: Default::default(),
+        scorers: vec![],
     };
     let mut runner = PipelineRunner::new().with_llm_client(llm_client);
 
@@ -500,6 +529,8 @@ async fn test_parallel_steps_both_execute() {
         injection_protection: InjectionProtection::None,
         output_schema: None,
         tools: ToolSet::None,
+        input_processors: vec![],
+        output_processors: vec![],
     };
 
     let step2 = AgentStep {
@@ -518,6 +549,8 @@ async fn test_parallel_steps_both_execute() {
         injection_protection: InjectionProtection::None,
         output_schema: None,
         tools: ToolSet::None,
+        input_processors: vec![],
+        output_processors: vec![],
     };
 
     let pipeline = Pipeline {
@@ -539,6 +572,7 @@ async fn test_parallel_steps_both_execute() {
         tools: ToolSet::None,
         skills: Default::default(),
         policy: Default::default(),
+        scorers: vec![],
     };
 
     let mut runner = PipelineRunner::new();
@@ -610,6 +644,8 @@ async fn test_llm_call_streaming_with_sink() {
         injection_protection: InjectionProtection::None,
         output_schema: None,
         tools: ToolSet::None,
+        input_processors: vec![],
+        output_processors: vec![],
     };
 
     let pipeline = Pipeline {
@@ -626,6 +662,7 @@ async fn test_llm_call_streaming_with_sink() {
         tools: ToolSet::None,
         skills: Default::default(),
         policy: Default::default(),
+        scorers: vec![],
     };
     let mut runner = PipelineRunner::new()
         .with_llm_client(llm_client)
@@ -662,6 +699,8 @@ async fn test_conversation_history_appended() {
         injection_protection: InjectionProtection::None,
         output_schema: None,
         tools: ToolSet::None,
+        input_processors: vec![],
+        output_processors: vec![],
     };
 
     let pipeline = Pipeline {
@@ -678,6 +717,7 @@ async fn test_conversation_history_appended() {
         tools: ToolSet::None,
         skills: Default::default(),
         policy: Default::default(),
+        scorers: vec![],
     };
     let mut runner = PipelineRunner::new().with_llm_client(llm_client);
 
@@ -723,6 +763,8 @@ async fn test_verdict_llm_judge_no_client_fails() {
         injection_protection: InjectionProtection::None,
         output_schema: None,
         tools: ToolSet::None,
+        input_processors: vec![],
+        output_processors: vec![],
     };
 
     let pipeline = Pipeline {
@@ -739,6 +781,7 @@ async fn test_verdict_llm_judge_no_client_fails() {
         tools: ToolSet::None,
         skills: Default::default(),
         policy: Default::default(),
+        scorers: vec![],
     };
     // No LLM client attached
     let mut runner = PipelineRunner::new();
@@ -746,3 +789,4 @@ async fn test_verdict_llm_judge_no_client_fails() {
     let result = runner.run(&pipeline, &agent, json!({})).await;
     assert!(result.is_err(), "LlmJudge without LLM client should fail");
 }
+

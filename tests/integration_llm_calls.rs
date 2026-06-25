@@ -39,6 +39,8 @@ fn simple_agent(pipeline: &Pipeline) -> Agent {
         tools: ToolSet::None,
         skills: SkillSet::default(),
         policy: AgentPolicy::default(),
+        scorers: Vec::new(),
+
     }
 }
 
@@ -63,6 +65,8 @@ async fn test_llm_call_produces_nonempty_output() {
         output_schema: None,
         dependencies: vec![],
         parallel: false,
+        input_processors: vec![],
+        output_processors: vec![],
     };
 
     let pipeline = Pipeline {
@@ -104,6 +108,8 @@ async fn test_llm_call_without_client_fails_gracefully() {
         output_schema: None,
         dependencies: vec![],
         parallel: false,
+        input_processors: vec![],
+        output_processors: vec![],
     };
 
     let pipeline = Pipeline {
@@ -145,6 +151,8 @@ async fn test_llm_call_template_substitution_resolves_prior_step_output() {
         output_schema: None,
         dependencies: vec![],
         parallel: false,
+        input_processors: vec![],
+        output_processors: vec![],
     };
 
     // {compute} in the user prompt should be replaced with "the number 42"
@@ -165,6 +173,8 @@ async fn test_llm_call_template_substitution_resolves_prior_step_output() {
         output_schema: None,
         dependencies: vec![],
         parallel: false,
+        input_processors: vec![],
+        output_processors: vec![],
     };
 
     let pipeline = Pipeline {
@@ -212,6 +222,8 @@ async fn test_llm_multi_turn_conversation_history_appended() {
         output_schema: None,
         dependencies: vec![],
         parallel: false,
+        input_processors: vec![],
+        output_processors: vec![],
     };
 
     let step2 = AgentStep {
@@ -231,6 +243,8 @@ async fn test_llm_multi_turn_conversation_history_appended() {
         output_schema: None,
         dependencies: vec![],
         parallel: false,
+        input_processors: vec![],
+        output_processors: vec![],
     };
 
     let pipeline = Pipeline {
@@ -278,6 +292,8 @@ async fn test_llm_judge_verdict_passes_when_pattern_present() {
         output_schema: None,
         dependencies: vec![],
         parallel: false,
+        input_processors: vec![],
+        output_processors: vec![],
     };
 
     let pipeline = Pipeline {
@@ -319,6 +335,8 @@ async fn test_llm_judge_verdict_fails_when_pattern_absent() {
         output_schema: None,
         dependencies: vec![],
         parallel: false,
+        input_processors: vec![],
+        output_processors: vec![],
     };
 
     let pipeline = Pipeline {
@@ -357,6 +375,8 @@ async fn test_semantic_check_guard_passes_on_correct_output() {
         output_schema: None,
         dependencies: vec![],
         parallel: false,
+        input_processors: vec![],
+        output_processors: vec![],
     };
 
     let pipeline = Pipeline {
@@ -394,6 +414,8 @@ async fn test_semantic_check_guard_fails_on_wrong_output() {
         output_schema: None,
         dependencies: vec![],
         parallel: false,
+        input_processors: vec![],
+        output_processors: vec![],
     };
 
     let pipeline = Pipeline {

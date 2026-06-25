@@ -1,0 +1,25 @@
+[package]
+name = "verdict-app"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "verdict-app"
+path = "src/main.rs"
+
+[lib]
+name = "verdict_app"
+path = "src/lib.rs"
+
+[dependencies]
+verdict = { path = ".." }
+verdict-memory = { path = "../verdict-memory" }
+verdict-telemetry = { path = "../verdict-telemetry" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-util", "process"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+thiserror = "1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
