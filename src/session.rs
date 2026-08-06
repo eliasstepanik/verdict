@@ -636,4 +636,136 @@ impl SessionRunner {
         Ok(())
     }
 
+    /// Record a completed user/assistant exchange into the session's history
+    /// without running a pipeline turn. Used by callers (like DiscordBot's
+    /// orchestrator) that execute the LLM call themselves and only need the
+    /// session's persisted history updated afterward.
+    pub async fn record_exchange(
+        &self,
+        id: &SessionId,
+        user: String,
+        assistant: String,
+    ) -> Result<(), SessionError> {
+        {
+            let mut sessions = self.sessions.lock().await;
+            let session = sessions
+                .get_mut(id)
+                .ok_or_else(|| SessionError::NotFound(id.to_string()))?;
+
+            if session.status == SessionStatus::Closed {
+                return Err(SessionError::Closed);
+            }
+
+            let turn_idx = session.history.turn_count;
+            session.history.push_user(user, turn_idx);
+            session.history.push_assistant(assistant, turn_idx, None);
+            session.last_active_at = Utc::now();
+        };
+
+        // Persist to disk if enabled
+        if let Some(dir) = &self.persist_dir {
+            let sessions = self.sessions.lock().await;
+            if let Some(session) = sessions.get(id) {
+                let session_clone = session.clone();
+                drop(sessions);
+                self.save_session_to_disk(dir, &session_clone).await?;
+            }
+        }
+
+        Ok(())
+    }
+
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runner::PipelineRunner;
+
+    #[tokio::test]
+    async fn test_record_exchange_success() {
+        // Create a minimal PipelineRunner (empty agent registry)
+        let runner = Arc::new(Mutex::new(PipelineRunner::new()));
+        let session_runner = SessionRunner::new(runner);
+
+        // Manually create a session for testing
+        let session = Session::new("test_agent", SessionPolicy::default());
+        let test_id = session.id.clone();
+        {
+            let mut sessions = session_runner.sessions.lock().await;
+            sessions.insert(test_id.clone(), session);
+        }
+
+        // Call record_exchange
+        let result = session_runner
+            .record_exchange(
+                &test_id,
+                "hello world".to_string(),
+                "hi there".to_string(),
+            )
+            .await;
+
+        assert!(result.is_ok());
+
+        // Verify the session history contains both messages
+        let history = session_runner
+            .get_history(&test_id)
+            .await
+            .expect("Failed to get history");
+
+        assert_eq!(history.messages.len(), 2);
+        assert_eq!(history.messages[0].role, ConversationRole::User);
+        assert_eq!(history.messages[0].content, "hello world");
+        assert_eq!(history.messages[1].role, ConversationRole::Assistant);
+        assert_eq!(history.messages[1].content, "hi there");
+    }
+
+    #[tokio::test]
+    async fn test_record_exchange_not_found() {
+        let runner = Arc::new(Mutex::new(PipelineRunner::new()));
+        let session_runner = SessionRunner::new(runner);
+
+        let bogus_id = SessionId::new();
+        let result = session_runner
+            .record_exchange(
+                &bogus_id,
+                "hello".to_string(),
+                "hi".to_string(),
+            )
+            .await;
+
+        assert!(result.is_err());
+        match result {
+            Err(SessionError::NotFound(_)) => (),
+            _ => panic!("Expected NotFound error"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_record_exchange_closed_session() {
+        let runner = Arc::new(Mutex::new(PipelineRunner::new()));
+        let session_runner = SessionRunner::new(runner);
+
+        let mut session = Session::new("test_agent", SessionPolicy::default());
+        let test_id = session.id.clone();
+        session.status = SessionStatus::Closed;
+        {
+            let mut sessions = session_runner.sessions.lock().await;
+            sessions.insert(test_id.clone(), session);
+        }
+
+        let result = session_runner
+            .record_exchange(
+                &test_id,
+                "hello".to_string(),
+                "hi".to_string(),
+            )
+            .await;
+
+        assert!(result.is_err());
+        match result {
+            Err(SessionError::Closed) => (),
+            _ => panic!("Expected Closed error"),
+        }
+    }
 }
