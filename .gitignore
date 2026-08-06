@@ -10,3 +10,4 @@ audit*
 *.bat
 *.sh
 *.diff
+.worktrees/
