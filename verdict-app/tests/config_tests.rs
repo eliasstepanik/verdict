@@ -1,5 +1,5 @@
-use verdict_app::config::AppConfig;
 use std::env;
+use verdict_app::config::AppConfig;
 
 // ============================================================================
 // DEFAULT CONFIG TESTS
@@ -185,10 +185,7 @@ fn test_effective_system_prompt_uses_config_value() {
         ..Default::default()
     };
 
-    assert_eq!(
-        config.effective_system_prompt(),
-        "You are a code expert."
-    );
+    assert_eq!(config.effective_system_prompt(), "You are a code expert.");
 }
 
 // ============================================================================

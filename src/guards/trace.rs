@@ -1,10 +1,7 @@
-use crate::context::StepContext;
 use super::GuardError;
+use crate::context::StepContext;
 
-pub fn check_trace_available(
-    _guard: &super::Guard,
-    ctx: &StepContext,
-) -> Result<(), GuardError> {
+pub fn check_trace_available(_guard: &super::Guard, ctx: &StepContext) -> Result<(), GuardError> {
     if ctx.trace.entries.is_empty() {
         Err(GuardError::Failed {
             guard: "TraceAvailable".to_string(),
@@ -15,10 +12,7 @@ pub fn check_trace_available(
     }
 }
 
-pub fn check_audit_log_written(
-    _guard: &super::Guard,
-    ctx: &StepContext,
-) -> Result<(), GuardError> {
+pub fn check_audit_log_written(_guard: &super::Guard, ctx: &StepContext) -> Result<(), GuardError> {
     if ctx.trace.entries.is_empty() {
         Err(GuardError::Failed {
             guard: "AuditLogWritten".into(),

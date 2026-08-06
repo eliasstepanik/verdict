@@ -1,7 +1,6 @@
 /// SQLite-backed implementation of MemoryStore
 ///
 /// This implementation uses SQLite for persistent storage of all memory types.
-
 use async_trait::async_trait;
 use chrono::Utc;
 use rusqlite::{params, Connection, Result as SqlResult};
@@ -9,7 +8,7 @@ use serde_json::Value;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use verdict::memory::{MemoryStore, MemoryMessage, MemoryRole, SemanticResult, MemoryError};
+use verdict::memory::{MemoryError, MemoryMessage, MemoryRole, MemoryStore, SemanticResult};
 
 /// SQLite memory store implementation
 #[derive(Debug)]
@@ -55,7 +54,7 @@ impl SqliteMemoryStore {
 
             CREATE INDEX IF NOT EXISTS idx_messages_thread_id ON messages(thread_id);
             CREATE INDEX IF NOT EXISTS idx_observations_thread_id ON observations(thread_id);
-            "
+            ",
         )
         .map_err(|e| MemoryError::Backend(e.to_string()))?;
 
@@ -123,7 +122,9 @@ impl MemoryStore for SqliteMemoryStore {
                 .to_string()
         };
 
-        let mut stmt = conn.prepare(&query).map_err(|e| MemoryError::Backend(e.to_string()))?;
+        let mut stmt = conn
+            .prepare(&query)
+            .map_err(|e| MemoryError::Backend(e.to_string()))?;
 
         let messages = stmt
             .query_map(params![thread_id], |row| {
@@ -163,8 +164,8 @@ impl MemoryStore for SqliteMemoryStore {
 
     async fn save_working_memory(&self, resource_id: &str, data: Value) -> Result<(), MemoryError> {
         let conn = self.conn.lock().await;
-        let data_str = serde_json::to_string(&data)
-            .map_err(|e| MemoryError::Serialization(e.to_string()))?;
+        let data_str =
+            serde_json::to_string(&data).map_err(|e| MemoryError::Serialization(e.to_string()))?;
 
         conn.execute(
             "INSERT OR REPLACE INTO working_memory (resource_id, data) VALUES (?1, ?2)",
@@ -200,7 +201,10 @@ impl MemoryStore for SqliteMemoryStore {
         metadata: Value,
     ) -> Result<(), MemoryError> {
         let conn = self.conn.lock().await;
-        let embedding_bytes = embedding.iter().flat_map(|f| f.to_le_bytes()).collect::<Vec<_>>();
+        let embedding_bytes = embedding
+            .iter()
+            .flat_map(|f| f.to_le_bytes())
+            .collect::<Vec<_>>();
         let metadata_str = serde_json::to_string(&metadata)
             .map_err(|e| MemoryError::Serialization(e.to_string()))?;
 
@@ -249,9 +253,7 @@ impl MemoryStore for SqliteMemoryStore {
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| MemoryError::Backend(e.to_string()))?
             .into_iter()
-            .map(|(id, score, text, metadata)| {
-                ((id, score), (text, metadata))
-            })
+            .map(|(id, score, text, metadata)| ((id, score), (text, metadata)))
             .collect::<Vec<_>>()
             .into_iter()
             .map(|((id, score), (_, _))| (id, score))
@@ -315,7 +317,9 @@ impl MemoryStore for SqliteMemoryStore {
         let conn = self.conn.lock().await;
 
         let mut stmt = conn
-            .prepare("SELECT observation FROM observations WHERE thread_id = ?1 ORDER BY timestamp ASC")
+            .prepare(
+                "SELECT observation FROM observations WHERE thread_id = ?1 ORDER BY timestamp ASC",
+            )
             .map_err(|e| MemoryError::Backend(e.to_string()))?;
 
         let observations = stmt

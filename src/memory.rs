@@ -2,7 +2,6 @@
 ///
 /// This module defines the core traits and types for the memory system,
 /// which are then implemented in the verdict-memory crate.
-
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -13,10 +12,19 @@ use std::fmt::Debug;
 #[async_trait]
 pub trait MemoryStore: Send + Sync + Debug {
     /// Save a message to a thread
-    async fn save_message(&self, thread_id: &str, resource_id: &str, msg: MemoryMessage) -> Result<(), MemoryError>;
+    async fn save_message(
+        &self,
+        thread_id: &str,
+        resource_id: &str,
+        msg: MemoryMessage,
+    ) -> Result<(), MemoryError>;
 
     /// Get messages from a thread, optionally limiting to last N
-    async fn get_thread(&self, thread_id: &str, last_n: Option<usize>) -> Result<Vec<MemoryMessage>, MemoryError>;
+    async fn get_thread(
+        &self,
+        thread_id: &str,
+        last_n: Option<usize>,
+    ) -> Result<Vec<MemoryMessage>, MemoryError>;
 
     /// Save structured JSON working memory for a resource
     async fn save_working_memory(&self, resource_id: &str, data: Value) -> Result<(), MemoryError>;
@@ -34,10 +42,15 @@ pub trait MemoryStore: Send + Sync + Debug {
     ) -> Result<(), MemoryError>;
 
     /// Search embeddings by cosine similarity
-    async fn search_semantic(&self, query_embedding: Vec<f32>, top_k: usize) -> Result<Vec<SemanticResult>, MemoryError>;
+    async fn search_semantic(
+        &self,
+        query_embedding: Vec<f32>,
+        top_k: usize,
+    ) -> Result<Vec<SemanticResult>, MemoryError>;
 
     /// Save an observation (LLM-compressed summary)
-    async fn save_observation(&self, thread_id: &str, observation: &str) -> Result<(), MemoryError>;
+    async fn save_observation(&self, thread_id: &str, observation: &str)
+        -> Result<(), MemoryError>;
 
     /// Retrieve observations for a thread
     async fn get_observations(&self, thread_id: &str) -> Result<Vec<String>, MemoryError>;
@@ -96,12 +109,7 @@ impl std::fmt::Display for MemoryError {
 impl std::error::Error for MemoryError {}
 
 impl MemoryMessage {
-    pub fn new(
-        thread_id: String,
-        resource_id: String,
-        role: MemoryRole,
-        content: String,
-    ) -> Self {
+    pub fn new(thread_id: String, resource_id: String, role: MemoryRole, content: String) -> Self {
         Self {
             id: uuid::Uuid::new_v4().to_string(),
             thread_id,

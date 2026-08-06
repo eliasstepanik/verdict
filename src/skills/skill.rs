@@ -43,9 +43,7 @@ pub struct SkillSet {
 
 impl Default for SkillSet {
     fn default() -> Self {
-        Self {
-            skills: vec![],
-        }
+        Self { skills: vec![] }
     }
 }
 

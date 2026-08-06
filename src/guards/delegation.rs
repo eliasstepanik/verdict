@@ -1,5 +1,5 @@
-use crate::context::StepContext;
 use super::GuardError;
+use crate::context::StepContext;
 
 pub fn check_only_allowed_agents_used(
     _guard: &super::Guard,

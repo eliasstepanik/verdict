@@ -1,10 +1,9 @@
+use serde_json::Value;
 /// SemanticMemory: Cosine similarity over embeddings
 ///
 /// Provides upsert and search operations for embeddings
-
 use std::sync::Arc;
-use serde_json::Value;
-use verdict::memory::{MemoryStore, SemanticResult, MemoryError};
+use verdict::memory::{MemoryError, MemoryStore, SemanticResult};
 
 pub struct SemanticMemory {
     store: Arc<dyn MemoryStore>,

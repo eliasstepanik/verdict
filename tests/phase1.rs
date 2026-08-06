@@ -1,6 +1,6 @@
+use serde_json::Value;
 use std::sync::{Arc, Mutex};
 use verdict::prelude::*;
-use serde_json::Value;
 
 #[tokio::test]
 async fn test_guard_none_always_passes() {
@@ -45,7 +45,6 @@ async fn test_guard_validjson_rejects_invalid_json() {
     assert!(result.is_err());
 }
 
-
 #[tokio::test]
 async fn test_guard_fileexists() {
     use std::fs;
@@ -70,19 +69,28 @@ async fn test_guard_fileexists() {
     assert!(result.is_ok(), "FileExists should pass when file exists");
 
     // Test that FileNotExists passes when file does not exist
-    let result = GuardEngine::evaluate(&Guard::FileNotExists("nonexistent_file.txt".into()), &ctx).await;
-    assert!(result.is_ok(), "FileNotExists should pass when file does not exist");
+    let result =
+        GuardEngine::evaluate(&Guard::FileNotExists("nonexistent_file.txt".into()), &ctx).await;
+    assert!(
+        result.is_ok(),
+        "FileNotExists should pass when file does not exist"
+    );
 
     // Test that FileExists fails when file does not exist
-    let result = GuardEngine::evaluate(&Guard::FileExists("nonexistent_file.txt".into()), &ctx).await;
-    assert!(result.is_err(), "FileExists should fail when file does not exist");
+    let result =
+        GuardEngine::evaluate(&Guard::FileExists("nonexistent_file.txt".into()), &ctx).await;
+    assert!(
+        result.is_err(),
+        "FileExists should fail when file does not exist"
+    );
 
     // Test that FileNotExists fails when file exists
     let result = GuardEngine::evaluate(&Guard::FileNotExists("test_file.txt".into()), &ctx).await;
-    assert!(result.is_err(), "FileNotExists should fail when file exists");
+    assert!(
+        result.is_err(),
+        "FileNotExists should fail when file exists"
+    );
 }
-
-
 
 #[tokio::test]
 async fn test_guard_compiles_ok() {
@@ -112,8 +120,6 @@ async fn test_guard_compiles_ok() {
     );
 }
 
-
-
 #[tokio::test]
 async fn test_guard_tests_pass_ok() {
     if std::process::Command::new("cargo")
@@ -135,14 +141,8 @@ async fn test_guard_tests_pass_ok() {
 
     // This test runs cargo test on the verdict project itself
     let result = GuardEngine::evaluate(&Guard::TestsPass, &ctx).await;
-    assert!(
-        result.is_ok(),
-        "Verdict tests should pass: {:?}",
-        result
-    );
+    assert!(result.is_ok(), "Verdict tests should pass: {:?}", result);
 }
-
-
 
 #[tokio::test]
 async fn test_guard_allof_all_pass() {
@@ -330,7 +330,6 @@ async fn test_pipeline_sequential_3steps() {
         skills: Default::default(),
         policy: Default::default(),
         scorers: Vec::new(),
-
     };
 
     let mut runner = PipelineRunner::new();
@@ -350,19 +349,17 @@ async fn test_pipeline_abort_on_failure() {
     let step1 = AgentStep {
         name: "step1".into(),
         guard_in: Guard::None,
-        action: StepAction::Custom(Arc::new(|_ctx| {
-            Ok(StepOutput::new("step1".into()))
-        })),
+        action: StepAction::Custom(Arc::new(|_ctx| Ok(StepOutput::new("step1".into())))),
         guard_out: Guard::None,
         verdict: Verdict::None,
         tools: ToolSet::Full,
         injection_protection: InjectionProtection::None,
         output_schema: None,
-            dependencies: Vec::new(),
-            parallel: false,
-            input_processors: vec![],
-            output_processors: vec![],
-        };
+        dependencies: Vec::new(),
+        parallel: false,
+        input_processors: vec![],
+        output_processors: vec![],
+    };
 
     let step2 = AgentStep {
         name: "step2".into(),
@@ -377,11 +374,11 @@ async fn test_pipeline_abort_on_failure() {
         tools: ToolSet::Full,
         injection_protection: InjectionProtection::None,
         output_schema: None,
-            dependencies: Vec::new(),
-            parallel: false,
-            input_processors: vec![],
-            output_processors: vec![],
-        };
+        dependencies: Vec::new(),
+        parallel: false,
+        input_processors: vec![],
+        output_processors: vec![],
+    };
 
     let step3 = AgentStep {
         name: "step3".into(),
@@ -394,11 +391,11 @@ async fn test_pipeline_abort_on_failure() {
         tools: ToolSet::Full,
         injection_protection: InjectionProtection::None,
         output_schema: None,
-            dependencies: Vec::new(),
-            parallel: false,
-            input_processors: vec![],
-            output_processors: vec![],
-        };
+        dependencies: Vec::new(),
+        parallel: false,
+        input_processors: vec![],
+        output_processors: vec![],
+    };
 
     let pipeline = Pipeline {
         name: "test".into(),
@@ -589,35 +586,31 @@ async fn test_pipeline_sub_pipeline() {
             AgentStep {
                 name: "inner_step1".into(),
                 guard_in: Guard::None,
-                action: StepAction::Custom(Arc::new(|_ctx| {
-                    Ok(StepOutput::new("inner1".into()))
-                })),
+                action: StepAction::Custom(Arc::new(|_ctx| Ok(StepOutput::new("inner1".into())))),
                 guard_out: Guard::None,
                 verdict: Verdict::None,
                 tools: ToolSet::Full,
                 injection_protection: InjectionProtection::None,
                 output_schema: None,
-            dependencies: Vec::new(),
-            parallel: false,
-            input_processors: vec![],
-            output_processors: vec![],
-        },
+                dependencies: Vec::new(),
+                parallel: false,
+                input_processors: vec![],
+                output_processors: vec![],
+            },
             AgentStep {
                 name: "inner_step2".into(),
                 guard_in: Guard::None,
-                action: StepAction::Custom(Arc::new(|_ctx| {
-                    Ok(StepOutput::new("inner2".into()))
-                })),
+                action: StepAction::Custom(Arc::new(|_ctx| Ok(StepOutput::new("inner2".into())))),
                 guard_out: Guard::None,
                 verdict: Verdict::None,
                 tools: ToolSet::Full,
                 injection_protection: InjectionProtection::None,
                 output_schema: None,
-            dependencies: Vec::new(),
-            parallel: false,
-            input_processors: vec![],
-            output_processors: vec![],
-        },
+                dependencies: Vec::new(),
+                parallel: false,
+                input_processors: vec![],
+                output_processors: vec![],
+            },
         ],
         on_failure: FailureMode::Abort,
         max_retries: 0,
@@ -706,11 +699,11 @@ async fn test_loop_until_passes() {
         tools: ToolSet::Full,
         injection_protection: InjectionProtection::None,
         output_schema: None,
-            dependencies: Vec::new(),
-            parallel: false,
-            input_processors: vec![],
-            output_processors: vec![],
-        };
+        dependencies: Vec::new(),
+        parallel: false,
+        input_processors: vec![],
+        output_processors: vec![],
+    };
 
     let pipeline = Pipeline {
         name: "test".into(),
@@ -743,9 +736,7 @@ async fn test_loop_until_passes() {
 async fn test_loop_until_max_iterations() {
     let iteration_counter = Arc::new(Mutex::new(0));
 
-    let body = StepAction::Custom(Arc::new(|_ctx| {
-        Ok(StepOutput::new("iteration".into()))
-    }));
+    let body = StepAction::Custom(Arc::new(|_ctx| Ok(StepOutput::new("iteration".into()))));
 
     let condition = {
         let counter = Arc::clone(&iteration_counter);
@@ -774,11 +765,11 @@ async fn test_loop_until_max_iterations() {
         tools: ToolSet::Full,
         injection_protection: InjectionProtection::None,
         output_schema: None,
-            dependencies: Vec::new(),
-            parallel: false,
-            input_processors: vec![],
-            output_processors: vec![],
-        };
+        dependencies: Vec::new(),
+        parallel: false,
+        input_processors: vec![],
+        output_processors: vec![],
+    };
 
     let pipeline = Pipeline {
         name: "test".into(),
@@ -813,19 +804,17 @@ async fn test_audit_log_populated() {
     let step1 = AgentStep {
         name: "step1".into(),
         guard_in: Guard::None,
-        action: StepAction::Custom(Arc::new(|_ctx| {
-            Ok(StepOutput::new("output".into()))
-        })),
+        action: StepAction::Custom(Arc::new(|_ctx| Ok(StepOutput::new("output".into())))),
         guard_out: Guard::None,
         verdict: Verdict::None,
         tools: ToolSet::Full,
         injection_protection: InjectionProtection::None,
         output_schema: None,
-            dependencies: Vec::new(),
-            parallel: false,
-            input_processors: vec![],
-            output_processors: vec![],
-        };
+        dependencies: Vec::new(),
+        parallel: false,
+        input_processors: vec![],
+        output_processors: vec![],
+    };
 
     let pipeline = Pipeline {
         name: "test".into(),
@@ -925,5 +914,3 @@ async fn test_toolset_union() {
     assert!(union.contains("fs.write"));
     assert!(!union.contains("shell.execute"));
 }
-
-

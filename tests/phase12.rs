@@ -5,12 +5,12 @@
 //! Tests for LLM-based semantic checking, context persistence, MCP HTTP support,
 //! secret scanner async/config features, and true concurrent pipeline execution.
 
+use serde_json::json;
 use std::sync::Arc;
+use std::time::Instant;
+use verdict::injection::SecretScannerConfig;
 use verdict::prelude::*;
 use verdict::{ContextStore, ContextStoreError};
-use verdict::injection::SecretScannerConfig;
-use serde_json::json;
-use std::time::Instant;
 
 mod common;
 use common::MockLlmProvider;
@@ -36,18 +36,23 @@ async fn test_semantic_check_requires_llm_client() {
 
     let result = GuardEngine::evaluate(&Guard::SemanticCheck("anything".to_string()), &ctx).await;
 
-    assert!(result.is_err(), "SemanticCheck should fail without llm_client");
+    assert!(
+        result.is_err(),
+        "SemanticCheck should fail without llm_client"
+    );
     let err_msg = result.unwrap_err().to_string();
-    assert!(err_msg.to_lowercase().contains("llm"), "Error should mention LLM, got: {}", err_msg);
+    assert!(
+        err_msg.to_lowercase().contains("llm"),
+        "Error should mention LLM, got: {}",
+        err_msg
+    );
 }
 
 /// Test 2: SemanticCheck with mock LLM passing
 #[tokio::test]
 async fn test_semantic_check_mock_pass() {
     let mock_llm = MockLlmProvider::new("PASS - looks good");
-    let llm_client = Arc::new(LlmClient::new(
-        Arc::new(mock_llm),
-    ));
+    let llm_client = Arc::new(LlmClient::new(Arc::new(mock_llm)));
 
     let mut ctx = StepContext::new(
         "test_agent".to_string(),
@@ -65,16 +70,17 @@ async fn test_semantic_check_mock_pass() {
     )
     .await;
 
-    assert!(result.is_ok(), "SemanticCheck should pass with PASS response");
+    assert!(
+        result.is_ok(),
+        "SemanticCheck should pass with PASS response"
+    );
 }
 
 /// Test 3: SemanticCheck with mock LLM failing
 #[tokio::test]
 async fn test_semantic_check_mock_fail() {
     let mock_llm = MockLlmProvider::new("FAIL - missing required content X");
-    let llm_client = Arc::new(LlmClient::new(
-        Arc::new(mock_llm),
-    ));
+    let llm_client = Arc::new(LlmClient::new(Arc::new(mock_llm)));
 
     let mut ctx = StepContext::new(
         "test_agent".to_string(),
@@ -92,9 +98,15 @@ async fn test_semantic_check_mock_fail() {
     )
     .await;
 
-    assert!(result.is_err(), "SemanticCheck should fail with FAIL response");
+    assert!(
+        result.is_err(),
+        "SemanticCheck should fail with FAIL response"
+    );
     let err_msg = result.unwrap_err().to_string();
-    assert!(err_msg.contains("FAIL") || err_msg.contains("missing"), "Error should contain failure details");
+    assert!(
+        err_msg.contains("FAIL") || err_msg.contains("missing"),
+        "Error should contain failure details"
+    );
 }
 
 // ===== ContextStore Tests (P12-3) =====
@@ -127,7 +139,10 @@ async fn test_context_store_save_load() {
     assert_eq!(loaded.pipeline_name, "test_pipeline");
     assert_eq!(loaded.step_name, "test_step");
     assert_eq!(loaded.agent_name, "test_agent");
-    assert_eq!(loaded.output.as_ref().map(|o| o.raw.as_str()), Some("result"));
+    assert_eq!(
+        loaded.output.as_ref().map(|o| o.raw.as_str()),
+        Some("result")
+    );
 }
 
 /// Test 5: ContextStore list snapshots
@@ -164,8 +179,14 @@ async fn test_context_store_list_snapshots() {
         .expect("list should succeed");
 
     assert!(snapshots.len() >= 2, "Should have at least 2 snapshots");
-    assert!(snapshots.iter().any(|s| s.contains("step_1")), "Should contain step_1");
-    assert!(snapshots.iter().any(|s| s.contains("step_2")), "Should contain step_2");
+    assert!(
+        snapshots.iter().any(|s| s.contains("step_1")),
+        "Should contain step_1"
+    );
+    assert!(
+        snapshots.iter().any(|s| s.contains("step_2")),
+        "Should contain step_2"
+    );
 }
 
 /// Test 6: ContextStore not found error
@@ -179,7 +200,7 @@ async fn test_context_store_not_found() {
 
     assert!(result.is_err(), "Load should fail for nonexistent snapshot");
     match result {
-        Err(ContextStoreError::NotFound(_)) => {}, // Expected
+        Err(ContextStoreError::NotFound(_)) => {} // Expected
         _ => panic!("Should be NotFound error"),
     }
 }
@@ -203,14 +224,19 @@ async fn test_context_store_delete() {
     store.save(&ctx).await.expect("save should succeed");
 
     // Verify it exists
-    let loaded: Result<SerializableStepContext, ContextStoreError> = store.load("pipeline", "step").await;
+    let loaded: Result<SerializableStepContext, ContextStoreError> =
+        store.load("pipeline", "step").await;
     assert!(loaded.is_ok(), "Snapshot should exist after save");
 
     // Delete it
-    store.delete("pipeline", "step").await.expect("delete should succeed");
+    store
+        .delete("pipeline", "step")
+        .await
+        .expect("delete should succeed");
 
     // Verify it's gone
-    let result: Result<SerializableStepContext, ContextStoreError> = store.load("pipeline", "step").await;
+    let result: Result<SerializableStepContext, ContextStoreError> =
+        store.load("pipeline", "step").await;
     assert!(result.is_err(), "Snapshot should not exist after delete");
 }
 
@@ -243,8 +269,14 @@ fn test_secret_scanner_config_defaults() {
         (config.entropy_threshold - 4.5).abs() < 0.001,
         "Default entropy threshold should be ~4.5"
     );
-    assert_eq!(config.min_token_len, 20, "Default min_token_len should be 20");
-    assert!(config.llm_verifier.is_none(), "llm_verifier should be None by default");
+    assert_eq!(
+        config.min_token_len, 20,
+        "Default min_token_len should be 20"
+    );
+    assert!(
+        config.llm_verifier.is_none(),
+        "llm_verifier should be None by default"
+    );
 }
 
 /// Test 10: SecretScanner static scan backward compat
@@ -253,11 +285,11 @@ fn test_secret_scanner_static_scan_backward_compat() {
     let text = "AKIA1234567890ABCDEF something here";
     let matches = SecretScanner::scan(text);
 
+    assert!(!matches.is_empty(), "Should detect AWS-like key pattern");
     assert!(
-        !matches.is_empty(),
-        "Should detect AWS-like key pattern"
+        matches[0].pattern_name.contains("AWS"),
+        "Should identify as AWS pattern"
     );
-    assert!(matches[0].pattern_name.contains("AWS"), "Should identify as AWS pattern");
 }
 
 /// Test 11: SecretScanner async scan without LLM
@@ -269,16 +301,17 @@ async fn test_secret_scanner_scan_async_no_llm() {
     let matches = scanner.scan_async(text).await;
 
     // Should not panic, and should find something
-    assert!(!matches.is_empty(), "Should find secrets via pattern or entropy");
+    assert!(
+        !matches.is_empty(),
+        "Should find secrets via pattern or entropy"
+    );
 }
 
 /// Test 12: SecretScanner async scan with LLM verifier
 #[tokio::test]
 async fn test_secret_scanner_scan_async_with_llm() {
     let mock_llm = MockLlmProvider::new("VERIFIED - this is a real secret");
-    let llm_client = Arc::new(LlmClient::new(
-        Arc::new(mock_llm),
-    ));
+    let llm_client = Arc::new(LlmClient::new(Arc::new(mock_llm)));
 
     let mut config = SecretScannerConfig::default();
     config.llm_verifier = Some(llm_client);
@@ -299,7 +332,8 @@ async fn test_parallel_steps_true_concurrency() {
     use std::sync::{Arc as StdArc, Mutex};
 
     // Shared execution counter to verify concurrent execution
-    let execution_times: StdArc<Mutex<Vec<std::time::Instant>>> = StdArc::new(Mutex::new(Vec::new()));
+    let execution_times: StdArc<Mutex<Vec<std::time::Instant>>> =
+        StdArc::new(Mutex::new(Vec::new()));
 
     // Create 3 steps that all sleep, but should run in parallel
     let times1 = Arc::clone(&execution_times);
@@ -313,7 +347,7 @@ async fn test_parallel_steps_true_concurrency() {
         guard_in: Guard::None,
         guard_out: Guard::None,
         verdict: Verdict::None,
-        parallel: true,  // KEY: parallel = true
+        parallel: true, // KEY: parallel = true
         dependencies: Vec::new(),
         injection_protection: InjectionProtection::None,
         output_schema: None,
@@ -333,7 +367,7 @@ async fn test_parallel_steps_true_concurrency() {
         guard_in: Guard::None,
         guard_out: Guard::None,
         verdict: Verdict::None,
-        parallel: true,  // KEY: parallel = true
+        parallel: true, // KEY: parallel = true
         dependencies: Vec::new(),
         injection_protection: InjectionProtection::None,
         output_schema: None,
@@ -353,7 +387,7 @@ async fn test_parallel_steps_true_concurrency() {
         guard_in: Guard::None,
         guard_out: Guard::None,
         verdict: Verdict::None,
-        parallel: true,  // KEY: parallel = true
+        parallel: true, // KEY: parallel = true
         dependencies: Vec::new(),
         injection_protection: InjectionProtection::None,
         output_schema: None,
@@ -416,9 +450,7 @@ async fn test_phase12_integrated_scenario() {
 
     // Build context with LLM client
     let mock_llm = MockLlmProvider::new("PASS");
-    let llm_client = Arc::new(LlmClient::new(
-        Arc::new(mock_llm),
-    ));
+    let llm_client = Arc::new(LlmClient::new(Arc::new(mock_llm)));
 
     let mut ctx = StepContext::new(
         "agent".to_string(),
@@ -434,8 +466,14 @@ async fn test_phase12_integrated_scenario() {
     store.save(&ctx).await.expect("save should work");
 
     // Load and verify
-    let loaded = store.load("pipeline", "step").await.expect("load should work");
-    assert_eq!(loaded.output.as_ref().map(|o| o.raw.as_str()), Some("validated output"));
+    let loaded = store
+        .load("pipeline", "step")
+        .await
+        .expect("load should work");
+    assert_eq!(
+        loaded.output.as_ref().map(|o| o.raw.as_str()),
+        Some("validated output")
+    );
 
     // Run semantic check
     let mut ctx_restored = StepContext::new(
@@ -446,11 +484,9 @@ async fn test_phase12_integrated_scenario() {
         FilesystemPolicy::default(),
     );
     ctx_restored.output = loaded.output.clone();
-    
+
     let mock_llm2 = MockLlmProvider::new("PASS - content is valid");
-    let llm_client2 = Arc::new(LlmClient::new(
-        Arc::new(mock_llm2),
-    ));
+    let llm_client2 = Arc::new(LlmClient::new(Arc::new(mock_llm2)));
     ctx_restored.llm_client = Some(llm_client2);
 
     let guard_result = GuardEngine::evaluate(
@@ -461,4 +497,3 @@ async fn test_phase12_integrated_scenario() {
 
     assert!(guard_result.is_ok(), "Semantic check should pass");
 }
-

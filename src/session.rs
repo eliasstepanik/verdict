@@ -1,16 +1,16 @@
 //! Interactive Sessions — long-lived conversations with persistent state
 
-use std::sync::Arc;
-use std::path::PathBuf;
-use std::collections::HashMap;
-use tokio::sync::Mutex;
-use serde::{Serialize, Deserialize};
 use chrono::{DateTime, Utc};
-use uuid::Uuid;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::Arc;
+use tokio::sync::Mutex;
+use uuid::Uuid;
 
-use crate::runner::PipelineRunner;
 use crate::llm::MessageHistory;
+use crate::runner::PipelineRunner;
 
 /// Unique identifier for a session
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -78,9 +78,7 @@ impl UserTurn {
     /// Create a turn from text only
     pub fn text(text: impl Into<String>) -> Self {
         UserTurn {
-            content: TurnContent {
-                text: text.into(),
-            },
+            content: TurnContent { text: text.into() },
             attachments: vec![],
             interrupt_previous: false,
         }
@@ -183,12 +181,7 @@ impl ConversationHistory {
     }
 
     /// Add an assistant message to the conversation
-    pub fn push_assistant(
-        &mut self,
-        content: String,
-        turn_index: u32,
-        usage: Option<TokenUsage>,
-    ) {
+    pub fn push_assistant(&mut self, content: String, turn_index: u32, usage: Option<TokenUsage>) {
         self.messages.push(ConversationMessage {
             role: ConversationRole::Assistant,
             content,
@@ -358,7 +351,8 @@ impl SessionRunner {
     ) -> Result<SessionId, SessionError> {
         // Verify agent exists
         let runner = self.runner.lock().await;
-        let agent = runner.agent_registry
+        let agent = runner
+            .agent_registry
             .get(agent_name)
             .ok_or_else(|| SessionError::AgentNotFound(agent_name.to_string()))?;
         let _ = agent; // just validating existence
@@ -401,11 +395,7 @@ impl SessionRunner {
     }
 
     /// Execute one user turn in the session
-    pub async fn turn(
-        &self,
-        id: &SessionId,
-        input: UserTurn,
-    ) -> Result<TurnResult, SessionError> {
+    pub async fn turn(&self, id: &SessionId, input: UserTurn) -> Result<TurnResult, SessionError> {
         // Get agent name and validate limits
         let (agent_name, turn_index) = {
             let mut sessions = self.sessions.lock().await;
@@ -420,7 +410,9 @@ impl SessionRunner {
                 return Err(SessionError::LimitExceeded("max_turns exceeded".into()));
             }
             if session.is_token_limit_exceeded() {
-                return Err(SessionError::LimitExceeded("max_total_tokens exceeded".into()));
+                return Err(SessionError::LimitExceeded(
+                    "max_total_tokens exceeded".into(),
+                ));
             }
 
             session.status = SessionStatus::Active;
@@ -433,11 +425,11 @@ impl SessionRunner {
         // Get agent
         let agent = {
             let runner = self.runner.lock().await;
-            runner.agent_registry
+            runner
+                .agent_registry
                 .get(&agent_name)
                 .ok_or_else(|| SessionError::AgentNotFound(agent_name.clone()))?
         };
-
 
         // Pass user text directly as a string so {input} in pipeline templates
         // resolves to the user's actual message — not a confusing JSON blob.
@@ -447,7 +439,9 @@ impl SessionRunner {
         {
             let mut sessions = self.sessions.lock().await;
             let session = sessions.get_mut(id).unwrap();
-            session.history.push_user(input.content.text.clone(), turn_index);
+            session
+                .history
+                .push_user(input.content.text.clone(), turn_index);
         }
 
         // Run the pipeline
@@ -482,9 +476,11 @@ impl SessionRunner {
                 {
                     let mut sessions = self.sessions.lock().await;
                     if let Some(session) = sessions.get_mut(id) {
-                        session
-                            .history
-                            .push_assistant(output.clone(), turn_index, Some(usage.clone()));
+                        session.history.push_assistant(
+                            output.clone(),
+                            turn_index,
+                            Some(usage.clone()),
+                        );
                         session.status = SessionStatus::Idle;
 
                         // Persist
@@ -559,16 +555,15 @@ impl SessionRunner {
         dir: &PathBuf,
         session: &Session,
     ) -> Result<(), SessionError> {
-        tokio::fs::create_dir_all(dir).await.map_err(|e| {
-            SessionError::PersistenceError(e.to_string())
-        })?;
+        tokio::fs::create_dir_all(dir)
+            .await
+            .map_err(|e| SessionError::PersistenceError(e.to_string()))?;
         let path = dir.join(format!("{}.json", session.id.as_str()));
-        let json = serde_json::to_string_pretty(session).map_err(|e| {
-            SessionError::PersistenceError(e.to_string())
-        })?;
-        tokio::fs::write(&path, json).await.map_err(|e| {
-            SessionError::PersistenceError(e.to_string())
-        })?;
+        let json = serde_json::to_string_pretty(session)
+            .map_err(|e| SessionError::PersistenceError(e.to_string()))?;
+        tokio::fs::write(&path, json)
+            .await
+            .map_err(|e| SessionError::PersistenceError(e.to_string()))?;
         Ok(())
     }
 
@@ -581,9 +576,8 @@ impl SessionRunner {
         let json = tokio::fs::read_to_string(&path)
             .await
             .map_err(|_| SessionError::NotFound(id.to_string()))?;
-        let session: Session = serde_json::from_str(&json).map_err(|e| {
-            SessionError::PersistenceError(e.to_string())
-        })?;
+        let session: Session = serde_json::from_str(&json)
+            .map_err(|e| SessionError::PersistenceError(e.to_string()))?;
         Ok(session)
     }
 
@@ -623,7 +617,11 @@ impl SessionRunner {
         // Build a synthetic summary message as System role
         let summary_msg = ConversationMessage {
             role: ConversationRole::System,
-            content: format!("[Conversation summary — {} messages condensed]\n{}", total - keep, summary),
+            content: format!(
+                "[Conversation summary — {} messages condensed]\n{}",
+                total - keep,
+                summary
+            ),
             timestamp: chrono::Utc::now(),
             turn_index: 0,
             usage: None,
@@ -674,7 +672,6 @@ impl SessionRunner {
 
         Ok(())
     }
-
 }
 
 #[cfg(test)]
@@ -698,11 +695,7 @@ mod tests {
 
         // Call record_exchange
         let result = session_runner
-            .record_exchange(
-                &test_id,
-                "hello world".to_string(),
-                "hi there".to_string(),
-            )
+            .record_exchange(&test_id, "hello world".to_string(), "hi there".to_string())
             .await;
 
         assert!(result.is_ok());
@@ -727,11 +720,7 @@ mod tests {
 
         let bogus_id = SessionId::new();
         let result = session_runner
-            .record_exchange(
-                &bogus_id,
-                "hello".to_string(),
-                "hi".to_string(),
-            )
+            .record_exchange(&bogus_id, "hello".to_string(), "hi".to_string())
             .await;
 
         assert!(result.is_err());
@@ -755,11 +744,7 @@ mod tests {
         }
 
         let result = session_runner
-            .record_exchange(
-                &test_id,
-                "hello".to_string(),
-                "hi".to_string(),
-            )
+            .record_exchange(&test_id, "hello".to_string(), "hi".to_string())
             .await;
 
         assert!(result.is_err());

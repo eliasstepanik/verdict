@@ -13,7 +13,6 @@ pub enum AccessType {
     Write,
 }
 
-
 /// Workspace isolation strategy for task execution
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum WorkspaceIsolation {
@@ -97,12 +96,10 @@ impl FilesystemPolicy {
                 // Canonicalize the parent if possible to normalise drive
                 // letters / 8.3 aliases, then re-attach the file name.
                 match (abs.parent(), abs.file_name()) {
-                    (Some(parent), Some(name)) => {
-                        match std::fs::canonicalize(parent) {
-                            Ok(canon_parent) => canon_parent.join(name),
-                            Err(_) => abs,
-                        }
-                    }
+                    (Some(parent), Some(name)) => match std::fs::canonicalize(parent) {
+                        Ok(canon_parent) => canon_parent.join(name),
+                        Err(_) => abs,
+                    },
                     _ => abs,
                 }
             }
@@ -156,7 +153,6 @@ impl FilesystemPolicy {
         }
     }
 }
-
 
 impl Default for FilesystemPolicy {
     fn default() -> Self {
@@ -285,7 +281,6 @@ pub struct Agent {
     pub scorers: Vec<crate::eval::ScorerConfig>,
 }
 
-
 /// Client for executing steps on a remote agent endpoint
 pub struct RemoteAgentClient {
     client: reqwest::Client,
@@ -351,12 +346,10 @@ impl RemoteAgentClient {
                 }
                 Ok(response) => {
                     // HTTP error response
-                    last_err = Some(Box::new(
-                        std::io::Error::new(
-                            std::io::ErrorKind::Other,
-                            format!("HTTP {}", response.status()),
-                        )
-                    ));
+                    last_err = Some(Box::new(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        format!("HTTP {}", response.status()),
+                    )));
                 }
                 Err(e) => {
                     // Network error
@@ -372,7 +365,9 @@ impl RemoteAgentClient {
                     return Err(crate::action::RemoteAgentError::Timeout);
                 }
             }
-            Err(crate::action::RemoteAgentError::NetworkError(err.to_string()))
+            Err(crate::action::RemoteAgentError::NetworkError(
+                err.to_string(),
+            ))
         } else {
             Err(crate::action::RemoteAgentError::NetworkError(
                 "max retries exceeded".to_string(),

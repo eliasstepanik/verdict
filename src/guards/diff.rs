@@ -1,5 +1,5 @@
-use crate::context::StepContext;
 use super::GuardError;
+use crate::context::StepContext;
 
 pub fn check_max_diff_lines(
     _guard: &super::Guard,

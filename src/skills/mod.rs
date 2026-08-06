@@ -5,5 +5,5 @@ pub mod builtin;
 pub mod registry;
 pub mod skill;
 
-pub use skill::{Skill, SkillExample, SkillEval, SkillSet};
 pub use registry::SkillRegistry;
+pub use skill::{Skill, SkillEval, SkillExample, SkillSet};

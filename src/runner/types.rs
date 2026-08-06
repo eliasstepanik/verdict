@@ -1,9 +1,9 @@
 use crate::action::StepError;
 use crate::guards::{GuardError, GuardPhase};
 use crate::verdict::VerdictError;
-use thiserror::Error;
 use chrono::{DateTime, Utc};
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 /// Error from pipeline execution
 #[derive(Error, Debug)]
@@ -79,7 +79,10 @@ pub enum OutputEvent {
         delta: String,
     },
     /// A step completed
-    StepCompleted { step: String, output: crate::action::StepOutput },
+    StepCompleted {
+        step: String,
+        output: crate::action::StepOutput,
+    },
     /// The pipeline completed
     PipelineCompleted { result: PipelineResult },
     /// Tool approval required before execution (A1)

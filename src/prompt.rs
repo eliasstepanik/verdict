@@ -49,15 +49,12 @@ pub enum PromptError {
 impl PromptTemplate {
     /// Create a new empty prompt template
     pub fn new() -> Self {
-        PromptTemplate {
-            segments: vec![],
-        }
+        PromptTemplate { segments: vec![] }
     }
 
     /// Add a static text segment
     pub fn push_static(mut self, text: impl Into<String>) -> Self {
-        self.segments
-            .push(PromptSegment::Static(text.into()));
+        self.segments.push(PromptSegment::Static(text.into()));
         self
     }
 
@@ -70,8 +67,7 @@ impl PromptTemplate {
 
     /// Add a conversation history segment
     pub fn push_conversation(mut self, last_n: usize) -> Self {
-        self.segments
-            .push(PromptSegment::Conversation { last_n });
+        self.segments.push(PromptSegment::Conversation { last_n });
         self
     }
 
@@ -94,12 +90,10 @@ impl PromptTemplate {
         for seg in &self.segments {
             match seg {
                 PromptSegment::Static(s) => out.push_str(s),
-                PromptSegment::StepOutput(name) => {
-                    match ctx.step_results.get(name) {
-                        Some(r) => out.push_str(&r.output.raw),
-                        None => return Err(PromptError::StepNotFound(name.clone())),
-                    }
-                }
+                PromptSegment::StepOutput(name) => match ctx.step_results.get(name) {
+                    Some(r) => out.push_str(&r.output.raw),
+                    None => return Err(PromptError::StepNotFound(name.clone())),
+                },
                 PromptSegment::ScratchpadValue(key) => {
                     // Read from session scratchpad if available
                     if let Some(_meta) = &ctx.session_meta {
@@ -108,9 +102,7 @@ impl PromptTemplate {
                         // For now, we'll check if the Session is stored elsewhere.
                         // This is a limitation we need to document.
                         // As a workaround, we can return an error or empty string.
-                        return Err(PromptError::ScratchpadKeyNotFound(
-                            key.clone(),
-                        ));
+                        return Err(PromptError::ScratchpadKeyNotFound(key.clone()));
                     }
                 }
                 PromptSegment::Computed(p) => {

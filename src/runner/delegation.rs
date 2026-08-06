@@ -4,7 +4,7 @@
 //! result merging, schema validation, and audit events.
 
 use super::PipelineRunner;
-use crate::action::{StepError, StepOutput, DelegationPolicy};
+use crate::action::{DelegationPolicy, StepError, StepOutput};
 use crate::audit::{AuditEntry, AuditEvent};
 use crate::context::{StepContext, TraceEntry};
 use crate::registry::ToolRegistry;
@@ -49,7 +49,9 @@ impl PipelineRunner {
 
         // Step 2: Check allowed agents list
         if !delegation_policy.allowed_agents.is_empty()
-            && !delegation_policy.allowed_agents.contains(&agent_name.to_string())
+            && !delegation_policy
+                .allowed_agents
+                .contains(&agent_name.to_string())
         {
             self.audit_log.append(AuditEntry {
                 timestamp: Utc::now(),
@@ -69,25 +71,22 @@ impl PipelineRunner {
         }
 
         // Step 3: Look up agent in registry
-        let agent = self
-            .agent_registry
-            .get(agent_name)
-            .ok_or_else(|| {
-                self.audit_log.append(AuditEntry {
-                    timestamp: Utc::now(),
-                    pipeline_name: ctx.pipeline_name.clone(),
-                    step_name: ctx.step_name.clone(),
-                    event: AuditEvent::DelegationFailed {
-                        parent_agent: ctx.agent_name.clone(),
-                        child_agent: agent_name.to_string(),
-                        depth: ctx.delegation_depth,
-                        reason: "Agent not found in registry".into(),
-                    },
-                });
-                StepError::ActionFailed {
-                    reason: format!("Agent '{}' not found in registry", agent_name),
-                }
-            })?;
+        let agent = self.agent_registry.get(agent_name).ok_or_else(|| {
+            self.audit_log.append(AuditEntry {
+                timestamp: Utc::now(),
+                pipeline_name: ctx.pipeline_name.clone(),
+                step_name: ctx.step_name.clone(),
+                event: AuditEvent::DelegationFailed {
+                    parent_agent: ctx.agent_name.clone(),
+                    child_agent: agent_name.to_string(),
+                    depth: ctx.delegation_depth,
+                    reason: "Agent not found in registry".into(),
+                },
+            });
+            StepError::ActionFailed {
+                reason: format!("Agent '{}' not found in registry", agent_name),
+            }
+        })?;
 
         // Step 4: Log delegation start
         self.audit_log.append(AuditEntry {
@@ -142,17 +141,19 @@ impl PipelineRunner {
                 }
 
                 // Merge trace entries
-                ctx.trace.entries.extend(result.audit_log.entries().iter().filter_map(|entry| {
-                    if let crate::audit::AuditEvent::StepCompleted { .. } = entry.event {
-                        Some(TraceEntry {
-                            step_name: entry.step_name.clone(),
-                            status: "delegated".to_string(),
-                            timestamp: entry.timestamp,
-                        })
-                    } else {
-                        None
-                    }
-                }));
+                ctx.trace
+                    .entries
+                    .extend(result.audit_log.entries().iter().filter_map(|entry| {
+                        if let crate::audit::AuditEvent::StepCompleted { .. } = entry.event {
+                            Some(TraceEntry {
+                                step_name: entry.step_name.clone(),
+                                status: "delegated".to_string(),
+                                timestamp: entry.timestamp,
+                            })
+                        } else {
+                            None
+                        }
+                    }));
 
                 // Merge audit log entries
                 for entry in result.audit_log.entries() {
@@ -191,7 +192,8 @@ impl PipelineRunner {
                         }
                     } else {
                         return Err(StepError::ActionFailed {
-                            reason: "Delegated output is not valid JSON for schema validation".into(),
+                            reason: "Delegated output is not valid JSON for schema validation"
+                                .into(),
                         });
                     }
                 }

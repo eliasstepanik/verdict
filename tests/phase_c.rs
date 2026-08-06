@@ -1,10 +1,9 @@
+use serde_json::json;
+use std::sync::Arc;
 /// Phase C1: Multi-Tier Memory System
 ///
 /// Tests for memory integration with PipelineRunner and StepContext
-
 use verdict::prelude::*;
-use serde_json::json;
-use std::sync::Arc;
 
 // Mock memory store for testing
 #[allow(dead_code)]
@@ -98,7 +97,7 @@ fn test_step_context_has_memory_field() {
         json!({}),
         FilesystemPolicy::new(std::path::PathBuf::from(".")),
     );
-    
+
     // Memory field should be None by default
     assert!(ctx.memory.is_none());
 }
@@ -112,11 +111,11 @@ fn test_step_context_memory_initialization() {
         json!({}),
         FilesystemPolicy::new(std::path::PathBuf::from(".")),
     );
-    
+
     // Set memory
     let memory_store = Arc::new(MockMemoryStore);
     ctx.memory = Some(memory_store.clone());
-    
+
     assert!(ctx.memory.is_some());
 }
 
@@ -152,9 +151,8 @@ fn test_memory_role_enum() {
 #[tokio::test]
 async fn test_pipeline_runner_builder_chain() {
     let memory = Arc::new(MockMemoryStore);
-    
-    let runner = PipelineRunner::new()
-        .with_memory(memory);
+
+    let runner = PipelineRunner::new().with_memory(memory);
 
     assert!(runner.memory.is_some());
 }

@@ -258,9 +258,18 @@ async fn test_orchestrator_agent_allowed_agents() {
     let agent = orchestrator_agent();
     assert!(agent.policy.allowed_agents.contains(&"planner".to_string()));
     assert!(agent.policy.allowed_agents.contains(&"coder".to_string()));
-    assert!(agent.policy.allowed_agents.contains(&"reviewer".to_string()));
-    assert!(agent.policy.allowed_agents.contains(&"debugger".to_string()));
-    assert!(agent.policy.allowed_agents.contains(&"reflector".to_string()));
+    assert!(agent
+        .policy
+        .allowed_agents
+        .contains(&"reviewer".to_string()));
+    assert!(agent
+        .policy
+        .allowed_agents
+        .contains(&"debugger".to_string()));
+    assert!(agent
+        .policy
+        .allowed_agents
+        .contains(&"reflector".to_string()));
 }
 
 #[tokio::test]
@@ -327,7 +336,11 @@ async fn test_all_agents_have_description() {
     ];
 
     for agent in agents {
-        assert!(!agent.description.is_empty(), "Agent {} has empty description", agent.name);
+        assert!(
+            !agent.description.is_empty(),
+            "Agent {} has empty description",
+            agent.name
+        );
     }
 }
 

@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -81,7 +81,11 @@ impl RequestContext {
     }
 
     /// Set a per-agent toolset override (Phase D2)
-    pub fn with_toolset(&mut self, agent_name: impl Into<String>, registry: Arc<ToolRegistry>) -> &mut Self {
+    pub fn with_toolset(
+        &mut self,
+        agent_name: impl Into<String>,
+        registry: Arc<ToolRegistry>,
+    ) -> &mut Self {
         self.toolsets.insert(agent_name.into(), registry);
         self
     }
@@ -92,7 +96,6 @@ impl RequestContext {
     }
 }
 
-
 /// Serializable form of StepContext for persistence and checkpointing.
 /// Fields that cannot be serialized (like Arc<LlmClient>) are omitted.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -101,29 +104,28 @@ pub struct SerializableStepContext {
     pub pipeline_name: String,
     pub step_name: String,
     pub step_id: String,
-    
+
     pub request: Value,
-    pub input: Value,  // Variables/state
+    pub input: Value, // Variables/state
     pub output: Option<StepOutput>,
-    
+
     pub step_results: HashMap<String, StepResult>,
-    
+
     pub delegation_depth: u32,
     pub parent_agent: Option<String>,
-    
+
     pub active_skills: Vec<String>,
     pub allowed_tools: ToolSet,
-    
+
     pub trace: PipelineTrace,
     pub budget: BudgetState,
-    
+
     /// Conversation history (serializable)
     pub conversation_history: MessageHistory,
-    
-    
+
     /// Filesystem policy for restored context
     pub filesystem_policy: FilesystemPolicy,
-    
+
     /// Network policy for restored context
     pub network_policy: NetworkPolicy,
 
@@ -202,7 +204,7 @@ impl<'de> serde::Deserialize<'de> for BudgetState {
             tool_calls_used: u32,
             elapsed_secs_since_load: Option<f64>,
         }
-        
+
         let de = BudgetStateDe::deserialize(deserializer)?;
         Ok(BudgetState {
             spent_usd: de.spent_usd,
@@ -245,7 +247,6 @@ impl Default for BudgetState {
     }
 }
 
-
 /// Context passed to guard, verdict, and action evaluations
 #[derive(Clone, Debug)]
 
@@ -254,7 +255,6 @@ pub struct StepContext {
     pub pipeline_name: String,
     pub step_name: String,
     pub step_id: String,
-
 
     pub request: Value,
     pub input: Value,
@@ -313,7 +313,6 @@ impl StepContext {
             step_name: step_name.clone(),
             step_id: step_name,
 
-
             request,
             input: Value::Null,
             output: None,
@@ -336,7 +335,6 @@ impl StepContext {
             cancellation_token: CancellationToken::new(),
             request_context: RequestContext::new(),
             memory: None,
-
         }
     }
 
@@ -381,12 +379,10 @@ impl StepContext {
     ///
     /// All registries (agent, tool, skill) are fresh instances. Caller may need to
     /// pass these from the original context or runner.
-    /// 
+    ///
     /// Filesystem and network policies ARE restored from the serialized context,
     /// ensuring security policies are preserved across checkpoint/resume cycles.
-    pub fn from_serializable(
-        serializable: SerializableStepContext,
-    ) -> Self {
+    pub fn from_serializable(serializable: SerializableStepContext) -> Self {
         Self {
             agent_name: serializable.agent_name,
             pipeline_name: serializable.pipeline_name,
@@ -415,10 +411,8 @@ impl StepContext {
             cancellation_token: CancellationToken::new(),
             request_context: serializable.request_context,
             memory: None,
-
         }
     }
-
 }
 
 /// Error type for ContextStore operations.
@@ -447,7 +441,8 @@ impl ContextStore {
     fn snapshot_path(&self, pipeline_name: &str, step_name: &str) -> std::path::PathBuf {
         let safe_pipeline = pipeline_name.replace(['/', '\\', ' ', ':'], "_");
         let safe_step = step_name.replace(['/', '\\', ' ', ':'], "_");
-        self.dir.join(format!("{}_{}.json", safe_pipeline, safe_step))
+        self.dir
+            .join(format!("{}_{}.json", safe_pipeline, safe_step))
     }
 
     /// Save a StepContext snapshot to disk.
@@ -478,8 +473,7 @@ impl ContextStore {
                 ContextStoreError::Io(e.to_string())
             }
         })?;
-        serde_json::from_slice(&bytes)
-            .map_err(|e| ContextStoreError::Serialization(e.to_string()))
+        serde_json::from_slice(&bytes).map_err(|e| ContextStoreError::Serialization(e.to_string()))
     }
 
     /// List all snapshot filenames for a given pipeline.
@@ -524,4 +518,3 @@ impl ContextStore {
         })
     }
 }
-

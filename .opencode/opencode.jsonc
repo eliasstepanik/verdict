@@ -1,0 +1,28 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "tools": {
+    "xlwings_*": false,
+    "pptx-mcp_*": false,
+    "task-local_*": false,
+    "tokensave_*": false,
+    "browser-use_*": false,
+    "knowledge-base_*": false,
+    "open-design_*": false
+  },
+  "agent": {
+    "browser-use": {
+      "description": "browser-use operations",
+      "mode": "subagent",
+      "tools": {
+        "browser-use_*": true
+      }
+    },
+    "open-design": {
+      "description": "open-design operations",
+      "mode": "subagent",
+      "tools": {
+        "open-design_*": true
+      }
+    }
+  }
+}

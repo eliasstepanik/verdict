@@ -1,7 +1,7 @@
 use super::PipelineRunner;
-use super::{PipelineError, OutputEvent};
+use super::{OutputEvent, PipelineError};
 use crate::action::{StepAction, StepError, StepOutput};
-use crate::agent::{Agent, RemoteAgentClient, AgentPolicy};
+use crate::agent::{Agent, AgentPolicy, RemoteAgentClient};
 use crate::audit::{AuditEntry, AuditEvent};
 use crate::context::{StepContext, StepResult};
 use crate::guards::{GuardEngine, GuardPhase};
@@ -11,10 +11,10 @@ use crate::tools::ToolContext;
 use crate::verdict::VerdictEngine;
 use async_recursion::async_recursion;
 use chrono::Utc;
+use futures::StreamExt;
 use serde_json::Value;
 use std::collections::VecDeque;
 use std::sync::Arc;
-use futures::StreamExt;
 
 /// Resolve template placeholders in a prompt string.
 ///
@@ -58,17 +58,31 @@ fn resolve_template(template: &str, ctx: &StepContext) -> String {
 fn strip_xml_tool_calls(text: &str) -> String {
     let mut result = text.to_string();
     // Remove <function_calls>...</function_calls> blocks (greedy, handles multiline)
-    while let (Some(start), Some(end)) = (result.find("<function_calls>"), result.find("</function_calls>")) {
+    while let (Some(start), Some(end)) = (
+        result.find("<function_calls>"),
+        result.find("</function_calls>"),
+    ) {
         if start <= end {
-            result = format!("{}{}", &result[..start], &result[end + "</function_calls>".len()..]);
+            result = format!(
+                "{}{}",
+                &result[..start],
+                &result[end + "</function_calls>".len()..]
+            );
         } else {
             break;
         }
     }
     // Remove <function_response>...</function_response> blocks
-    while let (Some(start), Some(end)) = (result.find("<function_response>"), result.find("</function_response>")) {
+    while let (Some(start), Some(end)) = (
+        result.find("<function_response>"),
+        result.find("</function_response>"),
+    ) {
         if start <= end {
-            result = format!("{}{}", &result[..start], &result[end + "</function_response>".len()..]);
+            result = format!(
+                "{}{}",
+                &result[..start],
+                &result[end + "</function_response>".len()..]
+            );
         } else {
             break;
         }
@@ -82,76 +96,93 @@ fn strip_xml_tool_calls(text: &str) -> String {
         }
     }
     // Collapse multiple blank lines
-    let re_multi_blank = result.split('\n')
+    let re_multi_blank = result
+        .split('\n')
         .fold((String::new(), 0usize), |(mut acc, blanks), line| {
             if line.trim().is_empty() {
-                if blanks < 1 { acc.push('\n'); }
+                if blanks < 1 {
+                    acc.push('\n');
+                }
                 (acc, blanks + 1)
             } else {
                 acc.push_str(line);
                 acc.push('\n');
                 (acc, 0)
             }
-        }).0;
+        })
+        .0;
     re_multi_blank.trim().to_string()
 }
 
 /// Parse XML-format tool calls from text (Claude's legacy XML format).
-/// 
+///
 /// Extracts all `<invoke name="TOOL_NAME">...</invoke>` blocks and converts them to (tool_name, args_json) pairs.
 /// Each block should contain `<parameter name="KEY">VALUE</parameter>` entries.
-/// 
+///
 /// Returns a Vec of (tool_name, args_json) pairs, or an empty Vec if no XML tool calls are found.
 fn parse_xml_tool_calls(text: &str) -> Vec<(String, serde_json::Value)> {
     let mut result = Vec::new();
-    
+
     // Find all <invoke name="..."> blocks
     let mut remaining = text;
     while let Some(start) = remaining.find("<invoke") {
         // Look for the closing > of the opening tag
         if let Some(tag_end) = remaining[start..].find('>') {
             let tag_end = start + tag_end;
-            
+
             // Extract the opening tag to get the tool name
             let open_tag = &remaining[start..=tag_end];
             if let Some(name_start) = open_tag.find("name=\"") {
                 let name_start = start + name_start + 6; // len("name=\"")
                 if let Some(name_end) = remaining[name_start..].find('"') {
                     let tool_name = remaining[name_start..name_start + name_end].to_string();
-                    
+
                     // Find the closing </invoke> tag
                     if let Some(close_pos) = remaining[tag_end + 1..].find("</invoke>") {
                         let close_pos = tag_end + 1 + close_pos;
                         let block_content = &remaining[tag_end + 1..close_pos];
-                        
+
                         // Parse <parameter name="KEY">VALUE</parameter> entries
                         let mut args = serde_json::json!({});
                         let mut param_remaining = block_content;
-                        
+
                         while let Some(param_start) = param_remaining.find("<parameter") {
                             if let Some(param_tag_end) = param_remaining[param_start..].find('>') {
                                 let param_tag_end = param_start + param_tag_end;
                                 let param_tag = &param_remaining[param_start..=param_tag_end];
-                                
+
                                 // Extract parameter name
                                 if let Some(pname_start) = param_tag.find("name=\"") {
                                     let pname_start = param_start + pname_start + 6;
-                                    if let Some(pname_end) = param_remaining[pname_start..].find('"') {
-                                        let param_name = param_remaining[pname_start..pname_start + pname_end].to_string();
-                                        
+                                    if let Some(pname_end) =
+                                        param_remaining[pname_start..].find('"')
+                                    {
+                                        let param_name = param_remaining
+                                            [pname_start..pname_start + pname_end]
+                                            .to_string();
+
                                         // Find the closing </parameter> tag
-                                        if let Some(pclose_pos) = param_remaining[param_tag_end + 1..].find("</parameter>") {
+                                        if let Some(pclose_pos) = param_remaining
+                                            [param_tag_end + 1..]
+                                            .find("</parameter>")
+                                        {
                                             let pclose_pos = param_tag_end + 1 + pclose_pos;
-                                            let param_value = param_remaining[param_tag_end + 1..pclose_pos].trim().to_string();
-                                            
+                                            let param_value = param_remaining
+                                                [param_tag_end + 1..pclose_pos]
+                                                .trim()
+                                                .to_string();
+
                                             // Try to parse as JSON, otherwise treat as string
-                                            if let Ok(json_val) = serde_json::from_str(&param_value) {
+                                            if let Ok(json_val) = serde_json::from_str(&param_value)
+                                            {
                                                 args[&param_name] = json_val;
                                             } else {
-                                                args[&param_name] = serde_json::Value::String(param_value);
+                                                args[&param_name] =
+                                                    serde_json::Value::String(param_value);
                                             }
-                                            
-                                            param_remaining = &param_remaining[pclose_pos + "</parameter>".len()..];
+
+                                            param_remaining = &param_remaining
+                                                [pclose_pos + "</parameter>".len()..];
                                         } else {
                                             break;
                                         }
@@ -165,7 +196,7 @@ fn parse_xml_tool_calls(text: &str) -> Vec<(String, serde_json::Value)> {
                                 break;
                             }
                         }
-                        
+
                         result.push((tool_name, args));
                         remaining = &remaining[close_pos + "</invoke>".len()..];
                     } else {
@@ -181,18 +212,14 @@ fn parse_xml_tool_calls(text: &str) -> Vec<(String, serde_json::Value)> {
             break;
         }
     }
-    
+
     result
 }
-
 
 impl PipelineRunner {
     /// Topologically sort pipeline steps based on dependencies (Kahn's algorithm)
     /// Returns indices in execution order, or error if cycle is detected or dependency is missing.
-    pub fn topological_sort(
-        &self,
-        pipeline: &Pipeline,
-    ) -> Result<Vec<usize>, PipelineError> {
+    pub fn topological_sort(&self, pipeline: &Pipeline) -> Result<Vec<usize>, PipelineError> {
         let n = pipeline.steps.len();
 
         // Build a map from step name to index
@@ -433,10 +460,12 @@ impl PipelineRunner {
                 conversation_id,
                 append_to_history,
             } => {
-                let llm_client = self.llm_client.as_ref()
-                    .ok_or_else(|| StepError::ActionFailed {
-                        reason: "LLM client not configured".into(),
-                    })?;
+                let llm_client =
+                    self.llm_client
+                        .as_ref()
+                        .ok_or_else(|| StepError::ActionFailed {
+                            reason: "LLM client not configured".into(),
+                        })?;
 
                 // Resolve templates
                 let resolved_system = resolve_template(system, ctx);
@@ -461,10 +490,13 @@ impl PipelineRunner {
                 };
 
                 // Call the LLM
-                let response = llm_client.complete(req).await
-                    .map_err(|e| StepError::ActionFailed {
-                        reason: format!("LLM call failed: {}", e),
-                    })?;
+                let response =
+                    llm_client
+                        .complete(req)
+                        .await
+                        .map_err(|e| StepError::ActionFailed {
+                            reason: format!("LLM call failed: {}", e),
+                        })?;
 
                 // Increment budget
                 ctx.budget.llm_calls_used += 1;
@@ -474,14 +506,8 @@ impl PipelineRunner {
                     if let Some(conv_id) = conversation_id {
                         if let Ok(mut registry) = self.conversation_registry.lock() {
                             let history = registry.get_or_create(conv_id);
-                            history.push(
-                                crate::llm::ChatRole::User,
-                                resolve_template(user, ctx),
-                            );
-                            history.push(
-                                crate::llm::ChatRole::Assistant,
-                                response.content.clone(),
-                            );
+                            history.push(crate::llm::ChatRole::User, resolve_template(user, ctx));
+                            history.push(crate::llm::ChatRole::Assistant, response.content.clone());
                         }
                     }
                 }
@@ -497,10 +523,12 @@ impl PipelineRunner {
                 conversation_id,
                 append_to_history,
             } => {
-                let llm_client = self.llm_client.as_ref()
-                    .ok_or_else(|| StepError::ActionFailed {
-                        reason: "LLM client not configured".into(),
-                    })?;
+                let llm_client =
+                    self.llm_client
+                        .as_ref()
+                        .ok_or_else(|| StepError::ActionFailed {
+                            reason: "LLM client not configured".into(),
+                        })?;
 
                 // Resolve templates
                 let resolved_system = resolve_template(system, ctx);
@@ -553,14 +581,8 @@ impl PipelineRunner {
                     if let Some(conv_id) = conversation_id {
                         if let Ok(mut registry) = self.conversation_registry.lock() {
                             let history = registry.get_or_create(conv_id);
-                            history.push(
-                                crate::llm::ChatRole::User,
-                                resolve_template(user, ctx),
-                            );
-                            history.push(
-                                crate::llm::ChatRole::Assistant,
-                                assembled.clone(),
-                            );
+                            history.push(crate::llm::ChatRole::User, resolve_template(user, ctx));
+                            history.push(crate::llm::ChatRole::Assistant, assembled.clone());
                         }
                     }
                 }
@@ -715,20 +737,25 @@ impl PipelineRunner {
             }
 
             // ========== UseSkill ==========
-            StepAction::UseSkill { skill, input: _input, mode } => {
-                let skill_def = self.skill_registry.get(skill).ok_or_else(|| {
-                    StepError::ActionFailed {
-                        reason: format!("Skill '{}' not found", skill),
-                    }
-                })?;
+            StepAction::UseSkill {
+                skill,
+                input: _input,
+                mode,
+            } => {
+                let skill_def =
+                    self.skill_registry
+                        .get(skill)
+                        .ok_or_else(|| StepError::ActionFailed {
+                            reason: format!("Skill '{}' not found", skill),
+                        })?;
 
                 // Check required guards
                 for guard in &skill_def.required_guards {
-                    GuardEngine::evaluate(guard, ctx).await.map_err(|e: crate::guards::GuardError| {
-                        StepError::ActionFailed {
+                    GuardEngine::evaluate(guard, ctx).await.map_err(
+                        |e: crate::guards::GuardError| StepError::ActionFailed {
                             reason: format!("Skill required guard failed: {e}"),
-                        }
-                    })?;
+                        },
+                    )?;
                 }
 
                 match mode {
@@ -738,11 +765,8 @@ impl PipelineRunner {
                             Ok(StepOutput::new(skill_def.instructions.clone()))
                         } else {
                             // Inject skill instructions into the system prompt of an LlmCall
-                            let injected_system = format!(
-                                "{}\n\n{}\n",
-                                skill_def.instructions,
-                                "{system}"
-                            );
+                            let injected_system =
+                                format!("{}\n\n{}\n", skill_def.instructions, "{system}");
                             let injected_user = "{user}".to_string();
 
                             // We can't easily modify the action, so we'll build an LlmCall
@@ -829,17 +853,20 @@ impl PipelineRunner {
                 max_rounds,
                 stop_condition,
             } => {
-                let llm_client = self.llm_client.as_ref()
-                    .ok_or_else(|| StepError::ActionFailed {
-                        reason: "LLM client not configured".into(),
-                    })?;
+                let llm_client =
+                    self.llm_client
+                        .as_ref()
+                        .ok_or_else(|| StepError::ActionFailed {
+                            reason: "LLM client not configured".into(),
+                        })?;
 
                 // Build tool schemas from registry.
                 // Anthropic (and many other providers) reject tool names containing dots —
                 // the API enforces ^[a-zA-Z0-9_-]{1,128}$. We sanitize dots → underscores
                 // for the LLM-facing name and keep a reverse map to restore the registry key.
                 let mut tool_schemas = Vec::new();
-                let mut tool_name_map: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+                let mut tool_name_map: std::collections::HashMap<String, String> =
+                    std::collections::HashMap::new();
                 for tool_name in tools {
                     if let Some(tool) = self.tool_registry.get(tool_name) {
                         let safe_name = tool_name.replace('.', "_");
@@ -855,9 +882,12 @@ impl PipelineRunner {
                 let resolved_system = resolve_template(system, ctx);
                 let resolved_user = resolve_template(user, ctx);
 
-                eprintln!("[toolloop-init] system_len={} user_len={} user_preview={}", 
-                    resolved_system.len(), resolved_user.len(),
-                    &resolved_user[..resolved_user.len().min(80)]);
+                eprintln!(
+                    "[toolloop-init] system_len={} user_len={} user_preview={}",
+                    resolved_system.len(),
+                    resolved_user.len(),
+                    &resolved_user[..resolved_user.len().min(80)]
+                );
 
                 // Conversation history accumulated across rounds.
                 // Each round: send history + new user/tool messages, get assistant response.
@@ -880,8 +910,24 @@ impl PipelineRunner {
                         String::new()
                     };
 
+                    // Determine tool_choice: "auto" if tools available, None if no tools.
+                    // Proxy ignores tool_choice anyway; instruction in system prompt enforces tool use.
+                    let tool_choice = if !tool_schemas.is_empty() {
+                        Some("auto".to_string())
+                    } else {
+                        None
+                    };
+
+                    // Belt and suspenders: append instruction to system prompt when tools are required on round 0
+                    // This ensures the model prioritizes tool calls even if tool_choice conversion fails
+                    let effective_system = if round == 0 && !tool_schemas.is_empty() {
+                        format!("{}\n\nWICHTIG: Du MUSST jetzt ein Tool aufrufen. Antworte NICHT mit Text — rufe sofort das passende Tool auf.", resolved_system)
+                    } else {
+                        resolved_system.clone()
+                    };
+
                     let req = crate::llm::LlmRequest {
-                        system: resolved_system.clone(),
+                        system: effective_system.clone(),
                         user: user_msg.clone(),
                         model: if model.model.is_empty() {
                             llm_client.default_model().to_string()
@@ -889,21 +935,34 @@ impl PipelineRunner {
                             model.model.clone()
                         },
                         max_tokens: None,
-                        history: if history.is_empty() { None } else { Some(history.clone()) },
+                        history: if history.is_empty() {
+                            None
+                        } else {
+                            Some(history.clone())
+                        },
                         temperature: None,
-                        tools: if tool_schemas.is_empty() { None } else { Some(tool_schemas.clone()) },
-                        tool_choice: None,
+                        tools: if tool_schemas.is_empty() {
+                            None
+                        } else {
+                            Some(tool_schemas.clone())
+                        },
+                        tool_choice,
                     };
 
-                    let response = llm_client.complete(req).await.map_err(|e| {
-                        StepError::ActionFailed {
-                            reason: format!("ToolUseLoop LLM call failed: {}", e),
-                        }
-                    })?;
+                    let response =
+                        llm_client
+                            .complete(req)
+                            .await
+                            .map_err(|e| StepError::ActionFailed {
+                                reason: format!("ToolUseLoop LLM call failed: {}", e),
+                            })?;
 
                     ctx.budget.llm_calls_used += 1;
                     final_text = response.content.clone();
-                    let mut has_tool_calls = response.tool_calls.as_ref().map_or(false, |tc| !tc.is_empty());
+                    let mut has_tool_calls = response
+                        .tool_calls
+                        .as_ref()
+                        .map_or(false, |tc| !tc.is_empty());
 
                     // Check for XML-format tool calls if JSON tool_calls are absent
                     let xml_tool_calls = if !has_tool_calls {
@@ -913,8 +972,12 @@ impl PipelineRunner {
                     };
 
                     let should_stop = match stop_condition {
-                        crate::action::StopCondition::TextOnly => !has_tool_calls && xml_tool_calls.is_empty(),
-                        crate::action::StopCondition::Pattern(pattern) => final_text.contains(pattern),
+                        crate::action::StopCondition::TextOnly => {
+                            !has_tool_calls && xml_tool_calls.is_empty()
+                        }
+                        crate::action::StopCondition::Pattern(pattern) => {
+                            final_text.contains(pattern)
+                        }
                         crate::action::StopCondition::MaxRounds => round + 1 >= *max_rounds,
                     };
 
@@ -936,9 +999,12 @@ impl PipelineRunner {
                     // When tool_calls are present, content may be empty — that's fine
                     if let Some(ref tool_calls_list) = response.tool_calls {
                         // Build the tool_calls array in OpenAI format
-                        let tool_calls_json = serde_json::json!(
-                            tool_calls_list.iter().enumerate().map(|(i, tc)| {
-                                let call_id = tc.id.clone().unwrap_or_else(|| format!("call_{}", i));
+                        let tool_calls_json = serde_json::json!(tool_calls_list
+                            .iter()
+                            .enumerate()
+                            .map(|(i, tc)| {
+                                let call_id =
+                                    tc.id.clone().unwrap_or_else(|| format!("call_{}", i));
                                 serde_json::json!({
                                     "id": call_id,
                                     "type": "function",
@@ -947,74 +1013,147 @@ impl PipelineRunner {
                                         "arguments": tc.arguments.to_string()
                                     }
                                 })
-                            }).collect::<Vec<_>>()
-                        );
-                        history.messages.push(crate::llm::ChatMessage::assistant_with_tool_calls(
-                            final_text.clone(),
-                            tool_calls_json,
-                        ));
-                        
+                            })
+                            .collect::<Vec<_>>());
+                        history
+                            .messages
+                            .push(crate::llm::ChatMessage::assistant_with_tool_calls(
+                                final_text.clone(),
+                                tool_calls_json,
+                            ));
+
                         // Execute each tool and add its result with proper tool_call_id
                         for (i, tc) in tool_calls_list.iter().enumerate() {
                             let call_id = tc.id.clone().unwrap_or_else(|| format!("call_{}", i));
-                            let registry_name = tool_name_map.get(&tc.name)
+                            let registry_name = tool_name_map
+                                .get(&tc.name)
                                 .cloned()
                                 .unwrap_or_else(|| tc.name.clone());
-                            
-                            eprintln!("[tool-call] llm_name={} registry_name={} args={}", tc.name, registry_name, tc.arguments);
-                            
-                            let tool_result = if let Some(tool) = self.tool_registry.get(&registry_name) {
-                                match tool.call(tc.arguments.clone(), ToolContext {
-                                    audit_log: Arc::new(std::sync::Mutex::new(self.audit_log.clone())),
-                                    filesystem_policy: ctx.filesystem_policy.clone(),
-                                    network_policy: ctx.network_policy.clone(),
-                                    allowed_tools: ctx.allowed_tools.clone(),
-                                }).await {
-                                    Ok(output) => { let pe = output.raw.char_indices().nth(80).map(|(i,_)|i).unwrap_or(output.raw.len()); eprintln!("[tool-ok] {}: {}", registry_name, &output.raw[..pe]); output.raw },
-                                    Err(e) => { eprintln!("[tool-err] {}: {}", registry_name, e); format!("Tool error: {}", e) },
-                                }
-                            } else {
-                                eprintln!("[tool-notfound] '{}' (from llm: '{}'). available in map: {:?}", registry_name, tc.name, tool_name_map.keys().collect::<Vec<_>>());
-                                format!("Tool '{}' not found", registry_name)
-                            };
-                            
-                            history.messages.push(crate::llm::ChatMessage::tool_result(
-                                call_id,
-                                tool_result,
-                            ));
+
+                            eprintln!(
+                                "[tool-call] llm_name={} registry_name={} args={}",
+                                tc.name, registry_name, tc.arguments
+                            );
+
+                            let tool_result =
+                                if let Some(tool) = self.tool_registry.get(&registry_name) {
+                                    match tool
+                                        .call(
+                                            tc.arguments.clone(),
+                                            ToolContext {
+                                                audit_log: Arc::new(std::sync::Mutex::new(
+                                                    self.audit_log.clone(),
+                                                )),
+                                                filesystem_policy: ctx.filesystem_policy.clone(),
+                                                network_policy: ctx.network_policy.clone(),
+                                                allowed_tools: ctx.allowed_tools.clone(),
+                                            },
+                                        )
+                                        .await
+                                    {
+                                        Ok(output) => {
+                                            let pe = output
+                                                .raw
+                                                .char_indices()
+                                                .nth(80)
+                                                .map(|(i, _)| i)
+                                                .unwrap_or(output.raw.len());
+                                            eprintln!(
+                                                "[tool-ok] {}: {}",
+                                                registry_name,
+                                                &output.raw[..pe]
+                                            );
+                                            output.raw
+                                        }
+                                        Err(e) => {
+                                            eprintln!("[tool-err] {}: {}", registry_name, e);
+                                            format!("Tool error: {}", e)
+                                        }
+                                    }
+                                } else {
+                                    eprintln!(
+                                    "[tool-notfound] '{}' (from llm: '{}'). available in map: {:?}",
+                                    registry_name,
+                                    tc.name,
+                                    tool_name_map.keys().collect::<Vec<_>>()
+                                );
+                                    format!("Tool '{}' not found", registry_name)
+                                };
+
+                            history
+                                .messages
+                                .push(crate::llm::ChatMessage::tool_result(call_id, tool_result));
                         }
                     } else if !xml_tool_calls.is_empty() {
                         // XML tool calls found — execute them
                         has_tool_calls = true;
-                        
-                        // Add assistant message (XML will be in final_text; stripped later in synthesis)
-                        history.push(crate::llm::ChatRole::Assistant, final_text.clone());
-                        
+
+                        // FIX: build tool_calls JSON array with synthetic IDs matching what tool_result will use
+                        let tool_calls_json = serde_json::json!(xml_tool_calls
+                            .iter()
+                            .enumerate()
+                            .map(|(i, (tool_name, args))| {
+                                serde_json::json!({
+                                    "id": format!("xml_call_{}", i),
+                                    "type": "function",
+                                    "function": {
+                                        "name": tool_name,
+                                        "arguments": args.to_string()
+                                    }
+                                })
+                            })
+                            .collect::<Vec<_>>());
+                        // Push assistant message WITH tool_calls so IDs are in the message history
+                        history
+                            .messages
+                            .push(crate::llm::ChatMessage::assistant_with_tool_calls(
+                                final_text.clone(),
+                                tool_calls_json,
+                            ));
+
                         // Execute each XML tool call
                         for (i, (tool_name, args)) in xml_tool_calls.iter().enumerate() {
                             let call_id = format!("xml_call_{}", i);
-                            
+
                             eprintln!("[xml-tool-call] tool_name={} args={}", tool_name, args);
-                            
-                            let tool_result = if let Some(tool) = self.tool_registry.get(tool_name) {
-                                match tool.call(args.clone(), ToolContext {
-                                    audit_log: Arc::new(std::sync::Mutex::new(self.audit_log.clone())),
-                                    filesystem_policy: ctx.filesystem_policy.clone(),
-                                    network_policy: ctx.network_policy.clone(),
-                                    allowed_tools: ctx.allowed_tools.clone(),
-                                }).await {
-                                    Ok(output) => { eprintln!("[xml-tool-ok] {}: {}", tool_name, &output.raw[..output.raw.len().min(80)]); output.raw },
-                                    Err(e) => { eprintln!("[xml-tool-err] {}: {}", tool_name, e); format!("Tool error: {}", e) },
+
+                            let tool_result = if let Some(tool) = self.tool_registry.get(tool_name)
+                            {
+                                match tool
+                                    .call(
+                                        args.clone(),
+                                        ToolContext {
+                                            audit_log: Arc::new(std::sync::Mutex::new(
+                                                self.audit_log.clone(),
+                                            )),
+                                            filesystem_policy: ctx.filesystem_policy.clone(),
+                                            network_policy: ctx.network_policy.clone(),
+                                            allowed_tools: ctx.allowed_tools.clone(),
+                                        },
+                                    )
+                                    .await
+                                {
+                                    Ok(output) => {
+                                        eprintln!(
+                                            "[xml-tool-ok] {}: {}",
+                                            tool_name,
+                                            &output.raw[..output.raw.len().min(80)]
+                                        );
+                                        output.raw
+                                    }
+                                    Err(e) => {
+                                        eprintln!("[xml-tool-err] {}: {}", tool_name, e);
+                                        format!("Tool error: {}", e)
+                                    }
                                 }
                             } else {
                                 eprintln!("[xml-tool-notfound] '{}'", tool_name);
                                 format!("Tool '{}' not found", tool_name)
                             };
-                            
-                            history.messages.push(crate::llm::ChatMessage::tool_result(
-                                call_id,
-                                tool_result,
-                            ));
+
+                            history
+                                .messages
+                                .push(crate::llm::ChatMessage::tool_result(call_id, tool_result));
                         }
                     } else {
                         // No tool calls — plain assistant message
@@ -1031,18 +1170,31 @@ impl PipelineRunner {
                 // chance to actually call tools and complete the task.
                 let needs_synthesis = !history.is_empty() && !tool_schemas.is_empty();
                 if needs_synthesis {
-                    // Add explicit user turn so conversation is valid
-                    history.push(
-                        crate::llm::ChatRole::User,
-                        "Please complete the task now. Use <invoke name=\"TOOL_NAME\"><parameter name=\"KEY\">VALUE</parameter></invoke> XML to call tools, then provide your final answer.".to_string(),
+                    // Build tool list for XML instruction so model knows what tools are available
+                    let tool_list = tool_schemas
+                        .iter()
+                        .map(|t| format!("  - {} : {}", t.name, t.description))
+                        .collect::<Vec<_>>()
+                        .join("\n");
+
+                    let xml_instruction = format!(
+                        "Please complete the task now. Available tools:\n{}\n\nCall ONE tool at a time using XML:\n<invoke name=\"TOOL_NAME\"><parameter name=\"KEY\">VALUE</parameter></invoke>\n\nWait for each tool result before calling the next tool, especially when you need the ID from one call to use in the next.\n\nAfter all tool calls, provide your final text answer.",
+                        tool_list
                     );
 
+                    // Add explicit user turn so conversation is valid
+                    history.push(crate::llm::ChatRole::User, xml_instruction);
+
+                    let mut consecutive_tool_failures = 0;
                     for _syn_round in 0..10 {
                         // Send synthesis WITHOUT tool schemas so the API doesn't enforce
                         // structured tool calling. This lets Claude use its XML tool-call
                         // format (<invoke name="...">...</invoke>) freely in its text response,
                         // which we then parse and execute via parse_xml_tool_calls().
-                        let has_tool_results = history.messages.iter().any(|m| matches!(m.role, crate::llm::ChatRole::Tool));
+                        let has_tool_results = history
+                            .messages
+                            .iter()
+                            .any(|m| matches!(m.role, crate::llm::ChatRole::Tool));
                         let synthesis_req = crate::llm::LlmRequest {
                             system: resolved_system.clone(),
                             user: String::new(),
@@ -1054,7 +1206,7 @@ impl PipelineRunner {
                             max_tokens: None,
                             history: Some(history.clone()),
                             temperature: None,
-                            // No tools: lets Claude generate XML tool calls freely in text
+                            // No API tools — model uses XML <invoke> format freely (parsed by parse_xml_tool_calls)
                             tools: None,
                             tool_choice: None,
                         };
@@ -1074,18 +1226,85 @@ impl PipelineRunner {
                                                 serde_json::json!({"id": cid, "type": "function", "function": {"name": tc.name, "arguments": tc.arguments.to_string()}})
                                             }).collect::<Vec<_>>()
                                         );
-                                        history.messages.push(crate::llm::ChatMessage::assistant_with_tool_calls(raw.clone(), tc_json));
+                                        history.messages.push(
+                                            crate::llm::ChatMessage::assistant_with_tool_calls(
+                                                raw.clone(),
+                                                tc_json,
+                                            ),
+                                        );
+                                        let mut tool_results = Vec::new();
                                         for (i, tc) in tcs.iter().enumerate() {
-                                            let cid = tc.id.clone().unwrap_or_else(|| format!("syn_call_{}", i));
-                                            let rname = tool_name_map.get(&tc.name).cloned().unwrap_or_else(|| tc.name.clone());
-                                            let result = if let Some(tool) = self.tool_registry.get(&rname) {
-                                                match tool.call(tc.arguments.clone(), ToolContext { audit_log: Arc::new(std::sync::Mutex::new(self.audit_log.clone())), filesystem_policy: ctx.filesystem_policy.clone(), network_policy: ctx.network_policy.clone(), allowed_tools: ctx.allowed_tools.clone() }).await {
-                                                    Ok(o) => { eprintln!("[syn-tool-ok] {}", rname); o.raw },
-                                                    Err(e) => { eprintln!("[syn-tool-err] {}: {}", rname, e); format!("Tool error: {}", e) },
+                                            let cid = tc
+                                                .id
+                                                .clone()
+                                                .unwrap_or_else(|| format!("syn_call_{}", i));
+                                            let rname = tool_name_map
+                                                .get(&tc.name)
+                                                .cloned()
+                                                .unwrap_or_else(|| tc.name.clone());
+                                            let result = if let Some(tool) =
+                                                self.tool_registry.get(&rname)
+                                            {
+                                                match tool
+                                                    .call(
+                                                        tc.arguments.clone(),
+                                                        ToolContext {
+                                                            audit_log: Arc::new(
+                                                                std::sync::Mutex::new(
+                                                                    self.audit_log.clone(),
+                                                                ),
+                                                            ),
+                                                            filesystem_policy: ctx
+                                                                .filesystem_policy
+                                                                .clone(),
+                                                            network_policy: ctx
+                                                                .network_policy
+                                                                .clone(),
+                                                            allowed_tools: ctx
+                                                                .allowed_tools
+                                                                .clone(),
+                                                        },
+                                                    )
+                                                    .await
+                                                {
+                                                    Ok(o) => {
+                                                        eprintln!("[syn-tool-ok] {}", rname);
+                                                        o.raw
+                                                    }
+                                                    Err(e) => {
+                                                        eprintln!(
+                                                            "[syn-tool-err] {}: {}",
+                                                            rname, e
+                                                        );
+                                                        format!("Tool error: {}", e)
+                                                    }
                                                 }
-                                            } else { format!("Tool '{}' not found", rname) };
-                                            history.messages.push(crate::llm::ChatMessage::tool_result(cid, result));
+                                            } else {
+                                                format!("Tool '{}' not found", rname)
+                                            };
+                                            tool_results.push(result.clone());
+                                            history.messages.push(
+                                                crate::llm::ChatMessage::tool_result(cid, result),
+                                            );
                                         }
+
+                                        // Track consecutive tool failures
+                                        let all_failed = tool_results
+                                            .iter()
+                                            .all(|r| r.starts_with("Tool error:"));
+                                        if all_failed && !tool_results.is_empty() {
+                                            consecutive_tool_failures += 1;
+                                        } else {
+                                            consecutive_tool_failures = 0;
+                                        }
+
+                                        // Exit early if tools keep failing
+                                        if consecutive_tool_failures >= 2 {
+                                            eprintln!("[syn-abort] consecutive tool failures in JSON calls, aborting synthesis");
+                                            final_text = "Error: The requested actions could not be completed (repeated tool failures).".to_string();
+                                            break;
+                                        }
+
                                         continue; // next synthesis round
                                     }
                                 }
@@ -1093,32 +1312,144 @@ impl PipelineRunner {
                                 // Check for XML tool calls
                                 let xml_calls = parse_xml_tool_calls(&raw);
                                 if !xml_calls.is_empty() {
-                                    history.push(crate::llm::ChatRole::Assistant, raw.clone());
+                                    // FIX: build tool_calls JSON array with synthetic IDs matching what tool_result will use
+                                    let tool_calls_json = serde_json::json!(xml_calls
+                                        .iter()
+                                        .enumerate()
+                                        .map(|(i, (tname, targs))| {
+                                            serde_json::json!({
+                                                "id": format!("syn_xml_{}", i),
+                                                "type": "function",
+                                                "function": {
+                                                    "name": tname,
+                                                    "arguments": targs.to_string()
+                                                }
+                                            })
+                                        })
+                                        .collect::<Vec<_>>());
+                                    history.messages.push(
+                                        crate::llm::ChatMessage::assistant_with_tool_calls(
+                                            raw.clone(),
+                                            tool_calls_json,
+                                        ),
+                                    );
+                                    let mut xml_tool_results = Vec::new();
                                     for (i, (tname, targs)) in xml_calls.iter().enumerate() {
                                         let cid = format!("syn_xml_{}", i);
                                         eprintln!("[syn-xml-tool] {} args={}", tname, targs);
-                                        let result = if let Some(tool) = self.tool_registry.get(tname) {
-                                            match tool.call(targs.clone(), ToolContext { audit_log: Arc::new(std::sync::Mutex::new(self.audit_log.clone())), filesystem_policy: ctx.filesystem_policy.clone(), network_policy: ctx.network_policy.clone(), allowed_tools: ctx.allowed_tools.clone() }).await {
-                                                Ok(o) => { eprintln!("[syn-xml-ok] {}: {}", tname, &o.raw[..o.raw.len().min(80)]); o.raw },
-                                                Err(e) => { eprintln!("[syn-xml-err] {}: {}", tname, e); format!("Tool error: {}", e) },
+                                        let result = if let Some(tool) =
+                                            self.tool_registry.get(tname)
+                                        {
+                                            match tool
+                                                .call(
+                                                    targs.clone(),
+                                                    ToolContext {
+                                                        audit_log: Arc::new(std::sync::Mutex::new(
+                                                            self.audit_log.clone(),
+                                                        )),
+                                                        filesystem_policy: ctx
+                                                            .filesystem_policy
+                                                            .clone(),
+                                                        network_policy: ctx.network_policy.clone(),
+                                                        allowed_tools: ctx.allowed_tools.clone(),
+                                                    },
+                                                )
+                                                .await
+                                            {
+                                                Ok(o) => {
+                                                    eprintln!(
+                                                        "[syn-xml-ok] {}: {}",
+                                                        tname,
+                                                        &o.raw[..o.raw.len().min(80)]
+                                                    );
+                                                    o.raw
+                                                }
+                                                Err(e) => {
+                                                    eprintln!("[syn-xml-err] {}: {}", tname, e);
+                                                    format!("Tool error: {}", e)
+                                                }
                                             }
-                                        } else { format!("Tool '{}' not found", tname) };
-                                        history.messages.push(crate::llm::ChatMessage::tool_result(cid, result));
+                                        } else {
+                                            format!("Tool '{}' not found", tname)
+                                        };
+                                        xml_tool_results.push(result.clone());
+                                        history.messages.push(
+                                            crate::llm::ChatMessage::tool_result(cid, result),
+                                        );
                                     }
+
+                                    // Track consecutive tool failures
+                                    let all_failed = xml_tool_results
+                                        .iter()
+                                        .all(|r| r.starts_with("Tool error:"));
+                                    if all_failed && !xml_tool_results.is_empty() {
+                                        consecutive_tool_failures += 1;
+                                    } else {
+                                        consecutive_tool_failures = 0;
+                                    }
+
+                                    // Exit early if tools keep failing
+                                    if consecutive_tool_failures >= 2 {
+                                        eprintln!("[syn-abort] consecutive tool failures in XML calls, aborting synthesis");
+                                        final_text = "Error: The requested actions could not be completed (repeated tool failures).".to_string();
+                                        break;
+                                    }
+
+                                    // FIX 1: After call_agent succeeds, use its result as final output and exit synthesis
+                                    // If the only XML tool called is call_agent, treat its result as completion
+                                    if xml_calls.len() == 1 && xml_calls[0].0 == "call_agent" {
+                                        // call_agent completed a delegation — use the tool result (last message) as final output
+                                        if let Some(last_msg) = history.messages.last() {
+                                            if matches!(last_msg.role, crate::llm::ChatRole::Tool) {
+                                                final_text = last_msg.content.clone();
+                                            }
+                                        }
+                                        eprintln!("[syn-call-agent-done] exiting synthesis after call_agent success");
+                                        break;
+                                    }
+
                                     continue; // next synthesis round
                                 }
 
                                 // Text-only response — done
                                 let cleaned = strip_xml_tool_calls(&raw);
-                                final_text = if !cleaned.trim().is_empty() { cleaned } else if !raw.is_empty() { raw } else {
-                                    let tool_results: Vec<String> = history.messages.iter().filter(|m| matches!(m.role, crate::llm::ChatRole::Tool)).map(|m| m.content.clone()).collect();
-                                    if tool_results.is_empty() { "Task completed.".to_string() } else { format!("Task completed.\n{}", tool_results.last().unwrap_or(&String::new())) }
+                                final_text = if !cleaned.trim().is_empty() {
+                                    cleaned
+                                } else if !raw.is_empty() {
+                                    raw
+                                } else {
+                                    let tool_results: Vec<String> = history
+                                        .messages
+                                        .iter()
+                                        .filter(|m| matches!(m.role, crate::llm::ChatRole::Tool))
+                                        .map(|m| m.content.clone())
+                                        .collect();
+                                    if tool_results.is_empty() {
+                                        "Task completed.".to_string()
+                                    } else {
+                                        format!(
+                                            "Task completed.\n{}",
+                                            tool_results.last().unwrap_or(&String::new())
+                                        )
+                                    }
                                 };
                                 break;
                             }
                             Err(_) => {
-                                let tool_results: Vec<String> = history.messages.iter().filter(|m| matches!(m.role, crate::llm::ChatRole::Tool)).map(|m| m.content.clone()).collect();
-                                final_text = if tool_results.is_empty() { "Task completed.".to_string() } else { format!("Task completed.\n{}", tool_results.last().unwrap_or(&String::new())) };
+                                let tool_results: Vec<String> = history
+                                    .messages
+                                    .iter()
+                                    .filter(|m| matches!(m.role, crate::llm::ChatRole::Tool))
+                                    .map(|m| m.content.clone())
+                                    .collect();
+                                final_text = if tool_results.is_empty() {
+                                    "Task completed.".to_string()
+                                } else {
+                                    format!(
+                                        "Task completed.\n{}",
+                                        tool_results.last().unwrap_or(&String::new())
+                                    )
+                                };
                                 break;
                             }
                         }
@@ -1128,18 +1459,16 @@ impl PipelineRunner {
                 Ok(StepOutput::new(final_text))
             }
 
-
-
             // ========== UserInput ==========
             StepAction::UserInput { prompt, schema: _ } => {
                 eprintln!("{} [y/N]: ", prompt);
                 let stdin = std::io::stdin();
                 let mut line = String::new();
-                stdin.read_line(&mut line).map_err(|e| {
-                    StepError::ActionFailed {
+                stdin
+                    .read_line(&mut line)
+                    .map_err(|e| StepError::ActionFailed {
                         reason: format!("Failed to read user input: {}", e),
-                    }
-                })?;
+                    })?;
 
                 Ok(StepOutput::new(line.trim().to_string()))
             }
@@ -1147,11 +1476,11 @@ impl PipelineRunner {
             // ========== DelegateAgent ==========
             // NOTE: DelegateAgent should be handled in the main run() method before execute_action.
             // If we reach here, it means the caller misused the runner.
-            StepAction::DelegateAgent { .. } => {
-                Err(StepError::ActionFailed {
-                    reason: "DelegateAgent should be handled by PipelineRunner::run(), not execute_action()".into(),
-                })
-            }
+            StepAction::DelegateAgent { .. } => Err(StepError::ActionFailed {
+                reason:
+                    "DelegateAgent should be handled by PipelineRunner::run(), not execute_action()"
+                        .into(),
+            }),
 
             // ========== Sleep ==========
             StepAction::Sleep { duration_ms } => {
@@ -1191,10 +1520,7 @@ impl PipelineRunner {
                 if *concurrency <= 1 {
                     // Sequential execution
                     for item in &items {
-                        let output = StepOutput::with_parsed(
-                            item.to_string(),
-                            item.clone(),
-                        );
+                        let output = StepOutput::with_parsed(item.to_string(), item.clone());
                         results.push(output);
                     }
                 } else {
@@ -1213,7 +1539,11 @@ impl PipelineRunner {
                 if *collect_results {
                     let arr: Vec<serde_json::Value> = results
                         .iter()
-                        .map(|r| r.parsed.clone().unwrap_or(serde_json::Value::String(r.raw.clone())))
+                        .map(|r| {
+                            r.parsed
+                                .clone()
+                                .unwrap_or(serde_json::Value::String(r.raw.clone()))
+                        })
                         .collect();
                     let json = serde_json::Value::Array(arr);
                     Ok(StepOutput::with_parsed(json.to_string(), json))
@@ -1224,7 +1554,7 @@ impl PipelineRunner {
                         .unwrap_or_else(|| StepOutput::new(String::new())))
                 }
             }
-            
+
             // ========== Suspend ==========
             StepAction::Suspend {
                 reason,
@@ -1233,28 +1563,29 @@ impl PipelineRunner {
             } => {
                 // Generate state token
                 let state_token = uuid::Uuid::new_v4().to_string();
-                
+
                 // Save context via ContextStore if available
                 if let Some(store) = &self.context_store {
                     let _ = store.save(ctx).await;
                 }
-                
+
                 // Return suspended state in output
                 Ok(StepOutput::new(format!(
                     "Suspended: {}. State token: {}. Resume schema: {}",
                     reason,
                     state_token,
-                    resume_schema.as_ref().map(|s| s.to_string()).unwrap_or_else(|| "none".to_string())
+                    resume_schema
+                        .as_ref()
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| "none".to_string())
                 )))
             }
 
             // All other variants (Custom cannot be handled here due to async_recursion
             // macro limitations with closure lifetime constraints - known compiler limitation)
-            _ => {
-                Err(StepError::ActionFailed {
-                    reason: "Unhandled step action variant (including Custom)".into(),
-                })
-            }
+            _ => Err(StepError::ActionFailed {
+                reason: "Unhandled step action variant (including Custom)".into(),
+            }),
         }
     }
 
@@ -1270,7 +1601,13 @@ impl PipelineRunner {
         parent_agent: String,
     ) -> Result<super::PipelineResult, PipelineError> {
         // Run the pipeline with delegation context injected
-        self.run_internal(pipeline, agent, input, Some((delegation_depth, parent_agent))).await
+        self.run_internal(
+            pipeline,
+            agent,
+            input,
+            Some((delegation_depth, parent_agent)),
+        )
+        .await
     }
 
     /// Execute a pipeline with an agent
@@ -1333,7 +1670,7 @@ impl PipelineRunner {
         while i < execution_order.len() {
             let step_idx = execution_order[i];
             let step = &pipeline.steps[step_idx];
-            
+
             if step.parallel {
                 // Collect all consecutive parallel steps
                 let mut batch = vec![step_idx];
@@ -1348,10 +1685,10 @@ impl PipelineRunner {
                     }
                 }
                 i = j;
-                
+
                 // Execute batch in parallel using spawn_blocking for each step
                 let mut handles = Vec::new();
-                
+
                 for &sidx in &batch {
                     let step = pipeline.steps[sidx].clone();
                     let mut step_ctx = ctx.clone();
@@ -1361,10 +1698,10 @@ impl PipelineRunner {
                         Box::new(agent.policy.allowed_tools.clone()),
                         Box::new(step.tools.clone()),
                     );
-                    
+
                     // Clone the action needed for the task
                     let action = step.action.clone();
-                    
+
                     let handle = tokio::task::spawn_blocking(move || {
                         // Run the action synchronously in a thread pool
                         // For Custom closures (which are blocking), call directly
@@ -1375,23 +1712,25 @@ impl PipelineRunner {
                             }),
                         }
                     });
-                    
+
                     handles.push((step.name.clone(), step.clone(), handle));
                 }
-                
+
                 // Collect results and process them sequentially
                 for (step_name, step_obj, handle) in handles {
                     let action_result = handle.await.map_err(|e| PipelineError::StepFailed {
                         step: step_name.clone(),
-                        error: crate::action::StepError::ActionFailed { reason: e.to_string() },
+                        error: crate::action::StepError::ActionFailed {
+                            reason: e.to_string(),
+                        },
                     })?;
-                    
+
                     match action_result {
                         Ok(output) => {
                             // Run guard_out and verdict for this parallel step
                             ctx.step_name = step_name.clone();
                             ctx.output = Some(output);
-                            
+
                             // guard_out
                             match GuardEngine::evaluate(&step_obj.guard_out, &ctx).await {
                                 Ok(()) => {}
@@ -1403,7 +1742,7 @@ impl PipelineRunner {
                                     });
                                 }
                             }
-                            
+
                             // verdict
                             match VerdictEngine::evaluate(&step_obj.verdict, &ctx).await {
                                 Ok(()) => {}
@@ -1414,11 +1753,14 @@ impl PipelineRunner {
                                     });
                                 }
                             }
-                            
+
                             // Record result
                             let sr = StepResult {
                                 step_name: step_name.clone(),
-                                output: ctx.output.clone().unwrap_or_else(|| StepOutput::new(String::new())),
+                                output: ctx
+                                    .output
+                                    .clone()
+                                    .unwrap_or_else(|| StepOutput::new(String::new())),
                                 verdict_passed: true,
                                 error: None,
                             };
@@ -1437,12 +1779,12 @@ impl PipelineRunner {
             } else {
                 i += 1;
             }
-            
+
             let step = &pipeline.steps[step_idx].clone();
 
             ctx.step_name = step.name.clone();
             ctx.input = input.clone();
-            
+
             // Compute effective tool scope for this step
             ctx.allowed_tools = crate::toolset::ToolSet::Intersection(
                 Box::new(agent.policy.allowed_tools.clone()),
@@ -1465,7 +1807,9 @@ impl PipelineRunner {
                         timestamp: Utc::now(),
                         pipeline_name: pipeline.name.clone(),
                         step_name: step.name.clone(),
-                        event: AuditEvent::GuardPassed { guard: step.guard_in.name() },
+                        event: AuditEvent::GuardPassed {
+                            guard: step.guard_in.name(),
+                        },
                     });
                 }
                 Err(e) => {
@@ -1555,7 +1899,9 @@ impl PipelineRunner {
                     }
                     Err(e) => {
                         action_error = Some(e);
-                        if retries_left > 0 && matches!(&pipeline.on_failure, crate::pipeline::FailureMode::Retry) {
+                        if retries_left > 0
+                            && matches!(&pipeline.on_failure, crate::pipeline::FailureMode::Retry)
+                        {
                             retries_left -= 1;
                             // Continue loop to retry
                         } else {
@@ -1573,12 +1919,15 @@ impl PipelineRunner {
                         steps_failed.push(step.name.clone());
                         let sr = StepResult {
                             step_name: step.name.clone(),
-                            output: ctx.output.clone().unwrap_or_else(|| StepOutput::new(String::new())),
+                            output: ctx
+                                .output
+                                .clone()
+                                .unwrap_or_else(|| StepOutput::new(String::new())),
                             verdict_passed: false,
                             error: action_error.as_ref().map(|e| format!("{:?}", e)),
                         };
                         ctx.step_results.insert(step.name.clone(), sr);
-                        
+
                         // Record StepFailed audit event
                         self.audit_log.append(AuditEntry {
                             timestamp: Utc::now(),
@@ -1588,7 +1937,7 @@ impl PipelineRunner {
                                 error: format!("{:?}", action_error),
                             },
                         });
-                        
+
                         continue;
                     }
                     crate::pipeline::FailureMode::Retry => {
@@ -1615,7 +1964,7 @@ impl PipelineRunner {
                     crate::pipeline::FailureMode::Fallback(fallback_pipeline) => {
                         let original_error = action_error.take().unwrap();
                         let step_name_clone = step.name.clone();
-                        
+
                         // Log fallback triggered
                         self.audit_log.append(AuditEntry {
                             timestamp: Utc::now(),
@@ -1626,7 +1975,7 @@ impl PipelineRunner {
                                 reason: format!("{:?}", original_error),
                             },
                         });
-                        
+
                         // Run the fallback pipeline in a child runner
                         let mut fallback_runner = PipelineRunner {
                             audit_log: crate::audit::AuditLog::new(),
@@ -1641,7 +1990,7 @@ impl PipelineRunner {
                             auto_title_llm: self.auto_title_llm.clone(),
                             memory: self.memory.clone(),
                         };
-                        
+
                         return fallback_runner
                             .run(fallback_pipeline, agent, input.clone())
                             .await
@@ -1653,7 +2002,11 @@ impl PipelineRunner {
                 }
             }
 
-            eprintln!("[guard-check] step={} output_raw_len={}", step.name, ctx.output.as_ref().map(|o| o.raw.len()).unwrap_or(0));
+            eprintln!(
+                "[guard-check] step={} output_raw_len={}",
+                step.name,
+                ctx.output.as_ref().map(|o| o.raw.len()).unwrap_or(0)
+            );
 
             // Handle guard_out (only if action succeeded)
             match GuardEngine::evaluate(&step.guard_out, &ctx).await {
@@ -1663,7 +2016,9 @@ impl PipelineRunner {
                         timestamp: Utc::now(),
                         pipeline_name: pipeline.name.clone(),
                         step_name: step.name.clone(),
-                        event: AuditEvent::GuardPassed { guard: step.guard_out.name() },
+                        event: AuditEvent::GuardPassed {
+                            guard: step.guard_out.name(),
+                        },
                     });
                 }
                 Err(e) => {
@@ -1694,7 +2049,9 @@ impl PipelineRunner {
                         timestamp: Utc::now(),
                         pipeline_name: pipeline.name.clone(),
                         step_name: step.name.clone(),
-                        event: AuditEvent::VerdictPassed { verdict: "verdict".into() },
+                        event: AuditEvent::VerdictPassed {
+                            verdict: "verdict".into(),
+                        },
                     });
                 }
                 Err(e) => {
@@ -1710,13 +2067,18 @@ impl PipelineRunner {
                 timestamp: Utc::now(),
                 pipeline_name: pipeline.name.clone(),
                 step_name: step.name.clone(),
-                event: AuditEvent::StepCompleted { verdict_passed: true },
+                event: AuditEvent::StepCompleted {
+                    verdict_passed: true,
+                },
             });
 
             // Record step result
             let sr = StepResult {
                 step_name: step.name.clone(),
-                output: ctx.output.clone().unwrap_or_else(|| StepOutput::new(String::new())),
+                output: ctx
+                    .output
+                    .clone()
+                    .unwrap_or_else(|| StepOutput::new(String::new())),
                 verdict_passed: true,
                 error: None,
             };
@@ -1742,7 +2104,9 @@ impl PipelineRunner {
                 });
                 return Err(PipelineError::StepFailed {
                     step: step.name.clone(),
-                    error: StepError::ActionFailed { reason: "Cancelled".into() },
+                    error: StepError::ActionFailed {
+                        reason: "Cancelled".into(),
+                    },
                 });
             }
         }
@@ -1767,7 +2131,7 @@ impl PipelineRunner {
             success: steps_failed.is_empty(),
             total_cost_usd: ctx.budget.spent_usd,
             total_tokens_used: 0, // Will be updated when LLM calls are tracked
-            log: vec![], // Will be populated when logging is wired
+            log: vec![],          // Will be populated when logging is wired
             suspended: None,
         })
     }

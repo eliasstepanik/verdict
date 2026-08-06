@@ -18,18 +18,24 @@ impl AppConfig {
         let config_path = Self::config_path();
         if config_path.exists() {
             match std::fs::read_to_string(&config_path) {
-                Ok(content) => {
-                    match toml::from_str::<AppConfig>(&content) {
-                        Ok(cfg) => cfg,
-                        Err(e) => {
-                            eprintln!("⚠  Config file parse error at {}: {}", config_path.display(), e);
-                            eprintln!("   Falling back to defaults.");
-                            AppConfig::default()
-                        }
+                Ok(content) => match toml::from_str::<AppConfig>(&content) {
+                    Ok(cfg) => cfg,
+                    Err(e) => {
+                        eprintln!(
+                            "⚠  Config file parse error at {}: {}",
+                            config_path.display(),
+                            e
+                        );
+                        eprintln!("   Falling back to defaults.");
+                        AppConfig::default()
                     }
-                }
+                },
                 Err(e) => {
-                    eprintln!("⚠  Could not read config file at {}: {}", config_path.display(), e);
+                    eprintln!(
+                        "⚠  Could not read config file at {}: {}",
+                        config_path.display(),
+                        e
+                    );
                     AppConfig::default()
                 }
             }
@@ -44,11 +50,7 @@ impl AppConfig {
     pub fn config_path() -> PathBuf {
         let base = std::env::var("APPDATA")
             .map(PathBuf::from)
-            .or_else(|_| {
-                std::env::var("HOME").map(|h| {
-                    PathBuf::from(h).join(".config")
-                })
-            })
+            .or_else(|_| std::env::var("HOME").map(|h| PathBuf::from(h).join(".config")))
             .unwrap_or_else(|_| PathBuf::from("."));
 
         base.join("verdict-app").join("config.toml")
@@ -62,25 +64,40 @@ impl AppConfig {
         } else {
             println!("Config file : (not found — expected at {})", path.display());
         }
-        println!("api_key     : {}", match &self.api_key {
-            Some(k) if !k.is_empty() => {
-                let redacted = if k.len() > 8 {
-                    format!("{}...{}", &k[..4], &k[k.len()-4..])
-                } else {
-                    "***".to_string()
-                };
-                format!("set ({})", redacted)
+        println!(
+            "api_key     : {}",
+            match &self.api_key {
+                Some(k) if !k.is_empty() => {
+                    let redacted = if k.len() > 8 {
+                        format!("{}...{}", &k[..4], &k[k.len() - 4..])
+                    } else {
+                        "***".to_string()
+                    };
+                    format!("set ({})", redacted)
+                }
+                _ => "NOT SET — LLM will not work".to_string(),
             }
-            _ => "NOT SET — LLM will not work".to_string(),
-        });
-        println!("base_url    : {}", self.base_url.as_deref().unwrap_or("https://api.openai.com (default)"));
+        );
+        println!(
+            "base_url    : {}",
+            self.base_url
+                .as_deref()
+                .unwrap_or("https://api.openai.com (default)")
+        );
         println!("model       : {}", self.effective_model());
         println!();
         println!("Env vars (used only when config file does not set the value):");
         for var in &["OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL"] {
             match std::env::var(var) {
-                Ok(v) if !v.is_empty() => println!("  {} = {} (present but config file takes priority)", var,
-                    if *var == "OPENAI_API_KEY" { "***".to_string() } else { v }),
+                Ok(v) if !v.is_empty() => println!(
+                    "  {} = {} (present but config file takes priority)",
+                    var,
+                    if *var == "OPENAI_API_KEY" {
+                        "***".to_string()
+                    } else {
+                        v
+                    }
+                ),
                 _ => println!("  {} = (not set)", var),
             }
         }
@@ -92,17 +109,23 @@ impl AppConfig {
     pub fn merged_with_env(mut self) -> Self {
         if self.api_key.is_none() {
             if let Ok(v) = std::env::var("OPENAI_API_KEY") {
-                if !v.is_empty() { self.api_key = Some(v); }
+                if !v.is_empty() {
+                    self.api_key = Some(v);
+                }
             }
         }
         if self.base_url.is_none() {
             if let Ok(v) = std::env::var("OPENAI_BASE_URL") {
-                if !v.is_empty() { self.base_url = Some(v); }
+                if !v.is_empty() {
+                    self.base_url = Some(v);
+                }
             }
         }
         if self.model.is_none() {
             if let Ok(v) = std::env::var("OPENAI_MODEL") {
-                if !v.is_empty() { self.model = Some(v); }
+                if !v.is_empty() {
+                    self.model = Some(v);
+                }
             }
         }
         self
@@ -117,7 +140,8 @@ impl AppConfig {
             Some(api_key),
             self.base_url.as_deref(),
             self.model.as_deref(),
-        ).ok()
+        )
+        .ok()
     }
 
     /// Get the effective model name (from config or env or default)
@@ -146,5 +170,3 @@ impl AppConfig {
         })
     }
 }
-
-

@@ -8,7 +8,9 @@ use crate::toolset::ToolSet;
 pub fn refactoring() -> Skill {
     Skill {
         name: "refactoring".to_string(),
-        description: "Refactor code for clarity, maintainability, and performance without changing behavior.".to_string(),
+        description:
+            "Refactor code for clarity, maintainability, and performance without changing behavior."
+                .to_string(),
         instructions: r#"When refactoring:
 1. Run all tests before starting — ensure green baseline.
 2. Make one small change at a time.

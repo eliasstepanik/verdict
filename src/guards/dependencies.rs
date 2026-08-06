@@ -1,6 +1,6 @@
+use super::GuardError;
 use crate::context::StepContext;
 use tokio::process::Command;
-use super::GuardError;
 
 pub fn check_no_new_dependencies(
     _guard: &super::Guard,
@@ -41,10 +41,7 @@ pub fn check_no_new_dependencies(
             if in_dependencies_section && line.starts_with("+") && !line.starts_with("+++") {
                 return Err(GuardError::Failed {
                     guard: "NoNewDependencies".to_string(),
-                    reason: format!(
-                        "diff adds new dependency: {}",
-                        line.trim_start_matches('+')
-                    ),
+                    reason: format!("diff adds new dependency: {}", line.trim_start_matches('+')),
                 });
             }
         }
@@ -110,7 +107,9 @@ pub fn check_no_suspicious_dependencies(
             if bytes[i] == b'-' && bytes[i + 1].is_ascii_digit() {
                 // Check if there's a dot after the digits
                 let mut j = i + 1;
-                while j < bytes.len() && bytes[j].is_ascii_digit() { j += 1; }
+                while j < bytes.len() && bytes[j].is_ascii_digit() {
+                    j += 1;
+                }
                 if j < bytes.len() && bytes[j] == b'.' {
                     return true;
                 }
@@ -118,7 +117,7 @@ pub fn check_no_suspicious_dependencies(
         }
         false
     };
-    
+
     // Also check known malicious package names
     let known_suspicious = ["malware", "cryptominer", "exfil"];
 
@@ -128,7 +127,7 @@ pub fn check_no_suspicious_dependencies(
         if trimmed.starts_with('[') || trimmed.is_empty() || trimmed.starts_with('#') {
             continue;
         }
-        
+
         if let Some(name) = trimmed.split('=').next() {
             let name = name.trim();
             if name.is_empty() {
@@ -146,7 +145,10 @@ pub fn check_no_suspicious_dependencies(
                 if name.contains(bad) {
                     return Err(GuardError::Failed {
                         guard: "NoSuspiciousDependencies".to_string(),
-                        reason: format!("dependency '{}' matches known suspicious pattern '{}'", name, bad),
+                        reason: format!(
+                            "dependency '{}' matches known suspicious pattern '{}'",
+                            name, bad
+                        ),
                     });
                 }
             }

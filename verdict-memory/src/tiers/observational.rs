@@ -1,9 +1,8 @@
 /// ObservationalMemory: LLM-compressed summaries
 ///
 /// Provides save and retrieve operations for observations (summaries)
-
 use std::sync::Arc;
-use verdict::memory::{MemoryStore, MemoryError};
+use verdict::memory::{MemoryError, MemoryStore};
 
 pub struct ObservationalMemory {
     store: Arc<dyn MemoryStore>,

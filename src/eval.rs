@@ -1,12 +1,12 @@
 //! Evaluation suites — Phase 8
 //! Full implementation of evaluation system for agent testing and validation
 
+use crate::agent::Agent;
 use crate::context::StepContext;
 use crate::guards::{Guard, GuardEngine, GuardError};
-use crate::runner::{PipelineRunner, PipelineResult};
-use crate::pipeline::Pipeline;
-use crate::agent::Agent;
 use crate::llm::LlmClient;
+use crate::pipeline::Pipeline;
+use crate::runner::{PipelineResult, PipelineRunner};
 
 use serde_json::Value;
 use std::sync::Arc;
@@ -90,11 +90,10 @@ impl EvaluationRunner {
             });
         }
 
-
         for case in &suite.cases {
             // Create a new context for this evaluation case
             let case_input = case.input.clone();
-            
+
             // Run the pipeline with the case input
             let pipeline_result = runner
                 .run(pipeline, agent, case_input.clone())
@@ -102,7 +101,6 @@ impl EvaluationRunner {
                 .map_err(|e| EvalError::Failed {
                     reason: format!("pipeline execution failed: {}", e),
                 })?;
-
 
             // Check if pipeline had output (get the last step result from steps_passed)
             let last_step_name = pipeline_result
@@ -117,7 +115,6 @@ impl EvaluationRunner {
                 .output
                 .clone();
 
-
             // Evaluate the case
             let (passed, reason): (bool, Option<String>) = match &case.expected {
                 EvaluationExpected::Exact(expected_val) => {
@@ -131,20 +128,24 @@ impl EvaluationRunner {
                                 if &parsed == expected_val {
                                     (true, None)
                                 } else {
-                                    (false, Some(format!(
-                                        "Expected {:?}, got: {}",
-                                        expected_val,
-                                        &last_output.raw[..100.min(last_output.raw.len())]
-                                    )))
+                                    (
+                                        false,
+                                        Some(format!(
+                                            "Expected {:?}, got: {}",
+                                            expected_val,
+                                            &last_output.raw[..100.min(last_output.raw.len())]
+                                        )),
+                                    )
                                 }
                             }
-                            Err(_) => {
-                                (false, Some(format!(
+                            Err(_) => (
+                                false,
+                                Some(format!(
                                     "Expected {:?}, got: {}",
                                     expected_val,
                                     &last_output.raw[..100.min(last_output.raw.len())]
-                                )))
-                            }
+                                )),
+                            ),
                         }
                     }
                 }
@@ -154,32 +155,24 @@ impl EvaluationRunner {
                         Ok(parsed) => {
                             // Validate against schema
                             match jsonschema::JSONSchema::compile(schema) {
-                                Ok(json_schema) => {
-                                    match json_schema.validate(&parsed) {
-                                        Ok(()) => (true, None),
-                                        Err(_e) => (false, Some(
-                                            "schema validation failed".to_string()
-                                        )),
+                                Ok(json_schema) => match json_schema.validate(&parsed) {
+                                    Ok(()) => (true, None),
+                                    Err(_e) => {
+                                        (false, Some("schema validation failed".to_string()))
                                     }
-                                }
-                                Err(e) => (false, Some(format!(
-                                    "invalid schema: {}",
-                                    e
-                                ))),
+                                },
+                                Err(e) => (false, Some(format!("invalid schema: {}", e))),
                             }
                         }
-                        Err(e) => (false, Some(format!(
-                            "output is not valid JSON: {}",
-                            e
-                        ))),
+                        Err(e) => (false, Some(format!("output is not valid JSON: {}", e))),
                     }
                 }
 
-
                 EvaluationExpected::Guard(guard) => {
                     // Build a context from the pipeline result with real step results and context
-                    let last_step = agent.pipeline.steps.last()
-                        .ok_or(EvalError::Failed { reason: "No steps in pipeline".into() })?;
+                    let last_step = agent.pipeline.steps.last().ok_or(EvalError::Failed {
+                        reason: "No steps in pipeline".into(),
+                    })?;
 
                     let ctx = StepContext {
                         agent_name: agent.name.clone(),
@@ -219,13 +212,10 @@ impl EvaluationRunner {
                     }
                 }
 
-
-                EvaluationExpected::Custom(f) => {
-                    match f(&pipeline_result) {
-                        Ok(()) => (true, None),
-                        Err(e) => (false, Some(e.to_string())),
-                    }
-                }
+                EvaluationExpected::Custom(f) => match f(&pipeline_result) {
+                    Ok(()) => (true, None),
+                    Err(e) => (false, Some(e.to_string())),
+                },
             };
 
             let score = if passed { 1.0 } else { 0.0 };
@@ -255,7 +245,6 @@ impl EvaluationRunner {
         })
     }
 }
-
 
 // ============================================================================
 // Phase F: Scorer Sampling, RubricLoop, and Experiment Runner
@@ -317,7 +306,7 @@ impl std::fmt::Debug for ScorerConfig {
 /// Built-in scorer: checks if answer is relevant according to LLM
 pub struct AnswerRelevancyScorer {
     pub llm_client: Arc<LlmClient>,
-    pub threshold: f64,  // 0.0–1.0; pass if score >= threshold
+    pub threshold: f64, // 0.0–1.0; pass if score >= threshold
 }
 
 #[async_trait]
@@ -545,10 +534,10 @@ impl ExperimentRunner {
         agent: &Agent,
     ) -> Result<Experiment, EvalError> {
         let mut results = Vec::new();
-        
+
         for case in &dataset.cases {
             let mut runner_mut = (*self.runner).clone();
-            
+
             let pipeline_result = runner_mut
                 .run(&agent.pipeline, agent, case.input.clone())
                 .await
@@ -557,10 +546,7 @@ impl ExperimentRunner {
                 })?;
 
             // Determine pass/fail
-            let last_step_name = pipeline_result
-                .steps_passed
-                .last()
-                .map(|s| s.clone());
+            let last_step_name = pipeline_result.steps_passed.last().map(|s| s.clone());
 
             let passed = last_step_name.is_some();
 
@@ -593,11 +579,8 @@ impl ExperimentRunner {
         let mut improved_cases = Vec::new();
         let mut regressed_cases = Vec::new();
 
-        let a_map: std::collections::HashMap<String, &EvaluationResult> = a
-            .results
-            .iter()
-            .map(|r| (r.case_name.clone(), r))
-            .collect();
+        let a_map: std::collections::HashMap<String, &EvaluationResult> =
+            a.results.iter().map(|r| (r.case_name.clone(), r)).collect();
 
         for b_result in &b.results {
             if let Some(a_result) = a_map.get(&b_result.case_name) {

@@ -2,14 +2,13 @@
 ///
 /// This implementation uses HashMap for all storage, suitable for testing,
 /// development, and applications that don't require persistence.
-
 use async_trait::async_trait;
 use serde_json::Value;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use std::collections::HashMap;
 
-use verdict::memory::{MemoryStore, MemoryMessage, SemanticResult, MemoryError};
+use verdict::memory::{MemoryError, MemoryMessage, MemoryStore, SemanticResult};
 
 /// In-memory memory store implementation
 #[derive(Debug)]
@@ -159,10 +158,7 @@ impl MemoryStore for InMemoryStore {
 
     async fn get_observations(&self, thread_id: &str) -> Result<Vec<String>, MemoryError> {
         let observations = self.observations.lock().await;
-        Ok(observations
-            .get(thread_id)
-            .cloned()
-            .unwrap_or_default())
+        Ok(observations.get(thread_id).cloned().unwrap_or_default())
     }
 }
 

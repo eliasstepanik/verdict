@@ -4,19 +4,19 @@ use thiserror::Error;
 
 use crate::context::StepContext;
 
-pub mod engine;
-pub mod output;
-pub mod filesystem;
-pub mod compilation;
 pub mod budget;
-pub mod step_state;
-pub mod trace;
-pub mod tools;
-pub mod security;
+pub mod compilation;
+pub mod delegation;
 pub mod dependencies;
 pub mod diff;
+pub mod engine;
+pub mod filesystem;
+pub mod output;
+pub mod security;
 pub mod self_improve;
-pub mod delegation;
+pub mod step_state;
+pub mod tools;
+pub mod trace;
 
 // Re-export from submodules
 pub use engine::{GuardEngine, GuardPhase};
@@ -349,7 +349,9 @@ impl Guard {
             Guard::ShellCommandDenylist(_) => "ShellCommandDenylist".to_string(),
             Guard::PathWithinWorkspace => "PathWithinWorkspace".to_string(),
             Guard::DiffTouchesAllowedPaths(_) => "DiffTouchesAllowedPaths".to_string(),
-            Guard::DiffDoesNotTouchForbiddenPaths(_) => "DiffDoesNotTouchForbiddenPaths".to_string(),
+            Guard::DiffDoesNotTouchForbiddenPaths(_) => {
+                "DiffDoesNotTouchForbiddenPaths".to_string()
+            }
             Guard::MaxDiffLines(_) => "MaxDiffLines".to_string(),
             Guard::MaxChangedFiles(_) => "MaxChangedFiles".to_string(),
             Guard::NoSafetyBypass => "NoSafetyBypass".to_string(),
@@ -364,7 +366,9 @@ impl Guard {
             Guard::PatchAppliesCleanly => "PatchAppliesCleanly".to_string(),
             Guard::EvaluationImprovesOrEqual => "EvaluationImprovesOrEqual".to_string(),
             Guard::AgentVersionCreated => "AgentVersionCreated".to_string(),
-            Guard::NoActiveUncommittedCriticalChanges => "NoActiveUncommittedCriticalChanges".to_string(),
+            Guard::NoActiveUncommittedCriticalChanges => {
+                "NoActiveUncommittedCriticalChanges".to_string()
+            }
             Guard::SemanticCheck(_) => "SemanticCheck".to_string(),
             Guard::SessionTurnLimit(_) => "SessionTurnLimit".to_string(),
             Guard::SessionIdleTimeout(_) => "SessionIdleTimeout".to_string(),
@@ -391,73 +395,42 @@ impl std::fmt::Debug for Guard {
             Guard::Custom(_) => f.write_str("Custom(<fn>)"),
             Guard::Compiles => f.write_str("Compiles"),
             Guard::TestsPass => f.write_str("TestsPass"),
-            Guard::TestsPassWith(runner) => {
-                f.debug_tuple("TestsPassWith").field(runner).finish()
-            }
+            Guard::TestsPassWith(runner) => f.debug_tuple("TestsPassWith").field(runner).finish(),
             Guard::ValidJson => f.write_str("ValidJson"),
             Guard::ValidToml => f.write_str("ValidToml"),
             Guard::ValidYaml => f.write_str("ValidYaml"),
             Guard::ValidRustSyntax => f.write_str("ValidRustSyntax"),
             Guard::OutputIsUnifiedDiff => f.write_str("OutputIsUnifiedDiff"),
-            Guard::FileExists(path) => {
-                f.debug_tuple("FileExists").field(path).finish()
-            }
-            Guard::FileNotExists(path) => {
-                f.debug_tuple("FileNotExists").field(path).finish()
-            }
-            Guard::FileContains { path, pattern } => {
-                f.debug_struct("FileContains")
-                    .field("path", path)
-                    .field("pattern", pattern)
-                    .finish()
-            }
-            Guard::FileNotContains { path, pattern } => {
-                f.debug_struct("FileNotContains")
-                    .field("path", path)
-                    .field("pattern", pattern)
-                    .finish()
-            }
+            Guard::FileExists(path) => f.debug_tuple("FileExists").field(path).finish(),
+            Guard::FileNotExists(path) => f.debug_tuple("FileNotExists").field(path).finish(),
+            Guard::FileContains { path, pattern } => f
+                .debug_struct("FileContains")
+                .field("path", path)
+                .field("pattern", pattern)
+                .finish(),
+            Guard::FileNotContains { path, pattern } => f
+                .debug_struct("FileNotContains")
+                .field("path", path)
+                .field("pattern", pattern)
+                .finish(),
             Guard::MatchesSchema(_) => f.write_str("MatchesSchema(...)"),
-            Guard::MaxTokens(n) => {
-                f.debug_tuple("MaxTokens").field(n).finish()
-            }
-            Guard::MaxOutputBytes(n) => {
-                f.debug_tuple("MaxOutputBytes").field(n).finish()
-            }
+            Guard::MaxTokens(n) => f.debug_tuple("MaxTokens").field(n).finish(),
+            Guard::MaxOutputBytes(n) => f.debug_tuple("MaxOutputBytes").field(n).finish(),
             Guard::NonEmptyOutput => f.write_str("NonEmptyOutput"),
-            Guard::MaxLines(n) => {
-                f.debug_tuple("MaxLines").field(n).finish()
-            }
-            Guard::TimeoutSeconds(n) => {
-                f.debug_tuple("TimeoutSeconds").field(n).finish()
-            }
-            Guard::MaxCostUsd(n) => {
-                f.debug_tuple("MaxCostUsd").field(n).finish()
-            }
-            Guard::MaxLlmCalls(n) => {
-                f.debug_tuple("MaxLlmCalls").field(n).finish()
-            }
-            Guard::MaxToolCalls(n) => {
-                f.debug_tuple("MaxToolCalls").field(n).finish()
-            }
-            Guard::MaxDelegationDepth(n) => {
-                f.debug_tuple("MaxDelegationDepth").field(n).finish()
-            }
-            Guard::StepPassed(s) => {
-                f.debug_tuple("StepPassed").field(s).finish()
-            }
-            Guard::StepFailed(s) => {
-                f.debug_tuple("StepFailed").field(s).finish()
-            }
-            Guard::UserApproved(s) => {
-                f.debug_tuple("UserApproved").field(s).finish()
-            }
-            Guard::PreviousStepMatchesSchema { step_name, schema } => {
-                f.debug_struct("PreviousStepMatchesSchema")
-                    .field("step_name", step_name)
-                    .field("schema", schema)
-                    .finish()
-            }
+            Guard::MaxLines(n) => f.debug_tuple("MaxLines").field(n).finish(),
+            Guard::TimeoutSeconds(n) => f.debug_tuple("TimeoutSeconds").field(n).finish(),
+            Guard::MaxCostUsd(n) => f.debug_tuple("MaxCostUsd").field(n).finish(),
+            Guard::MaxLlmCalls(n) => f.debug_tuple("MaxLlmCalls").field(n).finish(),
+            Guard::MaxToolCalls(n) => f.debug_tuple("MaxToolCalls").field(n).finish(),
+            Guard::MaxDelegationDepth(n) => f.debug_tuple("MaxDelegationDepth").field(n).finish(),
+            Guard::StepPassed(s) => f.debug_tuple("StepPassed").field(s).finish(),
+            Guard::StepFailed(s) => f.debug_tuple("StepFailed").field(s).finish(),
+            Guard::UserApproved(s) => f.debug_tuple("UserApproved").field(s).finish(),
+            Guard::PreviousStepMatchesSchema { step_name, schema } => f
+                .debug_struct("PreviousStepMatchesSchema")
+                .field("step_name", step_name)
+                .field("schema", schema)
+                .finish(),
             Guard::OnlyAllowedAgentsUsed => f.write_str("OnlyAllowedAgentsUsed"),
             Guard::NoRecursiveDelegation => f.write_str("NoRecursiveDelegation"),
             Guard::DelegatedAgentPassed(agent) => {
@@ -473,42 +446,33 @@ impl std::fmt::Debug for Guard {
             Guard::NoSecretsInDiff => f.write_str("NoSecretsInDiff"),
             Guard::NoSecretExfiltration => f.write_str("NoSecretExfiltration"),
             Guard::NoDangerousShellCommands => f.write_str("NoDangerousShellCommands"),
-            Guard::ShellCommandAllowlist(cmds) => {
-                f.debug_tuple("ShellCommandAllowlist")
-                    .field(&format!("[{} items]", cmds.len()))
-                    .finish()
-            }
-            Guard::ShellCommandDenylist(cmds) => {
-                f.debug_tuple("ShellCommandDenylist")
-                    .field(&format!("[{} items]", cmds.len()))
-                    .finish()
-            }
+            Guard::ShellCommandAllowlist(cmds) => f
+                .debug_tuple("ShellCommandAllowlist")
+                .field(&format!("[{} items]", cmds.len()))
+                .finish(),
+            Guard::ShellCommandDenylist(cmds) => f
+                .debug_tuple("ShellCommandDenylist")
+                .field(&format!("[{} items]", cmds.len()))
+                .finish(),
             Guard::PathWithinWorkspace => f.write_str("PathWithinWorkspace"),
-            Guard::DiffTouchesAllowedPaths(paths) => {
-                f.debug_tuple("DiffTouchesAllowedPaths")
-                    .field(&format!("[{} items]", paths.len()))
-                    .finish()
-            }
-            Guard::DiffDoesNotTouchForbiddenPaths(paths) => {
-                f.debug_tuple("DiffDoesNotTouchForbiddenPaths")
-                    .field(&format!("[{} items]", paths.len()))
-                    .finish()
-            }
-            Guard::MaxDiffLines(n) => {
-                f.debug_tuple("MaxDiffLines").field(n).finish()
-            }
-            Guard::MaxChangedFiles(n) => {
-                f.debug_tuple("MaxChangedFiles").field(n).finish()
-            }
+            Guard::DiffTouchesAllowedPaths(paths) => f
+                .debug_tuple("DiffTouchesAllowedPaths")
+                .field(&format!("[{} items]", paths.len()))
+                .finish(),
+            Guard::DiffDoesNotTouchForbiddenPaths(paths) => f
+                .debug_tuple("DiffDoesNotTouchForbiddenPaths")
+                .field(&format!("[{} items]", paths.len()))
+                .finish(),
+            Guard::MaxDiffLines(n) => f.debug_tuple("MaxDiffLines").field(n).finish(),
+            Guard::MaxChangedFiles(n) => f.debug_tuple("MaxChangedFiles").field(n).finish(),
             Guard::NoSafetyBypass => f.write_str("NoSafetyBypass"),
             Guard::NoTestDisabling => f.write_str("NoTestDisabling"),
             Guard::NoGuardRemoval => f.write_str("NoGuardRemoval"),
             Guard::NoNewDependencies => f.write_str("NoNewDependencies"),
-            Guard::DependenciesAllowlist(deps) => {
-                f.debug_tuple("DependenciesAllowlist")
-                    .field(&format!("[{} items]", deps.len()))
-                    .finish()
-            }
+            Guard::DependenciesAllowlist(deps) => f
+                .debug_tuple("DependenciesAllowlist")
+                .field(&format!("[{} items]", deps.len()))
+                .finish(),
             Guard::NoSuspiciousDependencies => f.write_str("NoSuspiciousDependencies"),
             Guard::CargoAuditPass => f.write_str("CargoAuditPass"),
             Guard::CargoDenyPass => f.write_str("CargoDenyPass"),
@@ -516,21 +480,18 @@ impl std::fmt::Debug for Guard {
             Guard::PatchAppliesCleanly => f.write_str("PatchAppliesCleanly"),
             Guard::EvaluationImprovesOrEqual => f.write_str("EvaluationImprovesOrEqual"),
             Guard::AgentVersionCreated => f.write_str("AgentVersionCreated"),
-            Guard::NoActiveUncommittedCriticalChanges => f.write_str("NoActiveUncommittedCriticalChanges"),
-            Guard::SemanticCheck(s) => {
-                f.debug_tuple("SemanticCheck").field(s).finish()
+            Guard::NoActiveUncommittedCriticalChanges => {
+                f.write_str("NoActiveUncommittedCriticalChanges")
             }
-            Guard::SessionTurnLimit(n) => {
-                f.debug_tuple("SessionTurnLimit").field(n).finish()
-            }
+            Guard::SemanticCheck(s) => f.debug_tuple("SemanticCheck").field(s).finish(),
+            Guard::SessionTurnLimit(n) => f.debug_tuple("SessionTurnLimit").field(n).finish(),
             Guard::SessionIdleTimeout(secs) => {
                 f.debug_tuple("SessionIdleTimeout").field(secs).finish()
             }
-            Guard::SessionBudgetWithin { max_tokens } => {
-                f.debug_struct("SessionBudgetWithin")
-                    .field("max_tokens", max_tokens)
-                    .finish()
-            }
+            Guard::SessionBudgetWithin { max_tokens } => f
+                .debug_struct("SessionBudgetWithin")
+                .field("max_tokens", max_tokens)
+                .finish(),
             Guard::CancellationCleanupComplete => f.write_str("CancellationCleanupComplete"),
             Guard::ServerAuthValid => f.write_str("ServerAuthValid"),
             Guard::ServerConcurrencyWithin(n) => {
@@ -538,14 +499,14 @@ impl std::fmt::Debug for Guard {
             }
             Guard::PromptTemplateRendered => f.write_str("PromptTemplateRendered"),
             Guard::StructuredOutputPresent => f.write_str("StructuredOutputPresent"),
-            Guard::ResumeDataMatchesSchema(_schema) => {
-                f.debug_tuple("ResumeDataMatchesSchema")
-                    .field(&"<schema>")
-                    .finish()
-            }
-            Guard::DetachedAgentCompleted(agent) => {
-                f.debug_tuple("DetachedAgentCompleted").field(agent).finish()
-            }
+            Guard::ResumeDataMatchesSchema(_schema) => f
+                .debug_tuple("ResumeDataMatchesSchema")
+                .field(&"<schema>")
+                .finish(),
+            Guard::DetachedAgentCompleted(agent) => f
+                .debug_tuple("DetachedAgentCompleted")
+                .field(agent)
+                .finish(),
             Guard::LintPass => f.write_str("LintPass"),
             Guard::FormatPass => f.write_str("FormatPass"),
             Guard::AllOf(guards) => f

@@ -1,7 +1,7 @@
 use crate::context::StepContext;
+use jsonschema::JSONSchema;
 use serde_json::Value;
 use std::sync::OnceLock;
-use jsonschema::JSONSchema;
 
 use super::Guard;
 use super::GuardError;
@@ -9,9 +9,7 @@ use super::GuardError;
 static CL100K_BPE: OnceLock<tiktoken_rs::CoreBPE> = OnceLock::new();
 
 fn get_cl100k_bpe() -> &'static tiktoken_rs::CoreBPE {
-    CL100K_BPE.get_or_init(|| {
-        tiktoken_rs::cl100k_base().expect("cl100k_base BPE failed to load")
-    })
+    CL100K_BPE.get_or_init(|| tiktoken_rs::cl100k_base().expect("cl100k_base BPE failed to load"))
 }
 
 pub fn validate_json(_guard: &Guard, ctx: &StepContext) -> Result<(), GuardError> {
@@ -77,7 +75,8 @@ pub async fn validate_rust_syntax(_guard: &Guard, ctx: &StepContext) -> Result<(
             if trimmed.starts_with("//") || trimmed.is_empty() {
                 continue;
             }
-            if trimmed.starts_with("<html") || trimmed.starts_with("<?php")
+            if trimmed.starts_with("<html")
+                || trimmed.starts_with("<?php")
                 || trimmed.starts_with("def ")
                 || trimmed.starts_with("class ")
             {
@@ -270,10 +269,14 @@ pub fn validate_max_lines(_guard: &Guard, ctx: &StepContext, max: usize) -> Resu
     }
 }
 
-pub fn validate_schema(_guard: &Guard, ctx: &StepContext, schema: &Value) -> Result<(), GuardError> {
+pub fn validate_schema(
+    _guard: &Guard,
+    ctx: &StepContext,
+    schema: &Value,
+) -> Result<(), GuardError> {
     if let Some(output) = &ctx.output {
-        let json: Value = serde_json::from_str(&output.raw)
-            .map_err(|e| GuardError::ParseError(e.to_string()))?;
+        let json: Value =
+            serde_json::from_str(&output.raw).map_err(|e| GuardError::ParseError(e.to_string()))?;
         match JSONSchema::compile(schema) {
             Ok(validator) => match validator.validate(&json) {
                 Ok(_) => Ok(()),

@@ -3,9 +3,9 @@
 //! All tests run through PipelineRunner::run() with StepAction::ToolCall,
 //! verifying that tool scoping is enforced end-to-end through the runner.
 
+use serde_json::json;
 use std::sync::Arc;
 use verdict::prelude::*;
-use serde_json::json;
 
 // â”€â”€â”€ helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
@@ -13,7 +13,10 @@ fn tool_step(name: &str, tool: &str, args: serde_json::Value, scope: ToolSet) ->
     AgentStep {
         name: name.into(),
         guard_in: Guard::None,
-        action: StepAction::ToolCall { tool: tool.into(), args },
+        action: StepAction::ToolCall {
+            tool: tool.into(),
+            args,
+        },
         guard_out: Guard::None,
         verdict: Verdict::None,
         tools: scope,
@@ -21,9 +24,9 @@ fn tool_step(name: &str, tool: &str, args: serde_json::Value, scope: ToolSet) ->
         output_schema: None,
         dependencies: vec![],
         parallel: false,
-            input_processors: vec![],
-            output_processors: vec![],
-        }
+        input_processors: vec![],
+        output_processors: vec![],
+    }
 }
 
 fn make_agent(pipeline: &Pipeline, agent_tools: ToolSet, policy_tools: ToolSet) -> Agent {
@@ -48,9 +51,7 @@ async fn test_function_tool_output_becomes_step_output() {
         "local.produce",
         "produce a fixed value",
         json!({ "type": "object", "properties": {} }),
-        |_args, _ctx| {
-            Box::pin(async move { Ok(ToolOutput::text("custom-value-42".to_string())) })
-        },
+        |_args, _ctx| Box::pin(async move { Ok(ToolOutput::text("custom-value-42".to_string())) }),
     );
     let mut registry = ToolRegistry::new();
     registry.register(tool);
@@ -58,8 +59,14 @@ async fn test_function_tool_output_becomes_step_output() {
     let scope = ToolSet::Allow(vec!["local.produce".into()]);
     let pipeline = Pipeline {
         name: "p".into(),
-        steps: vec![tool_step("produce", "local.produce", json!({}), scope.clone())],
-        on_failure: FailureMode::Abort, max_retries: 0,
+        steps: vec![tool_step(
+            "produce",
+            "local.produce",
+            json!({}),
+            scope.clone(),
+        )],
+        on_failure: FailureMode::Abort,
+        max_retries: 0,
     };
     let agent = make_agent(&pipeline, scope.clone(), scope.clone());
     let mut runner = PipelineRunner::with_tool_registry(Arc::new(registry));
@@ -77,12 +84,18 @@ async fn test_function_tool_output_becomes_step_output() {
 
 #[tokio::test]
 async fn test_step_scope_allow_blocks_other_registered_tool() {
-    let tool_a = FunctionTool::new("local.a", "A",
+    let tool_a = FunctionTool::new(
+        "local.a",
+        "A",
         json!({"type":"object","properties":{}}),
-        |_a, _c| Box::pin(async { Ok(ToolOutput::text("A".to_string())) }));
-    let tool_b = FunctionTool::new("local.b", "B",
+        |_a, _c| Box::pin(async { Ok(ToolOutput::text("A".to_string())) }),
+    );
+    let tool_b = FunctionTool::new(
+        "local.b",
+        "B",
         json!({"type":"object","properties":{}}),
-        |_a, _c| Box::pin(async { Ok(ToolOutput::text("B".to_string())) }));
+        |_a, _c| Box::pin(async { Ok(ToolOutput::text("B".to_string())) }),
+    );
     let mut reg = ToolRegistry::new();
     reg.register(tool_a);
     reg.register(tool_b);
@@ -94,29 +107,37 @@ async fn test_step_scope_allow_blocks_other_registered_tool() {
     let p_ok = Pipeline {
         name: "p".into(),
         steps: vec![tool_step("call", "local.a", json!({}), scope.clone())],
-        on_failure: FailureMode::Abort, max_retries: 0,
+        on_failure: FailureMode::Abort,
+        max_retries: 0,
     };
     let agent_ok = make_agent(&p_ok, scope.clone(), scope.clone());
     let ok = PipelineRunner::with_tool_registry(Arc::clone(&reg))
-        .run(&p_ok, &agent_ok, json!({})).await.unwrap();
+        .run(&p_ok, &agent_ok, json!({}))
+        .await
+        .unwrap();
     assert_eq!(ok.step_results["call"].output.raw, "A");
 
     // --- blocked: calling local.b which is NOT in scope ---
     let p_bad = Pipeline {
         name: "p".into(),
         steps: vec![tool_step("call", "local.b", json!({}), scope.clone())],
-        on_failure: FailureMode::Abort, max_retries: 0,
+        on_failure: FailureMode::Abort,
+        max_retries: 0,
     };
     let agent_bad = make_agent(&p_bad, scope.clone(), scope.clone());
     let err = PipelineRunner::with_tool_registry(Arc::clone(&reg))
-        .run(&p_bad, &agent_bad, json!({})).await.unwrap_err();
+        .run(&p_bad, &agent_bad, json!({}))
+        .await
+        .unwrap_err();
 
     match err {
         PipelineError::StepFailed { step, error } => {
             assert_eq!(step, "call");
             let msg = error.to_string();
-            assert!(msg.to_lowercase().contains("not allowed") || msg.contains("local.b"),
-                "error should mention 'not allowed' or tool name: {msg}");
+            assert!(
+                msg.to_lowercase().contains("not allowed") || msg.contains("local.b"),
+                "error should mention 'not allowed' or tool name: {msg}"
+            );
         }
         other => panic!("expected StepFailed, got {other:?}"),
     }
@@ -127,9 +148,12 @@ async fn test_step_scope_allow_blocks_other_registered_tool() {
 #[tokio::test]
 async fn test_toolset_intersection_only_common_tool_accessible() {
     let mk_tool = |name: &'static str, body: &'static str| -> FunctionTool {
-        FunctionTool::new(name, name,
+        FunctionTool::new(
+            name,
+            name,
             json!({"type":"object","properties":{}}),
-            move |_a, _c| Box::pin(async move { Ok(ToolOutput::text(body.to_string())) }))
+            move |_a, _c| Box::pin(async move { Ok(ToolOutput::text(body.to_string())) }),
+        )
     };
     let mut reg = ToolRegistry::new();
     reg.register(mk_tool("local.a", "A"));
@@ -146,52 +170,73 @@ async fn test_toolset_intersection_only_common_tool_accessible() {
         let p = Pipeline {
             name: "p".into(),
             steps: vec![tool_step("s", tool, json!({}), scope.clone())],
-            on_failure: FailureMode::Abort, max_retries: 0,
+            on_failure: FailureMode::Abort,
+            max_retries: 0,
         };
         let agent = make_agent(&p, ToolSet::Full, ToolSet::Full);
-        PipelineRunner::with_tool_registry(reg).run(&p, &agent, json!({})).await
+        PipelineRunner::with_tool_registry(reg)
+            .run(&p, &agent, json!({}))
+            .await
     };
 
     // local.b is in both sets â†’ accessible
-    let ok = run_tool("local.b", Arc::clone(&reg), scope.clone()).await.unwrap();
+    let ok = run_tool("local.b", Arc::clone(&reg), scope.clone())
+        .await
+        .unwrap();
     assert_eq!(ok.step_results["s"].output.raw, "B");
 
     // local.a is only in left set â†’ blocked
-    assert!(run_tool("local.a", Arc::clone(&reg), scope.clone()).await.is_err(),
-        "local.a not in intersection should be blocked");
+    assert!(
+        run_tool("local.a", Arc::clone(&reg), scope.clone())
+            .await
+            .is_err(),
+        "local.a not in intersection should be blocked"
+    );
 
     // local.c is only in right set â†’ blocked
-    assert!(run_tool("local.c", Arc::clone(&reg), scope.clone()).await.is_err(),
-        "local.c not in intersection should be blocked");
+    assert!(
+        run_tool("local.c", Arc::clone(&reg), scope.clone())
+            .await
+            .is_err(),
+        "local.c not in intersection should be blocked"
+    );
 }
 
 // â”€â”€â”€ Test 4: step=Full + policy=None â†’ tool blocked â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 #[tokio::test]
 async fn test_step_full_with_policy_none_blocks_tool() {
-    let tool = FunctionTool::new("local.t", "t",
+    let tool = FunctionTool::new(
+        "local.t",
+        "t",
         json!({"type":"object","properties":{}}),
-        |_a, _c| Box::pin(async { Ok(ToolOutput::text("ok".to_string())) }));
+        |_a, _c| Box::pin(async { Ok(ToolOutput::text("ok".to_string())) }),
+    );
     let mut reg = ToolRegistry::new();
     reg.register(tool);
 
     let p = Pipeline {
         name: "p".into(),
         steps: vec![tool_step("s", "local.t", json!({}), ToolSet::Full)],
-        on_failure: FailureMode::Abort, max_retries: 0,
+        on_failure: FailureMode::Abort,
+        max_retries: 0,
     };
     // policy.allowed_tools = None â†’ intersection with Full = None
     let agent = make_agent(&p, ToolSet::Full, ToolSet::None);
 
     let err = PipelineRunner::with_tool_registry(Arc::new(reg))
-        .run(&p, &agent, json!({})).await.unwrap_err();
+        .run(&p, &agent, json!({}))
+        .await
+        .unwrap_err();
 
     match err {
         PipelineError::StepFailed { step, error } => {
             assert_eq!(step, "s");
             let m = error.to_string();
-            assert!(m.to_lowercase().contains("not allowed") || m.contains("local.t"),
-                "error should mention tool not allowed: {m}");
+            assert!(
+                m.to_lowercase().contains("not allowed") || m.contains("local.t"),
+                "error should mention tool not allowed: {m}"
+            );
         }
         other => panic!("expected StepFailed, got {other:?}"),
     }
@@ -201,25 +246,31 @@ async fn test_step_full_with_policy_none_blocks_tool() {
 
 #[tokio::test]
 async fn test_step_full_with_policy_full_allows_tool() {
-    let tool = FunctionTool::new("local.t", "t",
+    let tool = FunctionTool::new(
+        "local.t",
+        "t",
         json!({"type":"object","properties":{}}),
-        |_a, _c| Box::pin(async { Ok(ToolOutput::text("ok".to_string())) }));
+        |_a, _c| Box::pin(async { Ok(ToolOutput::text("ok".to_string())) }),
+    );
     let mut reg = ToolRegistry::new();
     reg.register(tool);
 
     let p = Pipeline {
         name: "p".into(),
         steps: vec![tool_step("s", "local.t", json!({}), ToolSet::Full)],
-        on_failure: FailureMode::Abort, max_retries: 0,
+        on_failure: FailureMode::Abort,
+        max_retries: 0,
     };
     let agent = make_agent(&p, ToolSet::Full, ToolSet::Full);
 
     let r = PipelineRunner::with_tool_registry(Arc::new(reg))
-        .run(&p, &agent, json!({})).await.unwrap();
+        .run(&p, &agent, json!({}))
+        .await
+        .unwrap();
     assert!(r.success);
     assert_eq!(r.step_results["s"].output.raw, "ok");
-    assert!(r.audit_log.entries().iter().any(|e|
-        matches!(&e.event, AuditEvent::ToolCallCompleted { tool, .. } if tool == "local.t")
+    assert!(r.audit_log.entries().iter().any(
+        |e| matches!(&e.event, AuditEvent::ToolCallCompleted { tool, .. } if tool == "local.t")
     ));
 }
 
@@ -227,11 +278,14 @@ async fn test_step_full_with_policy_full_allows_tool() {
 
 #[tokio::test]
 async fn test_function_tool_returns_structured_json() {
-    let tool = FunctionTool::new("local.calc", "calc",
+    let tool = FunctionTool::new(
+        "local.calc",
+        "calc",
         json!({"type":"object","properties":{}}),
-        |_a, _c| Box::pin(async move {
-            Ok(ToolOutput::json(json!({"sum": 7, "items": ["a", "b"]})))
-        }));
+        |_a, _c| {
+            Box::pin(async move { Ok(ToolOutput::json(json!({"sum": 7, "items": ["a", "b"]}))) })
+        },
+    );
     let mut reg = ToolRegistry::new();
     reg.register(tool);
 
@@ -239,12 +293,15 @@ async fn test_function_tool_returns_structured_json() {
     let p = Pipeline {
         name: "p".into(),
         steps: vec![tool_step("s", "local.calc", json!({}), scope.clone())],
-        on_failure: FailureMode::Abort, max_retries: 0,
+        on_failure: FailureMode::Abort,
+        max_retries: 0,
     };
     let agent = make_agent(&p, scope.clone(), scope);
 
     let r = PipelineRunner::with_tool_registry(Arc::new(reg))
-        .run(&p, &agent, json!({})).await.unwrap();
+        .run(&p, &agent, json!({}))
+        .await
+        .unwrap();
     assert!(r.success);
 
     let raw = &r.step_results["s"].output.raw;
@@ -260,9 +317,18 @@ async fn test_function_tool_returns_structured_json() {
 
 #[tokio::test]
 async fn test_function_tool_execution_failed_surfaces_as_step_failed() {
-    let tool = FunctionTool::new("local.fail", "fail",
+    let tool = FunctionTool::new(
+        "local.fail",
+        "fail",
         json!({"type":"object","properties":{}}),
-        |_a, _c| Box::pin(async { Err(ToolError::ExecutionFailed { reason: "boom".to_string() }) }));
+        |_a, _c| {
+            Box::pin(async {
+                Err(ToolError::ExecutionFailed {
+                    reason: "boom".to_string(),
+                })
+            })
+        },
+    );
     let mut reg = ToolRegistry::new();
     reg.register(tool);
 
@@ -270,12 +336,15 @@ async fn test_function_tool_execution_failed_surfaces_as_step_failed() {
     let p = Pipeline {
         name: "p".into(),
         steps: vec![tool_step("s", "local.fail", json!({}), scope.clone())],
-        on_failure: FailureMode::Abort, max_retries: 0,
+        on_failure: FailureMode::Abort,
+        max_retries: 0,
     };
     let agent = make_agent(&p, scope.clone(), scope);
 
     let err = PipelineRunner::with_tool_registry(Arc::new(reg))
-        .run(&p, &agent, json!({})).await.unwrap_err();
+        .run(&p, &agent, json!({}))
+        .await
+        .unwrap_err();
 
     match err {
         PipelineError::StepFailed { step, error } => {
@@ -292,7 +361,8 @@ async fn test_function_tool_execution_failed_surfaces_as_step_failed() {
 #[tokio::test]
 async fn test_arc_registered_tool_callable_via_pipeline() {
     let tool = FunctionTool::new(
-        "local.arcd", "arc-registered",
+        "local.arcd",
+        "arc-registered",
         json!({"type":"object","properties":{}}),
         |_a, _c| Box::pin(async { Ok(ToolOutput::text("arcd-ok".to_string())) }),
     );
@@ -300,18 +370,24 @@ async fn test_arc_registered_tool_callable_via_pipeline() {
     reg.register(tool);
 
     // Verify it's retrievable before running
-    assert!(reg.get("local.arcd").is_some(), "tool must be retrievable after registration");
+    assert!(
+        reg.get("local.arcd").is_some(),
+        "tool must be retrievable after registration"
+    );
 
     let scope = ToolSet::Allow(vec!["local.arcd".into()]);
     let p = Pipeline {
         name: "p".into(),
         steps: vec![tool_step("s", "local.arcd", json!({}), scope.clone())],
-        on_failure: FailureMode::Abort, max_retries: 0,
+        on_failure: FailureMode::Abort,
+        max_retries: 0,
     };
     let agent = make_agent(&p, scope.clone(), scope);
 
     let r = PipelineRunner::with_tool_registry(Arc::new(reg))
-        .run(&p, &agent, json!({})).await.unwrap();
+        .run(&p, &agent, json!({}))
+        .await
+        .unwrap();
     assert_eq!(r.step_results["s"].output.raw, "arcd-ok");
 }
 
@@ -319,10 +395,14 @@ async fn test_arc_registered_tool_callable_via_pipeline() {
 
 #[tokio::test]
 async fn test_multiple_sequential_tool_steps_each_record_correct_output() {
-    let mk_tool = |name: &'static str, out: &'static str| FunctionTool::new(
-        name, name,
-        json!({"type":"object","properties":{}}),
-        move |_a, _c| Box::pin(async move { Ok(ToolOutput::text(out.to_string())) }));
+    let mk_tool = |name: &'static str, out: &'static str| {
+        FunctionTool::new(
+            name,
+            name,
+            json!({"type":"object","properties":{}}),
+            move |_a, _c| Box::pin(async move { Ok(ToolOutput::text(out.to_string())) }),
+        )
+    };
 
     let mut reg = ToolRegistry::new();
     reg.register(mk_tool("local.one", "first"));
@@ -330,30 +410,41 @@ async fn test_multiple_sequential_tool_steps_each_record_correct_output() {
     reg.register(mk_tool("local.three", "third"));
 
     let scope = ToolSet::Allow(vec![
-        "local.one".into(), "local.two".into(), "local.three".into(),
+        "local.one".into(),
+        "local.two".into(),
+        "local.three".into(),
     ]);
     let p = Pipeline {
         name: "p".into(),
         steps: vec![
-            tool_step("s1", "local.one",   json!({}), scope.clone()),
-            tool_step("s2", "local.two",   json!({}), scope.clone()),
+            tool_step("s1", "local.one", json!({}), scope.clone()),
+            tool_step("s2", "local.two", json!({}), scope.clone()),
             tool_step("s3", "local.three", json!({}), scope.clone()),
         ],
-        on_failure: FailureMode::Abort, max_retries: 0,
+        on_failure: FailureMode::Abort,
+        max_retries: 0,
     };
     let agent = make_agent(&p, scope.clone(), scope);
 
     let r = PipelineRunner::with_tool_registry(Arc::new(reg))
-        .run(&p, &agent, json!({})).await.unwrap();
+        .run(&p, &agent, json!({}))
+        .await
+        .unwrap();
 
     assert!(r.success);
-    assert_eq!(r.steps_passed, vec!["s1".to_string(), "s2".to_string(), "s3".to_string()]);
+    assert_eq!(
+        r.steps_passed,
+        vec!["s1".to_string(), "s2".to_string(), "s3".to_string()]
+    );
     assert_eq!(r.step_results["s1"].output.raw, "first");
     assert_eq!(r.step_results["s2"].output.raw, "second");
     assert_eq!(r.step_results["s3"].output.raw, "third");
 
     // Verify audit log recorded all three in order
-    let completed: Vec<&str> = r.audit_log.entries().iter()
+    let completed: Vec<&str> = r
+        .audit_log
+        .entries()
+        .iter()
         .filter_map(|e| match &e.event {
             AuditEvent::ToolCallCompleted { tool, .. } => Some(tool.as_str()),
             _ => None,
@@ -372,27 +463,38 @@ async fn test_readonly_step_scope_blocks_fs_write() {
 
     let p = Pipeline {
         name: "p".into(),
-        steps: vec![tool_step("w", "fs.write",
+        steps: vec![tool_step(
+            "w",
+            "fs.write",
             json!({ "path": target.to_string_lossy(), "content": "should not appear" }),
-            ToolSet::ReadOnly)],
-        on_failure: FailureMode::Abort, max_retries: 0,
+            ToolSet::ReadOnly,
+        )],
+        on_failure: FailureMode::Abort,
+        max_retries: 0,
     };
     // Agent has Full tools but step only has ReadOnly
     let agent = make_agent(&p, ToolSet::Full, ToolSet::Full);
 
     let err = PipelineRunner::with_tool_registry(Arc::new(reg))
-        .run(&p, &agent, json!({})).await.unwrap_err();
+        .run(&p, &agent, json!({}))
+        .await
+        .unwrap_err();
 
     match err {
         PipelineError::StepFailed { step, error } => {
             assert_eq!(step, "w");
             let m = error.to_string();
-            assert!(m.to_lowercase().contains("not allowed") || m.contains("fs.write"),
-                "error should mention 'not allowed': {m}");
+            assert!(
+                m.to_lowercase().contains("not allowed") || m.contains("fs.write"),
+                "error should mention 'not allowed': {m}"
+            );
         }
         other => panic!("expected StepFailed, got {other:?}"),
     }
-    assert!(!target.exists(), "fs.write must not have created the target file");
+    assert!(
+        !target.exists(),
+        "fs.write must not have created the target file"
+    );
 }
 
 // â”€â”€â”€ Test 11: Built-in fs.read reads Cargo.toml â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -401,26 +503,41 @@ async fn test_readonly_step_scope_blocks_fs_write() {
 async fn test_builtin_fs_read_reads_cargo_toml_in_pipeline() {
     let reg = ToolRegistry::with_builtins();
     let path = std::env::current_dir().unwrap().join("Cargo.toml");
-    assert!(path.exists(), "precondition: Cargo.toml must exist at {path:?}");
+    assert!(
+        path.exists(),
+        "precondition: Cargo.toml must exist at {path:?}"
+    );
 
     let p = Pipeline {
         name: "p".into(),
-        steps: vec![tool_step("read", "fs.read",
+        steps: vec![tool_step(
+            "read",
+            "fs.read",
             json!({ "path": path.to_string_lossy() }),
-            ToolSet::ReadOnly)],
-        on_failure: FailureMode::Abort, max_retries: 0,
+            ToolSet::ReadOnly,
+        )],
+        on_failure: FailureMode::Abort,
+        max_retries: 0,
     };
     let agent = make_agent(&p, ToolSet::ReadOnly, ToolSet::ReadOnly);
 
     let r = PipelineRunner::with_tool_registry(Arc::new(reg))
-        .run(&p, &agent, json!({})).await.unwrap();
+        .run(&p, &agent, json!({}))
+        .await
+        .unwrap();
 
     assert!(r.success);
     let raw = &r.step_results["read"].output.raw;
-    assert!(raw.contains("[package]"), "Cargo.toml must contain [package]: {raw}");
-    assert!(raw.contains("verdict"), "Cargo.toml must contain 'verdict': {raw}");
-    assert!(r.audit_log.entries().iter().any(|e|
-        matches!(&e.event, AuditEvent::ToolCallCompleted { tool, .. } if tool == "fs.read")
+    assert!(
+        raw.contains("[package]"),
+        "Cargo.toml must contain [package]: {raw}"
+    );
+    assert!(
+        raw.contains("verdict"),
+        "Cargo.toml must contain 'verdict': {raw}"
+    );
+    assert!(r.audit_log.entries().iter().any(
+        |e| matches!(&e.event, AuditEvent::ToolCallCompleted { tool, .. } if tool == "fs.read")
     ));
 }
 
@@ -428,16 +545,25 @@ async fn test_builtin_fs_read_reads_cargo_toml_in_pipeline() {
 
 #[tokio::test]
 async fn test_function_tool_echoes_args_and_validates_schema() {
-    let tool = FunctionTool::new("local.echo", "echo input",
+    let tool = FunctionTool::new(
+        "local.echo",
+        "echo input",
         json!({
             "type": "object",
             "required": ["value"],
             "properties": { "value": { "type": "string" } }
         }),
-        |args, _c| Box::pin(async move {
-            let v = args.get("value").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            Ok(ToolOutput::text(v))
-        }));
+        |args, _c| {
+            Box::pin(async move {
+                let v = args
+                    .get("value")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                Ok(ToolOutput::text(v))
+            })
+        },
+    );
     let mut reg = ToolRegistry::new();
     reg.register(tool);
     let reg = Arc::new(reg);
@@ -447,20 +573,34 @@ async fn test_function_tool_echoes_args_and_validates_schema() {
         let p = Pipeline {
             name: "p".into(),
             steps: vec![tool_step("s", "local.echo", args, scope.clone())],
-            on_failure: FailureMode::Abort, max_retries: 0,
+            on_failure: FailureMode::Abort,
+            max_retries: 0,
         };
         let agent = make_agent(&p, scope.clone(), scope);
-        PipelineRunner::with_tool_registry(reg).run(&p, &agent, json!({})).await
+        PipelineRunner::with_tool_registry(reg)
+            .run(&p, &agent, json!({}))
+            .await
     };
 
     // Happy path: correct args
-    let r = run_with(json!({"value": "hello-world"}), Arc::clone(&reg), scope.clone()).await.unwrap();
+    let r = run_with(
+        json!({"value": "hello-world"}),
+        Arc::clone(&reg),
+        scope.clone(),
+    )
+    .await
+    .unwrap();
     assert_eq!(r.step_results["s"].output.raw, "hello-world");
 
     // Missing required field â†’ schema validation fails
-    let err = run_with(json!({}), Arc::clone(&reg), scope.clone()).await.unwrap_err();
+    let err = run_with(json!({}), Arc::clone(&reg), scope.clone())
+        .await
+        .unwrap_err();
     let msg = format!("{err:?}");
-    assert!(msg.to_lowercase().contains("schema") || msg.to_lowercase().contains("invalid") || msg.contains("StepFailed"),
-        "missing arg should produce a schema/validation error: {msg}");
+    assert!(
+        msg.to_lowercase().contains("schema")
+            || msg.to_lowercase().contains("invalid")
+            || msg.contains("StepFailed"),
+        "missing arg should produce a schema/validation error: {msg}"
+    );
 }
-

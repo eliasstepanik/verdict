@@ -65,8 +65,7 @@ impl ToolRegistry {
     }
 
     pub fn register(&mut self, tool: impl Tool + 'static) {
-        self.tools
-            .insert(tool.name().to_string(), Arc::new(tool));
+        self.tools.insert(tool.name().to_string(), Arc::new(tool));
     }
 
     pub fn register_arc(&mut self, tool: Arc<dyn Tool>) {
@@ -108,22 +107,22 @@ impl ToolRegistry {
     /// Create a registry with all built-in tools
     pub fn with_builtins() -> Self {
         let mut registry = Self::new();
-        
+
         // Register shell tools
         for tool in crate::tools::shell::shell_tools() {
             registry.register_arc(tool);
         }
-        
+
         // Register filesystem tools
         for tool in crate::tools::filesystem::filesystem_tools() {
             registry.register_arc(tool);
         }
-        
+
         // Register search tools
         for tool in crate::tools::search::search_tools() {
             registry.register_arc(tool);
         }
-        
+
         registry
     }
 

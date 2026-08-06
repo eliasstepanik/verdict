@@ -1,9 +1,8 @@
 /// ThreadMemory: Persisted conversation history
 ///
 /// Provides access to thread-based conversation memory with optional limiting
-
 use std::sync::Arc;
-use verdict::memory::{MemoryStore, MemoryMessage, MemoryRole, MemoryError};
+use verdict::memory::{MemoryError, MemoryMessage, MemoryRole, MemoryStore};
 
 pub struct ThreadMemory {
     store: Arc<dyn MemoryStore>,
@@ -33,7 +32,12 @@ impl ThreadMemory {
         role: MemoryRole,
         content: String,
     ) -> Result<(), MemoryError> {
-        let msg = MemoryMessage::new(thread_id.to_string(), resource_id.to_string(), role, content);
+        let msg = MemoryMessage::new(
+            thread_id.to_string(),
+            resource_id.to_string(),
+            role,
+            content,
+        );
         self.store.save_message(thread_id, resource_id, msg).await
     }
 

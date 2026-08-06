@@ -94,15 +94,13 @@ pub enum ConfigError {
 impl VerdictConfig {
     /// Load configuration from a file
     pub fn from_file(path: &Path) -> Result<Self, ConfigError> {
-        let content = std::fs::read_to_string(path)
-            .map_err(|e| ConfigError::Io(e))?;
+        let content = std::fs::read_to_string(path).map_err(|e| ConfigError::Io(e))?;
         Self::from_str(&content)
     }
 
     /// Load configuration from a TOML string
     pub fn from_str(content: &str) -> Result<Self, ConfigError> {
-        toml::from_str(content)
-            .map_err(|e| ConfigError::Parse(e.to_string()))
+        toml::from_str(content).map_err(|e| ConfigError::Parse(e.to_string()))
     }
 
     /// Find and load verdict.toml from current directory or parents
@@ -121,8 +119,7 @@ impl VerdictConfig {
 
     /// Serialize to TOML string
     pub fn to_toml(&self) -> Result<String, ConfigError> {
-        toml::to_string_pretty(self)
-            .map_err(|e| ConfigError::Parse(e.to_string()))
+        toml::to_string_pretty(self).map_err(|e| ConfigError::Parse(e.to_string()))
     }
 }
 

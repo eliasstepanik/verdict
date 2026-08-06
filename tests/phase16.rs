@@ -2,9 +2,9 @@
 //!
 //! Tests for composable prompt templates, structured output types, and related guards.
 
-use verdict::prelude::*;
 use serde_json::json;
 use std::path::PathBuf;
+use verdict::prelude::*;
 
 #[tokio::test]
 async fn test_prompt_template_static() {
@@ -47,7 +47,6 @@ async fn test_prompt_template_conversation() {
             workspace_isolation: WorkspaceIsolation::None,
         },
     );
-
 
     ctx.conversation_history = MessageHistory {
         conversation_id: None,
@@ -141,8 +140,10 @@ async fn test_structured_output_diagnostics() {
         },
     ];
 
-    let output =
-        ToolOutput::with_structured("error: undefined variable".to_string(), StructuredOutput::Diagnostics(diagnostics));
+    let output = ToolOutput::with_structured(
+        "error: undefined variable".to_string(),
+        StructuredOutput::Diagnostics(diagnostics),
+    );
 
     match output.as_structured().unwrap() {
         StructuredOutput::Diagnostics(diags) => {
@@ -164,10 +165,7 @@ async fn test_structured_output_table() {
         ],
     };
 
-    let output = ToolOutput::with_structured(
-        "Name | Age\nAlice | 30\nBob | 25".to_string(),
-        table,
-    );
+    let output = ToolOutput::with_structured("Name | Age\nAlice | 30\nBob | 25".to_string(), table);
 
     match output.as_structured().unwrap() {
         StructuredOutput::Table { headers, rows } => {

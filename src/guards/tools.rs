@@ -1,5 +1,5 @@
-use crate::context::StepContext;
 use super::GuardError;
+use crate::context::StepContext;
 
 pub fn check_no_forbidden_tools(
     _guard: &super::Guard,
@@ -30,7 +30,9 @@ pub fn check_shell_allowlist(
         if trimmed.is_empty() {
             continue;
         }
-        let allowed = cmds.iter().any(|prefix| trimmed.starts_with(prefix.as_str()));
+        let allowed = cmds
+            .iter()
+            .any(|prefix| trimmed.starts_with(prefix.as_str()));
         if !allowed {
             return Err(GuardError::Failed {
                 guard: "ShellCommandAllowlist".to_string(),

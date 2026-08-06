@@ -14,9 +14,9 @@ mod common;
 
 use common::ScriptedMockLlmProvider;
 use common::ScriptedResponse;
+use serde_json::json;
 use std::sync::Arc;
 use verdict::prelude::*;
-use serde_json::json;
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════════
 // HELPERS
@@ -55,11 +55,7 @@ fn tool_use_loop_step(
     }
 }
 
-fn llm_call_step(
-    name: &str,
-    system: &str,
-    user: &str,
-) -> AgentStep {
+fn llm_call_step(name: &str, system: &str, user: &str) -> AgentStep {
     AgentStep {
         name: name.into(),
         guard_in: Guard::None,
@@ -136,7 +132,10 @@ async fn test_tool_use_loop_single_tool_call_then_text() {
 
     assert!(result.success, "Pipeline should succeed");
     assert!(
-        result.step_results["list_files"].output.raw.contains("files"),
+        result.step_results["list_files"]
+            .output
+            .raw
+            .contains("files"),
         "Output should contain 'files'"
     );
 }
@@ -176,7 +175,10 @@ async fn test_tool_use_loop_no_tools_called_returns_text() {
     let result = runner.run(&pipeline, &agent, json!({})).await.unwrap();
 
     assert!(result.success);
-    assert_eq!(result.step_results["greet"].output.raw, "Hello! No tools needed.");
+    assert_eq!(
+        result.step_results["greet"].output.raw,
+        "Hello! No tools needed."
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════════
@@ -218,7 +220,10 @@ async fn test_tool_use_loop_multiple_tool_calls_sequential() {
     let result = runner.run(&pipeline, &agent, json!({})).await.unwrap();
 
     assert!(result.success);
-    assert!(result.step_results["inspect"].output.raw.contains("summary"));
+    assert!(result.step_results["inspect"]
+        .output
+        .raw
+        .contains("summary"));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════════
@@ -259,7 +264,10 @@ async fn test_tool_use_loop_synthesis_call_when_final_text_empty() {
     let result = runner.run(&pipeline, &agent, json!({})).await.unwrap();
 
     assert!(result.success);
-    assert!(result.step_results["analyze"].output.raw.contains("Files found"));
+    assert!(result.step_results["analyze"]
+        .output
+        .raw
+        .contains("Files found"));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════════
@@ -392,7 +400,9 @@ async fn test_guard_noemptyoutput_blocks_empty_response() {
 
 #[tokio::test]
 async fn test_guard_nosecretsinoutput_blocks_api_key() {
-    let script = vec![ScriptedResponse::text("sk-1234567890abcdef1234567890abcdef")];
+    let script = vec![ScriptedResponse::text(
+        "sk-1234567890abcdef1234567890abcdef",
+    )];
 
     let mock_provider = ScriptedMockLlmProvider::new(script);
     let llm_client = LlmClient::new(Arc::new(mock_provider));
@@ -502,7 +512,10 @@ async fn test_tool_call_fs_read_real_execution() {
 
     assert!(result.success);
     // Cargo.toml should contain [package]
-    assert!(result.step_results["read_cargo"].output.raw.contains("[package]"));
+    assert!(result.step_results["read_cargo"]
+        .output
+        .raw
+        .contains("[package]"));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════════
@@ -650,13 +663,14 @@ async fn test_delegation_with_scripted_child_agent() {
 
     let parent_agent = make_agent(parent_pipeline.clone(), ToolSet::Full);
 
-    let mut runner = PipelineRunner::with_registries(
-        Arc::new(tool_registry),
-        Arc::new(agent_registry),
-    );
+    let mut runner =
+        PipelineRunner::with_registries(Arc::new(tool_registry), Arc::new(agent_registry));
     runner = runner.with_llm_client(Arc::new(llm_client));
 
-    let result = runner.run(&parent_pipeline, &parent_agent, json!({})).await.unwrap();
+    let result = runner
+        .run(&parent_pipeline, &parent_agent, json!({}))
+        .await
+        .unwrap();
 
     assert!(result.success);
 }

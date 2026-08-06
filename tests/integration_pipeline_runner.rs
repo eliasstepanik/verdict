@@ -4,14 +4,17 @@
 //! not guard evaluation in isolation. All tests use StepAction::Custom
 //! for deterministic, LLM-free execution unless otherwise noted.
 
-use std::sync::{Arc, Mutex};
-use std::sync::atomic::{AtomicU32, Ordering};
-use verdict::prelude::*;
 use serde_json::json;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, Mutex};
+use verdict::prelude::*;
 
 // â”€â”€â”€ shared helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-fn custom_step(name: &str, f: impl Fn(&StepContext) -> Result<StepOutput, StepError> + Send + Sync + 'static) -> AgentStep {
+fn custom_step(
+    name: &str,
+    f: impl Fn(&StepContext) -> Result<StepOutput, StepError> + Send + Sync + 'static,
+) -> AgentStep {
     AgentStep {
         name: name.into(),
         guard_in: Guard::None,
@@ -23,9 +26,9 @@ fn custom_step(name: &str, f: impl Fn(&StepContext) -> Result<StepOutput, StepEr
         output_schema: None,
         dependencies: vec![],
         parallel: false,
-            input_processors: vec![],
-            output_processors: vec![],
-        }
+        input_processors: vec![],
+        output_processors: vec![],
+    }
 }
 
 fn abort_pipeline(name: &str, steps: Vec<AgentStep>) -> Pipeline {
@@ -56,16 +59,28 @@ async fn test_data_flows_step1_to_step2_to_step3_via_step_results() {
     let step1 = custom_step("step1", |_ctx| Ok(StepOutput::new("alpha".into())));
 
     let step2 = custom_step("step2", |ctx| {
-        let prev = ctx.step_results.get("step1")
-            .ok_or_else(|| StepError::ActionFailed { reason: "no step1".into() })?
-            .output.raw.clone();
+        let prev = ctx
+            .step_results
+            .get("step1")
+            .ok_or_else(|| StepError::ActionFailed {
+                reason: "no step1".into(),
+            })?
+            .output
+            .raw
+            .clone();
         Ok(StepOutput::new(format!("{prev}-beta")))
     });
 
     let step3 = custom_step("step3", |ctx| {
-        let prev = ctx.step_results.get("step2")
-            .ok_or_else(|| StepError::ActionFailed { reason: "no step2".into() })?
-            .output.raw.clone();
+        let prev = ctx
+            .step_results
+            .get("step2")
+            .ok_or_else(|| StepError::ActionFailed {
+                reason: "no step2".into(),
+            })?
+            .output
+            .raw
+            .clone();
         Ok(StepOutput::new(format!("{prev}-gamma")))
     });
 
@@ -94,7 +109,9 @@ async fn test_retry_exhaustion_returns_max_retries_exceeded() {
         guard_in: Guard::None,
         action: StepAction::Custom(Arc::new(move |_ctx| {
             counter.fetch_add(1, Ordering::SeqCst);
-            Err(StepError::ActionFailed { reason: "always".into() })
+            Err(StepError::ActionFailed {
+                reason: "always".into(),
+            })
         })),
         guard_out: Guard::None,
         verdict: Verdict::None,
@@ -103,9 +120,9 @@ async fn test_retry_exhaustion_returns_max_retries_exceeded() {
         output_schema: None,
         dependencies: vec![],
         parallel: false,
-            input_processors: vec![],
-            output_processors: vec![],
-        };
+        input_processors: vec![],
+        output_processors: vec![],
+    };
 
     let pipeline = Pipeline {
         name: "retry_exhaust".into(),
@@ -121,7 +138,11 @@ async fn test_retry_exhaustion_returns_max_retries_exceeded() {
         matches!(err, PipelineError::MaxRetriesExceeded { ref step } if step == "always_fails"),
         "expected MaxRetriesExceeded, got {err:?}"
     );
-    assert_eq!(attempts.load(Ordering::SeqCst), 3, "1 initial + 2 retries = 3 attempts");
+    assert_eq!(
+        attempts.load(Ordering::SeqCst),
+        3,
+        "1 initial + 2 retries = 3 attempts"
+    );
 }
 
 // â”€â”€â”€ Test 3: guard_out NonEmptyOutput blocks empty step â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -139,9 +160,9 @@ async fn test_guard_out_nonempty_blocks_empty_output() {
         output_schema: None,
         dependencies: vec![],
         parallel: false,
-            input_processors: vec![],
-            output_processors: vec![],
-        };
+        input_processors: vec![],
+        output_processors: vec![],
+    };
 
     let pipeline = abort_pipeline("guard_blocks", vec![empty_step]);
     let agent = simple_agent(&pipeline);
@@ -171,18 +192,23 @@ async fn test_guard_out_valid_json_passes_on_json_output() {
         output_schema: None,
         dependencies: vec![],
         parallel: false,
-            input_processors: vec![],
-            output_processors: vec![],
-        };
+        input_processors: vec![],
+        output_processors: vec![],
+    };
 
     let pipeline = abort_pipeline("json_ok", vec![json_step]);
     let agent = simple_agent(&pipeline);
     let mut runner = PipelineRunner::new();
-    let result = runner.run(&pipeline, &agent, json!({})).await
+    let result = runner
+        .run(&pipeline, &agent, json!({}))
+        .await
         .expect("ValidJson guard should pass on well-formed JSON");
 
     assert!(result.success);
-    assert_eq!(result.step_results["json_step"].output.raw, r#"{"status":"ok","count":42}"#);
+    assert_eq!(
+        result.step_results["json_step"].output.raw,
+        r#"{"status":"ok","count":42}"#
+    );
 }
 
 // â”€â”€â”€ Test 5: Verdict::None and Verdict::Automated(Guard::None) are equivalent â”€
@@ -199,9 +225,9 @@ async fn run_with_verdict(verdict: Verdict) -> PipelineResult {
         output_schema: None,
         dependencies: vec![],
         parallel: false,
-            input_processors: vec![],
-            output_processors: vec![],
-        };
+        input_processors: vec![],
+        output_processors: vec![],
+    };
     let pipeline = abort_pipeline("v", vec![step]);
     let agent = simple_agent(&pipeline);
     let mut runner = PipelineRunner::new();
@@ -229,7 +255,9 @@ async fn test_fallback_pipeline_runs_in_clean_context() {
 
     let primary_ok = custom_step("primary_ok", |_| Ok(StepOutput::new("a".into())));
     let fail_step = custom_step("fail_step", |_| {
-        Err(StepError::ActionFailed { reason: "force fallback".into() })
+        Err(StepError::ActionFailed {
+            reason: "force fallback".into(),
+        })
     });
 
     let fb_observe = AgentStep {
@@ -247,9 +275,9 @@ async fn test_fallback_pipeline_runs_in_clean_context() {
         output_schema: None,
         dependencies: vec![],
         parallel: false,
-            input_processors: vec![],
-            output_processors: vec![],
-        };
+        input_processors: vec![],
+        output_processors: vec![],
+    };
 
     let fallback = Pipeline {
         name: "fb".into(),
@@ -271,7 +299,10 @@ async fn test_fallback_pipeline_runs_in_clean_context() {
     assert!(result.is_ok(), "fallback should rescue the pipeline");
 
     let snapshot = observed_keys.lock().unwrap().expect("fallback ran");
-    assert_eq!(snapshot, 0, "fallback step_results must be clean, got {snapshot} keys");
+    assert_eq!(
+        snapshot, 0,
+        "fallback step_results must be clean, got {snapshot} keys"
+    );
 }
 
 // â”€â”€â”€ Test 7: Both primary and fallback fail â†’ Err propagated â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -282,7 +313,9 @@ async fn test_fallback_also_fails_propagates_error() {
         Err(StepError::ActionFailed { reason: "p".into() })
     });
     let fb_also_fails = custom_step("fb_also_fails", |_| {
-        Err(StepError::ActionFailed { reason: "fb".into() })
+        Err(StepError::ActionFailed {
+            reason: "fb".into(),
+        })
     });
 
     let fallback = Pipeline {
@@ -309,7 +342,11 @@ async fn test_fallback_also_fails_propagates_error() {
 #[tokio::test]
 async fn test_skip_on_failure_sets_success_false() {
     let a = custom_step("a", |_| Ok(StepOutput::new("A".into())));
-    let b = custom_step("b", |_| Err(StepError::ActionFailed { reason: "boom".into() }));
+    let b = custom_step("b", |_| {
+        Err(StepError::ActionFailed {
+            reason: "boom".into(),
+        })
+    });
     let c = custom_step("c", |_| Ok(StepOutput::new("C".into())));
 
     let pipeline = Pipeline {
@@ -322,7 +359,10 @@ async fn test_skip_on_failure_sets_success_false() {
     let mut runner = PipelineRunner::new();
     let result = runner.run(&pipeline, &agent, json!({})).await.unwrap();
 
-    assert!(!result.success, "success must be false when any step failed");
+    assert!(
+        !result.success,
+        "success must be false when any step failed"
+    );
     assert_eq!(result.steps_passed, vec!["a".to_string(), "c".to_string()]);
     assert_eq!(result.steps_failed, vec!["b".to_string()]);
     assert!(result.step_results["b"].error.is_some());
@@ -337,7 +377,9 @@ async fn test_injection_protection_strict_passes_on_clean_output() {
         name: "clean_step".into(),
         guard_in: Guard::None,
         action: StepAction::Custom(Arc::new(|_ctx| {
-            Ok(StepOutput::new("Hello world, this is a completely normal response.".into()))
+            Ok(StepOutput::new(
+                "Hello world, this is a completely normal response.".into(),
+            ))
         })),
         guard_out: Guard::None,
         verdict: Verdict::None,
@@ -346,9 +388,9 @@ async fn test_injection_protection_strict_passes_on_clean_output() {
         output_schema: None,
         dependencies: vec![],
         parallel: false,
-            input_processors: vec![],
-            output_processors: vec![],
-        };
+        input_processors: vec![],
+        output_processors: vec![],
+    };
 
     let pipeline = abort_pipeline("inj_clean", vec![clean]);
     let agent = simple_agent(&pipeline);
@@ -358,9 +400,11 @@ async fn test_injection_protection_strict_passes_on_clean_output() {
     assert!(result.success);
     assert_eq!(result.steps_passed, vec!["clean_step".to_string()]);
     assert!(result.steps_failed.is_empty());
-    assert!(!result.audit_log.entries().iter().any(|e|
-        matches!(e.event, AuditEvent::InjectionDetected { .. })
-    ));
+    assert!(!result
+        .audit_log
+        .entries()
+        .iter()
+        .any(|e| matches!(e.event, AuditEvent::InjectionDetected { .. })));
 }
 
 // â”€â”€â”€ Test 10: step_results map is fully populated after 4-step pipeline â”€â”€â”€â”€â”€â”€â”€â”€
@@ -368,9 +412,10 @@ async fn test_injection_protection_strict_passes_on_clean_output() {
 #[tokio::test]
 async fn test_step_results_map_is_complete_and_keyed_by_name() {
     let names = ["alpha", "beta", "gamma", "delta"];
-    let steps: Vec<AgentStep> = names.iter().map(|&n| {
-        custom_step(n, move |_ctx| Ok(StepOutput::new(n.to_string())))
-    }).collect();
+    let steps: Vec<AgentStep> = names
+        .iter()
+        .map(|&n| custom_step(n, move |_ctx| Ok(StepOutput::new(n.to_string()))))
+        .collect();
 
     let pipeline = abort_pipeline("map_check", steps);
     let agent = simple_agent(&pipeline);
@@ -402,9 +447,9 @@ async fn test_full_success_pipeline_audit_contains_started_and_completed() {
         output_schema: None,
         dependencies: vec![],
         parallel: false,
-            input_processors: vec![],
-            output_processors: vec![],
-        };
+        input_processors: vec![],
+        output_processors: vec![],
+    };
     let s2 = AgentStep {
         name: "s2".into(),
         guard_in: Guard::None,
@@ -416,9 +461,9 @@ async fn test_full_success_pipeline_audit_contains_started_and_completed() {
         output_schema: None,
         dependencies: vec![],
         parallel: false,
-            input_processors: vec![],
-            output_processors: vec![],
-        };
+        input_processors: vec![],
+        output_processors: vec![],
+    };
 
     let pipeline = abort_pipeline("happy", vec![s1, s2]);
     let agent = simple_agent(&pipeline);
@@ -430,10 +475,15 @@ async fn test_full_success_pipeline_audit_contains_started_and_completed() {
     assert!(result.steps_failed.is_empty());
 
     let entries = result.audit_log.entries();
-    assert!(entries.iter().any(|e| matches!(e.event, AuditEvent::PipelineStarted)));
+    assert!(entries
+        .iter()
+        .any(|e| matches!(e.event, AuditEvent::PipelineStarted)));
     assert!(entries.iter().any(|e| matches!(
         e.event,
-        AuditEvent::PipelineCompleted { steps_failed: 0, .. }
+        AuditEvent::PipelineCompleted {
+            steps_failed: 0,
+            ..
+        }
     )));
 }
 
@@ -442,14 +492,28 @@ async fn test_full_success_pipeline_audit_contains_started_and_completed() {
 #[tokio::test]
 async fn test_step_reads_original_request_from_ctx() {
     let s1 = custom_step("step1", |ctx| {
-        let task = ctx.request.get("task").and_then(|v| v.as_str()).unwrap_or("");
-        let prio = ctx.request.get("priority").and_then(|v| v.as_str()).unwrap_or("");
+        let task = ctx
+            .request
+            .get("task")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let prio = ctx
+            .request
+            .get("priority")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
         Ok(StepOutput::new(format!("task={task}|priority={prio}")))
     });
     let s2 = custom_step("step2", |ctx| {
-        let prev = ctx.step_results.get("step1")
-            .ok_or_else(|| StepError::ActionFailed { reason: "no step1".into() })?
-            .output.raw.clone();
+        let prev = ctx
+            .step_results
+            .get("step1")
+            .ok_or_else(|| StepError::ActionFailed {
+                reason: "no step1".into(),
+            })?
+            .output
+            .raw
+            .clone();
         Ok(StepOutput::new(format!("echo:{prev}")))
     });
 
@@ -460,7 +524,12 @@ async fn test_step_reads_original_request_from_ctx() {
     let result = runner.run(&pipeline, &agent, input).await.unwrap();
 
     assert!(result.success);
-    assert_eq!(result.step_results["step1"].output.raw, "task=summarize|priority=high");
-    assert_eq!(result.step_results["step2"].output.raw, "echo:task=summarize|priority=high");
+    assert_eq!(
+        result.step_results["step1"].output.raw,
+        "task=summarize|priority=high"
+    );
+    assert_eq!(
+        result.step_results["step2"].output.raw,
+        "echo:task=summarize|priority=high"
+    );
 }
-

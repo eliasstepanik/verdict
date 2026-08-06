@@ -144,10 +144,7 @@ pub fn audit_log_to_spans(audit_log: &verdict::audit::AuditLog) -> Vec<OtelSpan>
                     events: Vec::new(),
                 };
 
-                span_map.insert(
-                    format!("{}.{}", entry.pipeline_name, entry.step_name),
-                    span,
-                );
+                span_map.insert(format!("{}.{}", entry.pipeline_name, entry.step_name), span);
             }
             AuditEvent::StepCompleted { .. } => {
                 let key = format!("{}.{}", entry.pipeline_name, entry.step_name);
@@ -240,5 +237,3 @@ pub fn audit_log_to_spans(audit_log: &verdict::audit::AuditLog) -> Vec<OtelSpan>
 
     spans
 }
-
-

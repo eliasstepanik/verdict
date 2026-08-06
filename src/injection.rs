@@ -43,7 +43,6 @@ impl CompiledPattern {
     }
 }
 
-
 /// Result of injection scanning
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InjectionResult {
@@ -73,12 +72,12 @@ fn entropy(text: &str) -> f64 {
 
     let len = text.len() as f64;
     let mut freq = [0f64; 256];
-    
+
     // Count byte frequencies
     for byte in text.as_bytes() {
         freq[*byte as usize] += 1.0;
     }
-    
+
     // Calculate Shannon entropy
     let mut h = 0.0;
     for count in &freq {
@@ -87,7 +86,7 @@ fn entropy(text: &str) -> f64 {
             h -= p * p.log2();
         }
     }
-    
+
     h
 }
 
@@ -107,7 +106,7 @@ impl InjectionScanner {
             "system override",
             "bypass your safety",
             "ignore safety",
-            "system:", // SYSTEM: prefix often used for injection
+            "system:",    // SYSTEM: prefix often used for injection
             "assistant:", // In some formats
         ];
 
@@ -255,7 +254,8 @@ impl SecretScanner {
         if let Some(pos) = text.find("sk-") {
             // Keys can contain alphanumeric characters, hyphens, and underscores (e.g., sk-proj-ABC...)
             let remainder = &text[pos + 3..];
-            let key_chars: String = remainder.chars()
+            let key_chars: String = remainder
+                .chars()
                 .take_while(|c| c.is_alphanumeric() || *c == '-' || *c == '_')
                 .collect();
             if key_chars.len() > 20 {
@@ -271,7 +271,8 @@ impl SecretScanner {
         // AWS access key: AKIA* (always 20 chars alphanumeric)
         if let Some(pos) = text.find("AKIA") {
             let remainder = &text[pos..];
-            if remainder.len() >= 20 && remainder[4..].chars().take(16).all(|c| c.is_alphanumeric()) {
+            if remainder.len() >= 20 && remainder[4..].chars().take(16).all(|c| c.is_alphanumeric())
+            {
                 matches.push(SecretMatch {
                     pattern_name: "AWS Access Key".to_string(),
                     redacted: "AKIA***".to_string(),
@@ -283,9 +284,18 @@ impl SecretScanner {
 
         // Private key patterns
         let key_patterns = vec![
-            ("-----BEGIN PRIVATE KEY-----", "-----BEGIN PRIVATE KEY-----...-----END PRIVATE KEY-----"),
-            ("-----BEGIN RSA PRIVATE KEY-----", "-----BEGIN RSA PRIVATE KEY-----...-----END RSA PRIVATE KEY-----"),
-            ("-----BEGIN EC PRIVATE KEY-----", "-----BEGIN EC PRIVATE KEY-----...-----END EC PRIVATE KEY-----"),
+            (
+                "-----BEGIN PRIVATE KEY-----",
+                "-----BEGIN PRIVATE KEY-----...-----END PRIVATE KEY-----",
+            ),
+            (
+                "-----BEGIN RSA PRIVATE KEY-----",
+                "-----BEGIN RSA PRIVATE KEY-----...-----END RSA PRIVATE KEY-----",
+            ),
+            (
+                "-----BEGIN EC PRIVATE KEY-----",
+                "-----BEGIN EC PRIVATE KEY-----...-----END EC PRIVATE KEY-----",
+            ),
         ];
 
         for (pattern, redacted) in &key_patterns {
@@ -308,8 +318,11 @@ impl SecretScanner {
                     let val = parts[1].trim();
 
                     // Detect password/secret env vars
-                    if (key.contains("PASSWORD") || key.contains("SECRET") || key.contains("TOKEN")
-                        || key.contains("KEY") || key.contains("API"))
+                    if (key.contains("PASSWORD")
+                        || key.contains("SECRET")
+                        || key.contains("TOKEN")
+                        || key.contains("KEY")
+                        || key.contains("API"))
                         && !val.is_empty()
                         && val != "***"
                         && !val.starts_with("$")
@@ -335,24 +348,24 @@ impl SecretScanner {
     /// Returns vector of (token, position, entropy) tuples for tokens above the entropy threshold
     fn detect_high_entropy_tokens(&self, text: &str) -> Vec<(String, usize, f64)> {
         let mut high_entropy = Vec::new();
-        
+
         // Split on whitespace and common separators, track positions
         let mut pos = 0;
         for token in text.split(|c: char| c.is_whitespace() || c == ',' || c == ';' || c == ':') {
             if let Some(token_pos) = text[pos..].find(token) {
                 let abs_pos = pos + token_pos;
-                
+
                 if token.len() >= self.config.min_token_len {
                     let h = entropy(token);
                     if h >= self.config.entropy_threshold {
                         high_entropy.push((token.to_string(), abs_pos, h));
                     }
                 }
-                
+
                 pos = abs_pos + token.len();
             }
         }
-        
+
         high_entropy
     }
 
@@ -361,7 +374,7 @@ impl SecretScanner {
     pub async fn scan_async(&self, text: &str) -> Vec<SecretMatch> {
         // First, use the synchronous scan to get standard patterns
         let mut matches = Self::scan(text);
-        
+
         // Then, detect high-entropy tokens
         let high_entropy_tokens = self.detect_high_entropy_tokens(text);
         for (token, pos, _h) in high_entropy_tokens {
@@ -375,7 +388,7 @@ impl SecretScanner {
                 });
             }
         }
-        
+
         matches
     }
 }

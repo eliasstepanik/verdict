@@ -1,8 +1,8 @@
 //! Phase 5 — Skills integration tests
 
 use serde_json::json;
-use verdict::prelude::*;
 use std::sync::Arc;
+use verdict::prelude::*;
 
 // ============================================================================
 // Helper functions for test pipelines and agents
@@ -43,7 +43,6 @@ fn dummy_agent(name: &str, pipeline: Pipeline) -> Agent {
         skills: SkillSet::default(),
         policy: AgentPolicy::default(),
         scorers: Vec::new(),
-
     }
 }
 
@@ -86,7 +85,7 @@ fn test_skill_registry_get_returns_none_for_unknown() {
 #[test]
 fn test_skill_registry_list_returns_all_names() {
     let mut registry = SkillRegistry::new();
-    
+
     for i in 1..=3 {
         let skill = Skill {
             name: format!("skill_{}", i),
@@ -174,17 +173,21 @@ async fn test_use_skill_prompt_only_returns_instructions() {
     let result = result.unwrap();
     assert!(result.success);
     assert_eq!(result.steps_passed.len(), 1);
-    
+
     // Check that the output contains the instruction text
     let step_result = result.step_results.get("use_skill");
     assert!(step_result.is_some());
-    assert!(step_result.unwrap().output.raw.contains("This is my instruction text"));
+    assert!(step_result
+        .unwrap()
+        .output
+        .raw
+        .contains("This is my instruction text"));
 }
 
 #[tokio::test]
 async fn test_use_skill_unknown_skill_returns_error() {
     let registry = SkillRegistry::new();
-    
+
     let mut runner = PipelineRunner::with_skill_registry(Arc::new(registry));
     let pipeline = skill_pipeline("nonexistent_skill", SkillMode::PromptOnly);
     let agent = dummy_agent("test_agent", pipeline);
@@ -223,16 +226,20 @@ async fn test_use_skill_pipeline_mode_no_pipeline_falls_back() {
     assert!(result.is_ok());
     let result = result.unwrap();
     assert!(result.success);
-    
+
     let step_result = result.step_results.get("use_skill");
     assert!(step_result.is_some());
-    assert!(step_result.unwrap().output.raw.contains("Fallback to these instructions"));
+    assert!(step_result
+        .unwrap()
+        .output
+        .raw
+        .contains("Fallback to these instructions"));
 }
 
 #[tokio::test]
 async fn test_use_skill_pipeline_mode_with_pipeline_executes_it() {
     let mut registry = SkillRegistry::new();
-    
+
     // Create a simple pipeline for the skill
     let sub_pipeline = Pipeline {
         name: "skill_subpipeline".into(),
@@ -302,10 +309,14 @@ async fn test_use_skill_auto_mode_no_pipeline() {
     assert!(result.is_ok());
     let result = result.unwrap();
     assert!(result.success);
-    
+
     let step_result = result.step_results.get("use_skill");
     assert!(step_result.is_some());
-    assert!(step_result.unwrap().output.raw.contains("Auto mode instructions"));
+    assert!(step_result
+        .unwrap()
+        .output
+        .raw
+        .contains("Auto mode instructions"));
 }
 
 // ============================================================================
@@ -358,7 +369,7 @@ fn test_builtin_api_design_has_instructions() {
 #[test]
 fn test_skill_registry_holds_multiple_skills() {
     let mut registry = SkillRegistry::new();
-    
+
     for i in 1..=5 {
         let skill = Skill {
             name: format!("skill_{}", i),
@@ -398,7 +409,7 @@ fn test_pipeline_runner_with_skill_registry_constructor() {
 
     let registry = Arc::new(registry);
     let runner = PipelineRunner::with_skill_registry(registry.clone());
-    
+
     // Verify the runner was created with the skill registry
     assert_eq!(runner.skill_registry.list().len(), 1);
     assert!(runner.skill_registry.get("runner_test_skill").is_some());
@@ -456,5 +467,3 @@ fn test_builtin_refactoring_has_instructions() {
     assert!(!skill.instructions.is_empty());
     assert!(skill.instructions.contains("test") || skill.instructions.contains("refactor"));
 }
-
-

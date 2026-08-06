@@ -1,5 +1,5 @@
-use crate::context::StepContext;
 use super::GuardError;
+use crate::context::StepContext;
 
 pub fn check_max_cost_usd(
     _guard: &super::Guard,

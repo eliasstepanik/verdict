@@ -1,6 +1,6 @@
 //! verdict-config: Load Verdict Agent definitions from TOML/JSON config files.
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use verdict::prelude::*;
 
@@ -40,9 +40,15 @@ pub struct PolicySpec {
     pub allow_self_update: bool,
 }
 
-fn default_max_steps() -> u32 { 100 }
-fn default_max_retries() -> u32 { 3 }
-fn default_max_delegation_depth() -> u32 { 5 }
+fn default_max_steps() -> u32 {
+    100
+}
+fn default_max_retries() -> u32 {
+    3
+}
+fn default_max_delegation_depth() -> u32 {
+    5
+}
 
 #[derive(Debug, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -104,29 +110,26 @@ impl AgentSpec {
         };
         let pipeline = Pipeline {
             name: format!("{}-pipeline", self.name),
-            steps: vec![
-                AgentStep {
-                    name: "respond".into(),
-                    guard_in: Guard::None,
-                    action: StepAction::LlmCall {
-                        system: format!("You are {}. {}",
-                            self.name, self.description),
-                        user: "{{input}}".into(),
-                        model: None,
-                        conversation_id: Some(self.name.clone()),
-                        append_to_history: true,
-                    },
-                    guard_out: Guard::NonEmptyOutput,
-                    verdict: Verdict::None,
-                    tools: tools.clone(),
-                    injection_protection: InjectionProtection::None,
-                    output_schema: None,
-                    dependencies: vec![],
-                    parallel: false,
-                    input_processors: vec![],
-                    output_processors: vec![],
+            steps: vec![AgentStep {
+                name: "respond".into(),
+                guard_in: Guard::None,
+                action: StepAction::LlmCall {
+                    system: format!("You are {}. {}", self.name, self.description),
+                    user: "{{input}}".into(),
+                    model: None,
+                    conversation_id: Some(self.name.clone()),
+                    append_to_history: true,
                 },
-            ],
+                guard_out: Guard::NonEmptyOutput,
+                verdict: Verdict::None,
+                tools: tools.clone(),
+                injection_protection: InjectionProtection::None,
+                output_schema: None,
+                dependencies: vec![],
+                parallel: false,
+                input_processors: vec![],
+                output_processors: vec![],
+            }],
             on_failure: FailureMode::Abort,
             max_retries: self.policy.max_retries,
         };
@@ -136,7 +139,9 @@ impl AgentSpec {
             description: self.description,
             pipeline,
             tools,
-            skills: SkillSet { skills: self.skills },
+            skills: SkillSet {
+                skills: self.skills,
+            },
             policy,
             scorers: Vec::new(),
         })
@@ -149,7 +154,11 @@ pub struct AgentLoader {
 }
 
 impl AgentLoader {
-    pub fn new() -> Self { AgentLoader { search_paths: vec![] } }
+    pub fn new() -> Self {
+        AgentLoader {
+            search_paths: vec![],
+        }
+    }
 
     pub fn with_path(mut self, path: PathBuf) -> Self {
         self.search_paths.push(path);
@@ -177,7 +186,9 @@ impl AgentLoader {
 }
 
 impl Default for AgentLoader {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[cfg(test)]
@@ -240,10 +251,14 @@ allow_self_update = false
     fn test_agent_loader_with_file() {
         let tmp = std::env::temp_dir().join("verdict_config_test");
         let _ = std::fs::create_dir_all(&tmp);
-        std::fs::write(tmp.join("test.toml"), r#"
+        std::fs::write(
+            tmp.join("test.toml"),
+            r#"
 name = "test-agent"
 description = "Test"
-"#).unwrap();
+"#,
+        )
+        .unwrap();
         let loader = AgentLoader::new().with_path(tmp.clone());
         let agents = loader.load_all().unwrap();
         assert_eq!(agents.len(), 1);

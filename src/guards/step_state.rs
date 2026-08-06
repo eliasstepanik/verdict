@@ -1,6 +1,6 @@
-use serde_json::Value;
-use crate::context::StepContext;
 use super::GuardError;
+use crate::context::StepContext;
+use serde_json::Value;
 
 pub fn check_step_passed(
     _guard: &super::Guard,

@@ -1,10 +1,9 @@
 /// Regression test for tool_choice="required" fix.
-/// 
+///
 /// This test verifies that in ToolUseLoop, tool_choice is set to "required"
 /// on ALL rounds (not just round 0), ensuring the LLM is forced to call tools.
 /// Previously, tool_choice was only set on round 0, allowing the LLM to return
 /// text instead of tool calls on subsequent rounds, breaking the agentic loop.
-
 use verdict::llm::provider::ToolSchema;
 
 #[tokio::test]
@@ -28,19 +27,17 @@ async fn test_tool_choice_required_on_all_rounds() {
     // The bug was that tool_choice was only set on round 0, allowing
     // the LLM to return text instead of tool calls on round 1+.
 
-    let tool_schemas = vec![
-        ToolSchema {
-            name: "test_tool".into(),
-            description: "A test tool".into(),
-            parameters: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "arg": { "type": "string" }
-                },
-                "required": ["arg"]
-            }),
-        },
-    ];
+    let tool_schemas = vec![ToolSchema {
+        name: "test_tool".into(),
+        description: "A test tool".into(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "arg": { "type": "string" }
+            },
+            "required": ["arg"]
+        }),
+    }];
 
     // Simulate what ToolUseLoop does on each round
     for round in 0..3 {
@@ -75,7 +72,10 @@ async fn test_tool_choice_none_when_no_tools() {
         None
     };
 
-    assert_eq!(tool_choice, None, "tool_choice should be None when no tools are available");
+    assert_eq!(
+        tool_choice, None,
+        "tool_choice should be None when no tools are available"
+    );
 }
 
 #[tokio::test]
@@ -85,20 +85,21 @@ async fn test_stream_method_includes_tool_choice() {
     // were present. While ToolUseLoop uses complete() (not stream()), this is still a bug
     // for consistency and future use cases.
 
-    let tool_schemas = vec![
-        ToolSchema {
-            name: "example_tool".into(),
-            description: "Example tool".into(),
-            parameters: serde_json::json!({
-                "type": "object",
-                "properties": {}
-            }),
-        },
-    ];
+    let tool_schemas = vec![ToolSchema {
+        name: "example_tool".into(),
+        description: "Example tool".into(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": {}
+        }),
+    }];
 
     // Verify that stream() would include tool_choice if called with tools
     // (This is a logical test; the actual stream() call is integration-level)
-    assert!(!tool_schemas.is_empty(), "Tools should be present for this test");
+    assert!(
+        !tool_schemas.is_empty(),
+        "Tools should be present for this test"
+    );
 
     // The fix ensures stream() adds tool_choice to the request body when tools are present
     let tool_choice_for_stream = Some("auto".to_string()); // stream uses "auto" by default

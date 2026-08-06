@@ -5,9 +5,9 @@
 //! Tests for injection protection, secret scanning, path sandboxing,
 //! budget tracking, rate limiting, audit persistence, and guard implementations.
 
-use verdict::prelude::*;
 use serde_json::json;
 use std::path::PathBuf;
+use verdict::prelude::*;
 
 // ===== Injection Protection Tests =====
 
@@ -80,25 +80,36 @@ fn test_secret_scanner_detects_openai_api_key() {
     assert!(matches[0].pattern_name.contains("OpenAI"));
 }
 
-
 #[test]
 fn test_secret_scanner_detects_aws_key() {
     let matches = SecretScanner::scan("AWS key: AKIAIOSFODNN7EXAMPLE");
     assert!(!matches.is_empty(), "Should detect AWS key");
     // Verify the pattern name indicates AWS key detection
-    assert!(matches.iter().any(|m| m.pattern_name.contains("AWS") || m.pattern_name.contains("AKIA")),
-        "Pattern name should contain AWS or AKIA identifier. Got: {:?}", matches[0].pattern_name);
+    assert!(
+        matches
+            .iter()
+            .any(|m| m.pattern_name.contains("AWS") || m.pattern_name.contains("AKIA")),
+        "Pattern name should contain AWS or AKIA identifier. Got: {:?}",
+        matches[0].pattern_name
+    );
 }
 
 #[test]
 fn test_secret_scanner_match_has_pattern_name() {
     let matches = SecretScanner::scan("sk-abc123def456ghi789jkl012mno345pqr678stu901vwx");
     if !matches.is_empty() {
-        assert!(!matches[0].pattern_name.is_empty(), "Pattern name should not be empty");
+        assert!(
+            !matches[0].pattern_name.is_empty(),
+            "Pattern name should not be empty"
+        );
         // Verify it matches an OpenAI-like pattern
-        assert!(matches[0].pattern_name.contains("OpenAI") || matches[0].pattern_name.contains("api_key") || 
-            matches[0].pattern_name.contains("token"), "Pattern should match OpenAI or api_key pattern. Got: {:?}", 
-            matches[0].pattern_name);
+        assert!(
+            matches[0].pattern_name.contains("OpenAI")
+                || matches[0].pattern_name.contains("api_key")
+                || matches[0].pattern_name.contains("token"),
+            "Pattern should match OpenAI or api_key pattern. Got: {:?}",
+            matches[0].pattern_name
+        );
     }
 }
 
@@ -107,29 +118,52 @@ fn test_secret_scanner_detects_private_key() {
     let text = "Here is my key: -----BEGIN PRIVATE KEY-----\nMIIEvQIBA...";
     let matches = SecretScanner::scan(text);
     assert!(!matches.is_empty(), "Should detect private key");
-    assert!(matches.iter().any(|m| m.pattern_name.contains("Private Key") || m.pattern_name.contains("key")),
-        "Pattern name should indicate private key. Got: {:?}", matches[0].pattern_name);
+    assert!(
+        matches
+            .iter()
+            .any(|m| m.pattern_name.contains("Private Key") || m.pattern_name.contains("key")),
+        "Pattern name should indicate private key. Got: {:?}",
+        matches[0].pattern_name
+    );
 }
 
 #[test]
 fn test_secret_scanner_detects_env_var_password() {
     let matches = SecretScanner::scan("DATABASE_PASSWORD=secretpass123");
-    assert!(!matches.is_empty(), "Should detect password environment variable");
-    assert!(matches.iter().any(|m| m.pattern_name.contains("PASSWORD") || m.pattern_name.contains("password")),
-        "Pattern should detect PASSWORD env var. Got: {:?}", 
-        matches.iter().map(|m| m.pattern_name.as_str()).collect::<Vec<_>>());
+    assert!(
+        !matches.is_empty(),
+        "Should detect password environment variable"
+    );
+    assert!(
+        matches
+            .iter()
+            .any(|m| m.pattern_name.contains("PASSWORD") || m.pattern_name.contains("password")),
+        "Pattern should detect PASSWORD env var. Got: {:?}",
+        matches
+            .iter()
+            .map(|m| m.pattern_name.as_str())
+            .collect::<Vec<_>>()
+    );
 }
 
 #[test]
 fn test_secret_scanner_detects_env_var_api_key() {
     let matches = SecretScanner::scan("API_KEY=my_secret_value");
-    assert!(!matches.is_empty(), "Should detect API_KEY environment variable");
-    assert!(matches.iter().any(|m| m.pattern_name.contains("API") || m.pattern_name.contains("api_key")),
+    assert!(
+        !matches.is_empty(),
+        "Should detect API_KEY environment variable"
+    );
+    assert!(
+        matches
+            .iter()
+            .any(|m| m.pattern_name.contains("API") || m.pattern_name.contains("api_key")),
         "Pattern should detect API_KEY env var. Got: {:?}",
-        matches.iter().map(|m| m.pattern_name.as_str()).collect::<Vec<_>>());
+        matches
+            .iter()
+            .map(|m| m.pattern_name.as_str())
+            .collect::<Vec<_>>()
+    );
 }
-
-
 
 #[test]
 fn test_secret_scanner_detects_env_var_token() {
@@ -331,7 +365,9 @@ async fn test_audit_log_save_and_load() {
         timestamp: chrono::Utc::now(),
         pipeline_name: "test_pipeline".to_string(),
         step_name: "test_step".to_string(),
-        event: AuditEvent::StepCompleted { verdict_passed: true },
+        event: AuditEvent::StepCompleted {
+            verdict_passed: true,
+        },
     });
 
     let temp_path = "test_audit_phase7_temp.json";
@@ -424,37 +460,49 @@ fn make_context_with_output(output: &str) -> StepContext {
 #[tokio::test]
 async fn test_guard_nonempty_output_passes() {
     let ctx = make_context_with_output("hello world");
-    assert!(GuardEngine::evaluate(&Guard::NonEmptyOutput, &ctx).await.is_ok());
+    assert!(GuardEngine::evaluate(&Guard::NonEmptyOutput, &ctx)
+        .await
+        .is_ok());
 }
 
 #[tokio::test]
 async fn test_guard_nonempty_output_fails_on_empty() {
     let ctx = make_context_with_output("");
-    assert!(GuardEngine::evaluate(&Guard::NonEmptyOutput, &ctx).await.is_err());
+    assert!(GuardEngine::evaluate(&Guard::NonEmptyOutput, &ctx)
+        .await
+        .is_err());
 }
 
 #[tokio::test]
 async fn test_guard_max_output_bytes_passes() {
     let ctx = make_context_with_output("short");
-    assert!(GuardEngine::evaluate(&Guard::MaxOutputBytes(1000), &ctx).await.is_ok());
+    assert!(GuardEngine::evaluate(&Guard::MaxOutputBytes(1000), &ctx)
+        .await
+        .is_ok());
 }
 
 #[tokio::test]
 async fn test_guard_max_output_bytes_fails_when_exceeded() {
     let ctx = make_context_with_output("this is a longer string");
-    assert!(GuardEngine::evaluate(&Guard::MaxOutputBytes(5), &ctx).await.is_err());
+    assert!(GuardEngine::evaluate(&Guard::MaxOutputBytes(5), &ctx)
+        .await
+        .is_err());
 }
 
 #[tokio::test]
 async fn test_guard_max_lines_passes() {
     let ctx = make_context_with_output("line1\nline2\nline3");
-    assert!(GuardEngine::evaluate(&Guard::MaxLines(10), &ctx).await.is_ok());
+    assert!(GuardEngine::evaluate(&Guard::MaxLines(10), &ctx)
+        .await
+        .is_ok());
 }
 
 #[tokio::test]
 async fn test_guard_max_lines_fails_when_exceeded() {
     let ctx = make_context_with_output("line1\nline2\nline3\nline4\nline5");
-    assert!(GuardEngine::evaluate(&Guard::MaxLines(3), &ctx).await.is_err());
+    assert!(GuardEngine::evaluate(&Guard::MaxLines(3), &ctx)
+        .await
+        .is_err());
 }
 
 #[tokio::test]
@@ -469,17 +517,21 @@ async fn test_guard_step_passed_passes() {
             error: None,
         },
     );
-    assert!(GuardEngine::evaluate(&Guard::StepPassed("prev_step".to_string()), &ctx)
-        .await
-        .is_ok());
+    assert!(
+        GuardEngine::evaluate(&Guard::StepPassed("prev_step".to_string()), &ctx)
+            .await
+            .is_ok()
+    );
 }
 
 #[tokio::test]
 async fn test_guard_step_passed_fails_when_not_found() {
     let ctx = make_context_with_output("output");
-    assert!(GuardEngine::evaluate(&Guard::StepPassed("missing_step".to_string()), &ctx)
-        .await
-        .is_err());
+    assert!(
+        GuardEngine::evaluate(&Guard::StepPassed("missing_step".to_string()), &ctx)
+            .await
+            .is_err()
+    );
 }
 
 #[tokio::test]
@@ -494,9 +546,11 @@ async fn test_guard_step_failed_passes() {
             error: Some("test error".to_string()),
         },
     );
-    assert!(GuardEngine::evaluate(&Guard::StepFailed("prev_step".to_string()), &ctx)
-        .await
-        .is_ok());
+    assert!(
+        GuardEngine::evaluate(&Guard::StepFailed("prev_step".to_string()), &ctx)
+            .await
+            .is_ok()
+    );
 }
 
 #[tokio::test]
@@ -507,13 +561,17 @@ async fn test_guard_trace_available_passes() {
         status: "executed".to_string(),
         timestamp: chrono::Utc::now(),
     });
-    assert!(GuardEngine::evaluate(&Guard::TraceAvailable, &ctx).await.is_ok());
+    assert!(GuardEngine::evaluate(&Guard::TraceAvailable, &ctx)
+        .await
+        .is_ok());
 }
 
 #[tokio::test]
 async fn test_guard_trace_available_fails_when_empty() {
     let ctx = make_context_with_output("output");
-    assert!(GuardEngine::evaluate(&Guard::TraceAvailable, &ctx).await.is_err());
+    assert!(GuardEngine::evaluate(&Guard::TraceAvailable, &ctx)
+        .await
+        .is_err());
 }
 
 #[tokio::test]
@@ -550,14 +608,15 @@ async fn test_guard_valid_json_passes() {
 #[tokio::test]
 async fn test_guard_valid_json_fails() {
     let ctx = make_context_with_output("not json {");
-    assert!(GuardEngine::evaluate(&Guard::ValidJson, &ctx).await.is_err());
+    assert!(GuardEngine::evaluate(&Guard::ValidJson, &ctx)
+        .await
+        .is_err());
 }
 
 #[tokio::test]
 async fn test_guard_output_is_unified_diff_passes() {
-    let ctx = make_context_with_output(
-        "--- a/file.rs\n+++ b/file.rs\n@@ -1,3 +1,3 @@\n-old\n+new\n",
-    );
+    let ctx =
+        make_context_with_output("--- a/file.rs\n+++ b/file.rs\n@@ -1,3 +1,3 @@\n-old\n+new\n");
     assert!(GuardEngine::evaluate(&Guard::OutputIsUnifiedDiff, &ctx)
         .await
         .is_ok());
@@ -573,7 +632,8 @@ async fn test_guard_output_is_unified_diff_fails_on_plain_text() {
 
 #[tokio::test]
 async fn test_guard_no_new_dependencies_passes() {
-    let ctx = make_context_with_output("--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1 @@\n+fn hello() {}");
+    let ctx =
+        make_context_with_output("--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1 @@\n+fn hello() {}");
     assert!(GuardEngine::evaluate(&Guard::NoNewDependencies, &ctx)
         .await
         .is_ok());
@@ -584,7 +644,6 @@ async fn test_guard_none_always_passes() {
     let ctx = make_context_with_output("");
     assert!(GuardEngine::evaluate(&Guard::None, &ctx).await.is_ok());
 }
-
 
 #[tokio::test]
 async fn test_guard_compiles_may_fail_without_cargo() {
@@ -599,7 +658,10 @@ async fn test_guard_compiles_may_fail_without_cargo() {
         }
         Err(GuardError::Failed { .. }) => {
             // Cargo is available but build failed (acceptable)
-            assert!(true, "Guard::Compiles failed as expected when cargo is available");
+            assert!(
+                true,
+                "Guard::Compiles failed as expected when cargo is available"
+            );
         }
         Err(GuardError::NotImplemented(_)) => {
             // Cargo not available or not in PATH (acceptable)
@@ -620,27 +682,31 @@ async fn test_guard_compiles_may_fail_without_cargo() {
     }
 }
 
-
-
 #[tokio::test]
 async fn test_guard_all_of_both_pass() {
     let ctx = make_context_with_output("test output");
     let guards = vec![Guard::NonEmptyOutput, Guard::MaxLines(100)];
-    assert!(GuardEngine::evaluate(&Guard::AllOf(guards), &ctx).await.is_ok());
+    assert!(GuardEngine::evaluate(&Guard::AllOf(guards), &ctx)
+        .await
+        .is_ok());
 }
 
 #[tokio::test]
 async fn test_guard_all_of_one_fails() {
     let ctx = make_context_with_output("");
     let guards = vec![Guard::NonEmptyOutput, Guard::MaxLines(100)];
-    assert!(GuardEngine::evaluate(&Guard::AllOf(guards), &ctx).await.is_err());
+    assert!(GuardEngine::evaluate(&Guard::AllOf(guards), &ctx)
+        .await
+        .is_err());
 }
 
 #[tokio::test]
 async fn test_guard_any_of_one_passes() {
     let ctx = make_context_with_output("test");
     let guards = vec![Guard::NonEmptyOutput, Guard::MaxLines(0)];
-    assert!(GuardEngine::evaluate(&Guard::AnyOf(guards), &ctx).await.is_ok());
+    assert!(GuardEngine::evaluate(&Guard::AnyOf(guards), &ctx)
+        .await
+        .is_ok());
 }
 
 #[tokio::test]
@@ -648,7 +714,9 @@ async fn test_guard_any_of_all_fail() {
     let ctx = make_context_with_output("test");
     // Both guards should fail: empty check will fail (output is not empty), but MaxOutputBytes(1) should fail
     let guards = vec![Guard::MaxOutputBytes(1), Guard::MaxLines(0)];
-    assert!(GuardEngine::evaluate(&Guard::AnyOf(guards), &ctx).await.is_err());
+    assert!(GuardEngine::evaluate(&Guard::AnyOf(guards), &ctx)
+        .await
+        .is_err());
 }
 
 #[tokio::test]

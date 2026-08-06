@@ -4,11 +4,11 @@
 
 use async_trait::async_trait;
 use serde_json::Value;
-use std::pin::Pin;
 use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 
-use crate::tools::tool::{Tool, ToolOutput, ToolError, ToolSource, ToolContext};
+use crate::tools::tool::{Tool, ToolContext, ToolError, ToolOutput, ToolSource};
 
 /// A tool backed by a Rust async function
 pub struct FunctionTool {
@@ -16,7 +16,10 @@ pub struct FunctionTool {
     pub description: String,
     pub schema: Value,
     pub func: Arc<
-        dyn Fn(Value, ToolContext) -> Pin<Box<dyn Future<Output = Result<ToolOutput, ToolError>> + Send>>
+        dyn Fn(
+                Value,
+                ToolContext,
+            ) -> Pin<Box<dyn Future<Output = Result<ToolOutput, ToolError>> + Send>>
             + Send
             + Sync,
     >,
@@ -28,7 +31,10 @@ impl FunctionTool {
         name: impl Into<String>,
         description: impl Into<String>,
         schema: Value,
-        func: impl Fn(Value, ToolContext) -> Pin<Box<dyn Future<Output = Result<ToolOutput, ToolError>> + Send>>
+        func: impl Fn(
+                Value,
+                ToolContext,
+            ) -> Pin<Box<dyn Future<Output = Result<ToolOutput, ToolError>> + Send>>
             + Send
             + Sync
             + 'static,

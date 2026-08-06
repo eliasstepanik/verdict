@@ -1,11 +1,13 @@
 use std::sync::Arc;
 
-mod types;
 mod budget;
 mod delegation;
 mod execution;
+mod types;
 
-pub use types::{PipelineError, PipelineResult, OutputEvent, OutputSink, LogEntry, LogLevel, SuspendedState};
+pub use types::{
+    LogEntry, LogLevel, OutputEvent, OutputSink, PipelineError, PipelineResult, SuspendedState,
+};
 
 // These are re-exported for use within impl blocks on PipelineRunner
 #[allow(unused_imports)]

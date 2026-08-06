@@ -1,16 +1,21 @@
 #![cfg(test)]
 
-use verdict::prelude::*;
 use serde_json::json;
 use std::sync::Arc;
+use verdict::prelude::*;
 
 // Test PipelineBuilder::then
 #[test]
 fn test_pipeline_builder_then() {
-    let step = AgentStep::builder("step1", StepAction::UserInput { prompt: "Enter:".into(), schema: None }).build();
-    let pipeline = PipelineBuilder::new("test-pipeline")
-        .then(step)
-        .build();
+    let step = AgentStep::builder(
+        "step1",
+        StepAction::UserInput {
+            prompt: "Enter:".into(),
+            schema: None,
+        },
+    )
+    .build();
+    let pipeline = PipelineBuilder::new("test-pipeline").then(step).build();
     assert_eq!(pipeline.name, "test-pipeline");
     assert_eq!(pipeline.steps.len(), 1);
     assert_eq!(pipeline.steps[0].name, "step1");
@@ -20,8 +25,22 @@ fn test_pipeline_builder_then() {
 // Test PipelineBuilder::parallel
 #[test]
 fn test_pipeline_builder_parallel() {
-    let step1 = AgentStep::builder("s1", StepAction::UserInput { prompt: "1".into(), schema: None }).build();
-    let step2 = AgentStep::builder("s2", StepAction::UserInput { prompt: "2".into(), schema: None }).build();
+    let step1 = AgentStep::builder(
+        "s1",
+        StepAction::UserInput {
+            prompt: "1".into(),
+            schema: None,
+        },
+    )
+    .build();
+    let step2 = AgentStep::builder(
+        "s2",
+        StepAction::UserInput {
+            prompt: "2".into(),
+            schema: None,
+        },
+    )
+    .build();
     let pipeline = PipelineBuilder::new("par-pipeline")
         .parallel(vec![step1, step2])
         .build();
@@ -33,9 +52,7 @@ fn test_pipeline_builder_parallel() {
 // Test PipelineBuilder::sleep
 #[test]
 fn test_pipeline_builder_sleep() {
-    let pipeline = PipelineBuilder::new("sleep-test")
-        .sleep(500)
-        .build();
+    let pipeline = PipelineBuilder::new("sleep-test").sleep(500).build();
     assert_eq!(pipeline.steps.len(), 1);
     match &pipeline.steps[0].action {
         StepAction::Custom(_) => {
@@ -49,7 +66,14 @@ fn test_pipeline_builder_sleep() {
 #[test]
 fn test_pipeline_builder_foreach() {
     let pipeline = PipelineBuilder::new("foreach-test")
-        .foreach("items", StepAction::UserInput { prompt: "item".into(), schema: None }, 2)
+        .foreach(
+            "items",
+            StepAction::UserInput {
+                prompt: "item".into(),
+                schema: None,
+            },
+            2,
+        )
         .build();
     assert_eq!(pipeline.steps.len(), 1);
     match &pipeline.steps[0].action {
@@ -63,8 +87,14 @@ fn test_pipeline_builder_foreach() {
 // Test AgentStep::builder defaults
 #[test]
 fn test_agent_step_builder_defaults() {
-    let step = AgentStep::builder("my-step", StepAction::UserInput { prompt: "?".into(), schema: None })
-        .build();
+    let step = AgentStep::builder(
+        "my-step",
+        StepAction::UserInput {
+            prompt: "?".into(),
+            schema: None,
+        },
+    )
+    .build();
     assert_eq!(step.name, "my-step");
     assert!(matches!(step.guard_in, Guard::None));
     assert!(matches!(step.guard_out, Guard::None));
@@ -78,12 +108,18 @@ fn test_agent_step_builder_defaults() {
 // Test AgentStep::builder with guards and options
 #[test]
 fn test_agent_step_builder_with_guard() {
-    let step = AgentStep::builder("guarded", StepAction::UserInput { prompt: "?".into(), schema: None })
-        .guard_in(Guard::NonEmptyOutput)
-        .guard_out(Guard::MaxLines(100))
-        .verdict(Verdict::None)
-        .parallel(true)
-        .build();
+    let step = AgentStep::builder(
+        "guarded",
+        StepAction::UserInput {
+            prompt: "?".into(),
+            schema: None,
+        },
+    )
+    .guard_in(Guard::NonEmptyOutput)
+    .guard_out(Guard::MaxLines(100))
+    .verdict(Verdict::None)
+    .parallel(true)
+    .build();
     assert!(matches!(step.guard_in, Guard::NonEmptyOutput));
     assert!(matches!(step.guard_out, Guard::MaxLines(100)));
     assert!(matches!(step.verdict, Verdict::None));
@@ -163,26 +199,43 @@ fn test_guard_processor_on_violation() {
     use std::sync::atomic::{AtomicBool, Ordering};
     let triggered = Arc::new(AtomicBool::new(false));
     let triggered_clone = Arc::clone(&triggered);
-    let _proc = GuardProcessor::new("test", Guard::None)
-        .with_on_violation(move |_name, _err| {
-            triggered_clone.store(true, Ordering::SeqCst);
-        });
+    let _proc = GuardProcessor::new("test", Guard::None).with_on_violation(move |_name, _err| {
+        triggered_clone.store(true, Ordering::SeqCst);
+    });
     assert!(!triggered.load(Ordering::SeqCst));
 }
 
 // Test PipelineBuilder::branch
 #[test]
 fn test_pipeline_builder_branch() {
-    let if_true = AgentStep::builder("true-branch", StepAction::UserInput { prompt: "true".into(), schema: None }).build();
-    let if_false = AgentStep::builder("false-branch", StepAction::UserInput { prompt: "false".into(), schema: None }).build();
-    
+    let if_true = AgentStep::builder(
+        "true-branch",
+        StepAction::UserInput {
+            prompt: "true".into(),
+            schema: None,
+        },
+    )
+    .build();
+    let if_false = AgentStep::builder(
+        "false-branch",
+        StepAction::UserInput {
+            prompt: "false".into(),
+            schema: None,
+        },
+    )
+    .build();
+
     let pipeline = PipelineBuilder::new("branch-test")
         .branch("{condition}", if_true, Some(if_false))
         .build();
-    
+
     assert_eq!(pipeline.steps.len(), 1);
     match &pipeline.steps[0].action {
-        StepAction::Branch { condition, if_true: _, if_false: _ } => {
+        StepAction::Branch {
+            condition,
+            if_true: _,
+            if_false: _,
+        } => {
             assert_eq!(condition, "{condition}");
         }
         _ => panic!("Expected Branch action"),
@@ -192,24 +245,38 @@ fn test_pipeline_builder_branch() {
 // Test PipelineBuilder::on_failure
 #[test]
 fn test_pipeline_builder_on_failure() {
-    let step = AgentStep::builder("s1", StepAction::UserInput { prompt: "?".into(), schema: None }).build();
+    let step = AgentStep::builder(
+        "s1",
+        StepAction::UserInput {
+            prompt: "?".into(),
+            schema: None,
+        },
+    )
+    .build();
     let pipeline = PipelineBuilder::new("fail-test")
         .then(step)
         .on_failure(FailureMode::Abort)
         .build();
-    
+
     assert!(matches!(pipeline.on_failure, FailureMode::Abort));
 }
 
 // Test PipelineBuilder::max_retries
 #[test]
 fn test_pipeline_builder_max_retries() {
-    let step = AgentStep::builder("s1", StepAction::UserInput { prompt: "?".into(), schema: None }).build();
+    let step = AgentStep::builder(
+        "s1",
+        StepAction::UserInput {
+            prompt: "?".into(),
+            schema: None,
+        },
+    )
+    .build();
     let pipeline = PipelineBuilder::new("retry-test")
         .then(step)
         .max_retries(5)
         .build();
-    
+
     assert_eq!(pipeline.max_retries, 5);
 }
 
@@ -217,21 +284,33 @@ fn test_pipeline_builder_max_retries() {
 #[tokio::test]
 async fn test_phase_b_integration() {
     // PipelineBuilder with multiple operations
-    let step1 = AgentStep::builder("step1", StepAction::UserInput { prompt: "1".into(), schema: None })
-        .guard_in(Guard::NonEmptyOutput)
-        .build();
-    
-    let step2 = AgentStep::builder("step2", StepAction::UserInput { prompt: "2".into(), schema: None })
-        .depends_on("step1")
-        .build();
-    
+    let step1 = AgentStep::builder(
+        "step1",
+        StepAction::UserInput {
+            prompt: "1".into(),
+            schema: None,
+        },
+    )
+    .guard_in(Guard::NonEmptyOutput)
+    .build();
+
+    let step2 = AgentStep::builder(
+        "step2",
+        StepAction::UserInput {
+            prompt: "2".into(),
+            schema: None,
+        },
+    )
+    .depends_on("step1")
+    .build();
+
     let pipeline = PipelineBuilder::new("integration-test")
         .then(step1)
         .then(step2)
         .on_failure(FailureMode::Retry)
         .max_retries(2)
         .build();
-    
+
     assert_eq!(pipeline.name, "integration-test");
     assert_eq!(pipeline.steps.len(), 2);
     assert_eq!(pipeline.steps[1].dependencies.len(), 1);
@@ -247,7 +326,7 @@ fn test_step_action_user_input() {
         prompt: "What is your name?".into(),
         schema: Some(json!({"type": "string"})),
     };
-    
+
     match action {
         StepAction::UserInput { prompt, schema } => {
             assert_eq!(prompt, "What is your name?");
@@ -280,12 +359,18 @@ fn test_agent_step_with_processors() {
         .with_strategy(ProcessorStrategy::Warn);
     let output_proc = GuardProcessor::new("output-check", Guard::ValidJson)
         .with_strategy(ProcessorStrategy::Block);
-    
-    let step = AgentStep::builder("processed-step", StepAction::UserInput { prompt: "?".into(), schema: None })
-        .input_processor(input_proc)
-        .output_processor(output_proc)
-        .build();
-    
+
+    let step = AgentStep::builder(
+        "processed-step",
+        StepAction::UserInput {
+            prompt: "?".into(),
+            schema: None,
+        },
+    )
+    .input_processor(input_proc)
+    .output_processor(output_proc)
+    .build();
+
     assert_eq!(step.input_processors.len(), 1);
     assert_eq!(step.output_processors.len(), 1);
     assert_eq!(step.input_processors[0].name, "input-check");
@@ -297,11 +382,11 @@ fn test_agent_step_with_processors() {
 fn test_pipeline_builder_sleep_until() {
     let now = chrono::Utc::now();
     let future = now + chrono::Duration::seconds(10);
-    
+
     let pipeline = PipelineBuilder::new("sleep-until-test")
         .sleep_until(future)
         .build();
-    
+
     assert_eq!(pipeline.steps.len(), 1);
     match &pipeline.steps[0].action {
         StepAction::Custom(_) => {

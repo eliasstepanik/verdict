@@ -2,8 +2,8 @@ use crate::context::StepContext;
 use chrono::Utc;
 
 use super::{
-    Guard, GuardError, output, filesystem, compilation, budget, step_state,
-    trace, tools, security, dependencies, diff, self_improve, delegation,
+    budget, compilation, delegation, dependencies, diff, filesystem, output, security,
+    self_improve, step_state, tools, trace, Guard, GuardError,
 };
 
 /// Engine for evaluating guards
@@ -32,14 +32,20 @@ impl GuardEngine {
             // Filesystem guards
             Guard::FileExists(path) => filesystem::check_file_exists(guard, ctx, path),
             Guard::FileNotExists(path) => filesystem::check_file_not_exists(guard, ctx, path),
-            Guard::FileContains { path, pattern } => filesystem::check_file_contains(guard, ctx, path, pattern),
-            Guard::FileNotContains { path, pattern } => filesystem::check_file_not_contains(guard, ctx, path, pattern),
+            Guard::FileContains { path, pattern } => {
+                filesystem::check_file_contains(guard, ctx, path, pattern)
+            }
+            Guard::FileNotContains { path, pattern } => {
+                filesystem::check_file_not_contains(guard, ctx, path, pattern)
+            }
             Guard::PathWithinWorkspace => filesystem::check_path_within_workspace(guard, ctx),
 
             // Compilation guards
             Guard::Compiles => compilation::check_compiles(guard, ctx).await,
             Guard::TestsPass => compilation::check_tests_pass(guard, ctx).await,
-            Guard::TestsPassWith(runner) => compilation::check_tests_pass_with(guard, ctx, runner).await,
+            Guard::TestsPassWith(runner) => {
+                compilation::check_tests_pass_with(guard, ctx, runner).await
+            }
 
             // Budget guards
             Guard::MaxCostUsd(max) => budget::check_max_cost_usd(guard, ctx, *max),
@@ -51,7 +57,9 @@ impl GuardEngine {
             // Step state guards
             Guard::StepPassed(step_name) => step_state::check_step_passed(guard, ctx, step_name),
             Guard::StepFailed(step_name) => step_state::check_step_failed(guard, ctx, step_name),
-            Guard::UserApproved(step_name) => step_state::check_user_approved(guard, ctx, step_name),
+            Guard::UserApproved(step_name) => {
+                step_state::check_user_approved(guard, ctx, step_name)
+            }
             Guard::PreviousStepMatchesSchema { step_name, schema } => {
                 step_state::check_previous_step_matches_schema(guard, ctx, step_name, schema)
             }
@@ -70,7 +78,9 @@ impl GuardEngine {
             Guard::NoSecretsInOutput => security::check_no_secrets_in_output(guard, ctx),
             Guard::NoSecretsInDiff => security::check_no_secrets_in_diff(guard, ctx),
             Guard::NoSecretExfiltration => security::check_no_secret_exfiltration(guard, ctx),
-            Guard::NoDangerousShellCommands => security::check_no_dangerous_shell_commands(guard, ctx),
+            Guard::NoDangerousShellCommands => {
+                security::check_no_dangerous_shell_commands(guard, ctx)
+            }
             Guard::NoNewNetworkAccess => security::check_no_new_network_access(guard, ctx),
             Guard::NoPermissionEscalation => security::check_no_permission_escalation(guard, ctx),
             Guard::NoSafetyBypass => security::check_no_safety_bypass(guard, ctx),
@@ -79,23 +89,33 @@ impl GuardEngine {
 
             // Dependency guards
             Guard::NoNewDependencies => dependencies::check_no_new_dependencies(guard, ctx),
-            Guard::DependenciesAllowlist(allowed) => dependencies::check_dependencies_allowlist(guard, ctx, allowed),
-            Guard::NoSuspiciousDependencies => dependencies::check_no_suspicious_dependencies(guard, ctx),
+            Guard::DependenciesAllowlist(allowed) => {
+                dependencies::check_dependencies_allowlist(guard, ctx, allowed)
+            }
+            Guard::NoSuspiciousDependencies => {
+                dependencies::check_no_suspicious_dependencies(guard, ctx)
+            }
             Guard::CargoAuditPass => dependencies::check_cargo_audit_pass(guard, ctx).await,
             Guard::CargoDenyPass => dependencies::check_cargo_deny_pass(guard, ctx).await,
 
             // Diff guards
             Guard::MaxDiffLines(max) => diff::check_max_diff_lines(guard, ctx, *max),
             Guard::MaxChangedFiles(max) => diff::check_max_changed_files(guard, ctx, *max),
-            Guard::DiffTouchesAllowedPaths(allowed) => diff::check_diff_touches_allowed_paths(guard, ctx, allowed),
+            Guard::DiffTouchesAllowedPaths(allowed) => {
+                diff::check_diff_touches_allowed_paths(guard, ctx, allowed)
+            }
             Guard::DiffDoesNotTouchForbiddenPaths(forbidden) => {
                 diff::check_diff_does_not_touch_forbidden_paths(guard, ctx, forbidden)
             }
 
             // Self-improvement guards
-            Guard::ReflectionHasActionableFinding => self_improve::check_reflection_has_actionable_finding(guard, ctx),
+            Guard::ReflectionHasActionableFinding => {
+                self_improve::check_reflection_has_actionable_finding(guard, ctx)
+            }
             Guard::PatchAppliesCleanly => self_improve::check_patch_applies_cleanly(guard, ctx),
-            Guard::EvaluationImprovesOrEqual => self_improve::check_evaluation_improves_or_equal(guard, ctx),
+            Guard::EvaluationImprovesOrEqual => {
+                self_improve::check_evaluation_improves_or_equal(guard, ctx)
+            }
             Guard::AgentVersionCreated => self_improve::check_agent_version_created(guard, ctx),
             Guard::NoActiveUncommittedCriticalChanges => {
                 self_improve::check_no_active_uncommitted_critical_changes(guard, ctx)
@@ -104,8 +124,12 @@ impl GuardEngine {
             // Delegation guards
             Guard::OnlyAllowedAgentsUsed => delegation::check_only_allowed_agents_used(guard, ctx),
             Guard::NoRecursiveDelegation => delegation::check_no_recursive_delegation(guard, ctx),
-            Guard::DelegatedAgentPassed(agent_name) => delegation::check_delegated_agent_passed(guard, ctx, agent_name),
-            Guard::DetachedAgentCompleted(agent_name) => delegation::check_detached_agent_completed(agent_name, ctx),
+            Guard::DelegatedAgentPassed(agent_name) => {
+                delegation::check_delegated_agent_passed(guard, ctx, agent_name)
+            }
+            Guard::DetachedAgentCompleted(agent_name) => {
+                delegation::check_detached_agent_completed(agent_name, ctx)
+            }
 
             // Composition guards
             Guard::AllOf(guards) => {
@@ -154,8 +178,8 @@ impl GuardEngine {
             }
 
             // Server/Daemon Mode guards (Phase 15)
-            Guard::ServerAuthValid => Ok(()),  // Auth validation done at server level
-            Guard::ServerConcurrencyWithin(_) => Ok(()),  // Concurrency tracking done by SessionRunner
+            Guard::ServerAuthValid => Ok(()), // Auth validation done at server level
+            Guard::ServerConcurrencyWithin(_) => Ok(()), // Concurrency tracking done by SessionRunner
 
             // Session guards (Phase 13)
             Guard::SessionTurnLimit(max) => {
@@ -163,7 +187,10 @@ impl GuardEngine {
                     if session_meta.turn_count >= *max {
                         return Err(GuardError::Failed {
                             guard: guard.name(),
-                            reason: format!("turn_count {} >= limit {}", session_meta.turn_count, max),
+                            reason: format!(
+                                "turn_count {} >= limit {}",
+                                session_meta.turn_count, max
+                            ),
                         });
                     }
                 }
@@ -177,7 +204,10 @@ impl GuardEngine {
                     if elapsed >= *secs {
                         return Err(GuardError::Failed {
                             guard: guard.name(),
-                            reason: format!("session idle for {} seconds >= timeout {}", elapsed, secs),
+                            reason: format!(
+                                "session idle for {} seconds >= timeout {}",
+                                elapsed, secs
+                            ),
                         });
                     }
                 }
@@ -189,7 +219,10 @@ impl GuardEngine {
                     if session_meta.total_tokens.total_tokens >= *max_tokens {
                         return Err(GuardError::Failed {
                             guard: guard.name(),
-                            reason: format!("total_tokens {} >= budget {}", session_meta.total_tokens.total_tokens, max_tokens),
+                            reason: format!(
+                                "total_tokens {} >= budget {}",
+                                session_meta.total_tokens.total_tokens, max_tokens
+                            ),
                         });
                     }
                 }
@@ -199,7 +232,9 @@ impl GuardEngine {
             // Format & Lint
             Guard::LintPass => compilation::check_lint_pass(guard, ctx).await,
             Guard::FormatPass => compilation::check_format_pass(guard, ctx).await,
-            Guard::SemanticCheck(description) => compilation::check_semantic_check(guard, ctx, description).await,
+            Guard::SemanticCheck(description) => {
+                compilation::check_semantic_check(guard, ctx, description).await
+            }
 
             // Cancellation (Phase 14)
             Guard::CancellationCleanupComplete => {
@@ -250,16 +285,18 @@ impl GuardEngine {
                 if let Some(resume_output) = ctx.step_results.get("__resume_data__") {
                     if let Some(parsed) = &resume_output.output.parsed {
                         match jsonschema::JSONSchema::compile(schema) {
-                            Ok(validator) => {
-                                match validator.validate(parsed) {
-                                    Ok(()) => Ok(()),
-                                    Err(e) => {
-                                        let errors: Vec<String> = e.map(|err| err.to_string()).collect();
-                                        Err(GuardError::Failed {
-                                            guard: guard.name(),
-                                            reason: format!("resume data does not match schema: {}", errors.join("; ")),
-                                        })
-                                    },
+                            Ok(validator) => match validator.validate(parsed) {
+                                Ok(()) => Ok(()),
+                                Err(e) => {
+                                    let errors: Vec<String> =
+                                        e.map(|err| err.to_string()).collect();
+                                    Err(GuardError::Failed {
+                                        guard: guard.name(),
+                                        reason: format!(
+                                            "resume data does not match schema: {}",
+                                            errors.join("; ")
+                                        ),
+                                    })
                                 }
                             },
                             Err(e) => Err(GuardError::Failed {

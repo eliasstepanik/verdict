@@ -8,8 +8,8 @@ use serde_json::Value;
 use std::sync::{Arc, Mutex};
 use thiserror::Error;
 
-use crate::audit::AuditLog;
 use crate::agent::{FilesystemPolicy, NetworkPolicy};
+use crate::audit::AuditLog;
 use crate::toolset::ToolSet;
 
 /// Source of a tool

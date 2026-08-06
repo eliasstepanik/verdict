@@ -1,10 +1,9 @@
+use serde_json::Value;
 /// WorkingMemory: Structured JSON state per resource
 ///
 /// Provides get/set access to structured working memory
-
 use std::sync::Arc;
-use serde_json::Value;
-use verdict::memory::{MemoryStore, MemoryError};
+use verdict::memory::{MemoryError, MemoryStore};
 
 pub struct WorkingMemory {
     store: Arc<dyn MemoryStore>,

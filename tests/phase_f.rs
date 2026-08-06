@@ -1,9 +1,9 @@
 //! Phase F: Evaluation Polish
 //! Tests for Scorer sampling, RubricLoop, and Experiment runner
 
-use verdict::prelude::*;
-use std::sync::Arc;
 use serde_json::json;
+use std::sync::Arc;
+use verdict::prelude::*;
 
 // ============================================================================
 // Phase F1: Scorer Sampling Tests
@@ -14,12 +14,12 @@ fn test_scorer_config_creation() {
     let scorer = Arc::new(ToxicityScorer {
         blocked_patterns: vec!["bad_word".into()],
     });
-    
+
     let config = ScorerConfig {
         scorer,
         sampling_rate: 0.5,
     };
-    
+
     assert_eq!(config.sampling_rate, 0.5);
 }
 
@@ -28,7 +28,7 @@ fn test_toxicity_scorer_blocks_pattern() {
     let _scorer = ToxicityScorer {
         blocked_patterns: vec!["toxin".into()],
     };
-    
+
     let result = PipelineResult {
         pipeline_name: "test".into(),
         steps_passed: vec!["step1".into()],
@@ -53,7 +53,7 @@ fn test_toxicity_scorer_blocks_pattern() {
         log: vec![],
         suspended: None,
     };
-    
+
     // Note: Would need async context for actual scorer call
     // For now we test the structure
     assert!(result.success);
@@ -64,7 +64,7 @@ fn test_toxicity_scorer_name() {
     let scorer = ToxicityScorer {
         blocked_patterns: vec![],
     };
-    
+
     assert_eq!(scorer.name(), "toxicity");
 }
 
@@ -80,7 +80,7 @@ fn test_custom_scorer_construction() {
             })
         }),
     };
-    
+
     assert_eq!(scorer.name(), "my_scorer");
 }
 
@@ -94,7 +94,7 @@ fn test_rubric_item_creation() {
         criterion: "output is non-empty".into(),
         required: true,
     };
-    
+
     assert_eq!(item.criterion, "output is non-empty");
     assert!(item.required);
 }
@@ -122,7 +122,7 @@ fn test_rubric_loop_action_construction() {
         max_iterations: 5,
         judge_model: None,
     };
-    
+
     match rubric_loop {
         StepAction::RubricLoop { ref rubric, .. } => {
             assert_eq!(rubric.len(), 2);
@@ -140,7 +140,7 @@ fn test_rubric_loop_action_construction() {
 #[test]
 fn test_evaluation_dataset_creation() {
     let dataset = EvaluationDataset::new("test_dataset");
-    
+
     assert_eq!(dataset.name, "test_dataset");
     assert_eq!(dataset.version, 1);
     assert!(dataset.cases.is_empty());
@@ -148,9 +148,8 @@ fn test_evaluation_dataset_creation() {
 
 #[test]
 fn test_evaluation_dataset_with_version() {
-    let dataset = EvaluationDataset::new("test")
-        .with_version(5);
-    
+    let dataset = EvaluationDataset::new("test").with_version(5);
+
     assert_eq!(dataset.version, 5);
 }
 
@@ -161,10 +160,9 @@ fn test_evaluation_dataset_add_case() {
         input: json!({"test": "input"}),
         expected: EvaluationExpected::Guard(Guard::NonEmptyOutput),
     };
-    
-    let dataset = EvaluationDataset::new("test")
-        .add_case(case);
-    
+
+    let dataset = EvaluationDataset::new("test").add_case(case);
+
     assert_eq!(dataset.cases.len(), 1);
     assert_eq!(dataset.cases[0].name, "case1");
 }
@@ -173,7 +171,7 @@ fn test_evaluation_dataset_add_case() {
 fn test_experiment_runner_creation() {
     let runner = Arc::new(PipelineRunner::new());
     let _exp_runner = ExperimentRunner::new(runner);
-    
+
     // Test that it was constructed
     assert!(true);
 }
@@ -186,35 +184,31 @@ fn test_experiment_diff_no_changes() {
         dataset: dataset.clone(),
         agent_name: "agent1".into(),
         run_at: chrono::Utc::now(),
-        results: vec![
-            EvaluationResult {
-                case_name: "case1".into(),
-                passed: true,
-                score: 1.0,
-                reason: None,
-            },
-        ],
+        results: vec![EvaluationResult {
+            case_name: "case1".into(),
+            passed: true,
+            score: 1.0,
+            reason: None,
+        }],
         summary_score: 1.0,
     };
-    
+
     let exp_b = Experiment {
         name: "exp_b".into(),
         dataset,
         agent_name: "agent1".into(),
         run_at: chrono::Utc::now(),
-        results: vec![
-            EvaluationResult {
-                case_name: "case1".into(),
-                passed: true,
-                score: 1.0,
-                reason: None,
-            },
-        ],
+        results: vec![EvaluationResult {
+            case_name: "case1".into(),
+            passed: true,
+            score: 1.0,
+            reason: None,
+        }],
         summary_score: 1.0,
     };
-    
+
     let diff = ExperimentRunner::compare(&exp_a, &exp_b);
-    
+
     assert_eq!(diff.score_delta, 0.0);
     assert!(diff.improved_cases.is_empty());
     assert!(diff.regressed_cases.is_empty());
@@ -228,35 +222,31 @@ fn test_experiment_diff_improvement() {
         dataset: dataset.clone(),
         agent_name: "agent1".into(),
         run_at: chrono::Utc::now(),
-        results: vec![
-            EvaluationResult {
-                case_name: "case1".into(),
-                passed: false,
-                score: 0.5,
-                reason: None,
-            },
-        ],
+        results: vec![EvaluationResult {
+            case_name: "case1".into(),
+            passed: false,
+            score: 0.5,
+            reason: None,
+        }],
         summary_score: 0.5,
     };
-    
+
     let exp_b = Experiment {
         name: "exp_b".into(),
         dataset,
         agent_name: "agent1".into(),
         run_at: chrono::Utc::now(),
-        results: vec![
-            EvaluationResult {
-                case_name: "case1".into(),
-                passed: true,
-                score: 1.0,
-                reason: None,
-            },
-        ],
+        results: vec![EvaluationResult {
+            case_name: "case1".into(),
+            passed: true,
+            score: 1.0,
+            reason: None,
+        }],
         summary_score: 1.0,
     };
-    
+
     let diff = ExperimentRunner::compare(&exp_a, &exp_b);
-    
+
     assert!(diff.score_delta > 0.0);
     assert_eq!(diff.improved_cases.len(), 1);
     assert_eq!(diff.improved_cases[0], "case1");
@@ -270,35 +260,31 @@ fn test_experiment_diff_regression() {
         dataset: dataset.clone(),
         agent_name: "agent1".into(),
         run_at: chrono::Utc::now(),
-        results: vec![
-            EvaluationResult {
-                case_name: "case1".into(),
-                passed: true,
-                score: 1.0,
-                reason: None,
-            },
-        ],
+        results: vec![EvaluationResult {
+            case_name: "case1".into(),
+            passed: true,
+            score: 1.0,
+            reason: None,
+        }],
         summary_score: 1.0,
     };
-    
+
     let exp_b = Experiment {
         name: "exp_b".into(),
         dataset,
         agent_name: "agent1".into(),
         run_at: chrono::Utc::now(),
-        results: vec![
-            EvaluationResult {
-                case_name: "case1".into(),
-                passed: false,
-                score: 0.0,
-                reason: None,
-            },
-        ],
+        results: vec![EvaluationResult {
+            case_name: "case1".into(),
+            passed: false,
+            score: 0.0,
+            reason: None,
+        }],
         summary_score: 0.0,
     };
-    
+
     let diff = ExperimentRunner::compare(&exp_a, &exp_b);
-    
+
     assert!(diff.score_delta < 0.0);
     assert_eq!(diff.regressed_cases.len(), 1);
     assert_eq!(diff.regressed_cases[0], "case1");
@@ -311,7 +297,7 @@ fn test_scorer_result_structure() {
         pass: true,
         feedback: Some("Good output".into()),
     };
-    
+
     assert_eq!(result.score, 0.8);
     assert!(result.pass);
     assert_eq!(result.feedback, Some("Good output".into()));
@@ -333,7 +319,7 @@ fn test_agent_with_scorers_field() {
         policy: AgentPolicy::default(),
         scorers: Vec::new(),
     };
-    
+
     assert_eq!(agent.scorers.len(), 0);
 }
 
@@ -352,7 +338,7 @@ fn test_agent_with_multiple_scorers() {
             })
         }),
     });
-    
+
     let agent = Agent {
         name: "test".into(),
         description: "test agent".into(),
@@ -376,6 +362,6 @@ fn test_agent_with_multiple_scorers() {
             },
         ],
     };
-    
+
     assert_eq!(agent.scorers.len(), 2);
 }

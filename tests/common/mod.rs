@@ -1,12 +1,14 @@
 //! Shared test utilities and mock implementations
 #![allow(dead_code, unused_imports)]
 
-use std::sync::{Mutex, atomic::{AtomicUsize, Ordering}};
-use verdict::prelude::*;
 use async_trait::async_trait;
-use std::sync::Arc;
 use serde_json::json;
-
+use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Mutex,
+};
+use verdict::prelude::*;
 
 /// Mock LLM provider for testing
 pub struct MockLlmProvider {
@@ -46,7 +48,11 @@ impl LlmProvider for MockLlmProvider {
     fn stream(
         &self,
         request: LlmRequest,
-    ) -> std::pin::Pin<Box<dyn futures::stream::Stream<Item = Result<verdict::LlmChunk, verdict::LlmError>> + Send>> {
+    ) -> std::pin::Pin<
+        Box<
+            dyn futures::stream::Stream<Item = Result<verdict::LlmChunk, verdict::LlmError>> + Send,
+        >,
+    > {
         let response = self.expected_response.clone();
         *self.captured_request.lock().unwrap() = Some(request);
         Box::pin(futures::stream::once(async move {
@@ -56,7 +62,6 @@ impl LlmProvider for MockLlmProvider {
             })
         }))
     }
-
 }
 
 /// A single scripted LLM response
@@ -154,7 +159,11 @@ impl LlmProvider for ScriptedMockLlmProvider {
     fn stream(
         &self,
         _req: LlmRequest,
-    ) -> std::pin::Pin<Box<dyn futures::stream::Stream<Item = Result<verdict::LlmChunk, verdict::LlmError>> + Send>> {
+    ) -> std::pin::Pin<
+        Box<
+            dyn futures::stream::Stream<Item = Result<verdict::LlmChunk, verdict::LlmError>> + Send,
+        >,
+    > {
         Box::pin(futures::stream::once(async {
             Ok(verdict::LlmChunk {
                 delta: "Done.".into(),
@@ -164,10 +173,10 @@ impl LlmProvider for ScriptedMockLlmProvider {
     }
 }
 
-
 /// Create a dummy McpClient for tests that don't actually call MCP tools
 /// This is a minimal config with no command or URL, so it won't spawn processes or make HTTP calls
-pub async fn create_dummy_mcp_client() -> Result<verdict::mcp::client::McpClient, verdict::mcp::client::McpError> {
+pub async fn create_dummy_mcp_client(
+) -> Result<verdict::mcp::client::McpClient, verdict::mcp::client::McpError> {
     let config = McpServerConfig::new("test_dummy");
     verdict::mcp::client::McpClient::connect(config).await
 }

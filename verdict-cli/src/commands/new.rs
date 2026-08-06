@@ -3,10 +3,10 @@ use std::path::Path;
 
 pub fn handle(name: &str) -> Result<(), Box<dyn std::error::Error>> {
     let path = Path::new(name);
-    
+
     // Create directory
     fs::create_dir_all(path)?;
-    
+
     // Create Cargo.toml
     let cargo_toml = r#"[package]
 name = "{name}"
@@ -17,12 +17,13 @@ edition = "2021"
 verdict = "0.1"
 tokio = {{ version = "1", features = ["rt", "rt-multi-thread", "macros"] }}
 serde_json = "1"
-"#.replace("{name}", name);
+"#
+    .replace("{name}", name);
     fs::write(path.join("Cargo.toml"), cargo_toml)?;
-    
+
     // Create src directory
     fs::create_dir_all(path.join("src"))?;
-    
+
     // Create main.rs
     let main_rs = r#"use verdict::prelude::*;
 use serde_json::json;
@@ -67,7 +68,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 "#;
     fs::write(path.join("src/main.rs"), main_rs)?;
-    
+
     // Create verdict.toml
     let verdict_toml = r#"[project]
 name = "{name}"
@@ -80,16 +81,17 @@ auto_reload = false
 
 [observability]
 enabled = false
-"#.replace("{name}", name);
+"#
+    .replace("{name}", name);
     fs::write(path.join("verdict.toml"), verdict_toml)?;
-    
+
     // Create .gitignore
     let gitignore = r#"/target
 /Cargo.lock
 "#;
     fs::write(path.join(".gitignore"), gitignore)?;
-    
+
     println!("Created new Verdict project: {}", name);
-    
+
     Ok(())
 }

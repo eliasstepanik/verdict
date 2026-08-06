@@ -6,19 +6,19 @@ use std::collections::HashMap;
 pub struct McpServerConfig {
     /// Name of the server
     pub name: String,
-    
+
     /// Command to spawn the server (e.g., "npx")
     pub command: Option<String>,
-    
+
     /// Arguments to the command (e.g., ["-y", "@modelcontextprotocol/server-filesystem"])
     pub args: Option<Vec<String>>,
-    
+
     /// URL to connect to (for HTTP/WebSocket-based MCP servers)
     pub url: Option<String>,
-    
+
     /// Environment variables to set when spawning the process
     pub env: HashMap<String, String>,
-    
+
     /// Allowlist of tool names from this server
     /// If empty, all discovered tools are allowed
     pub allowed_tools: Vec<String>,

@@ -1,19 +1,22 @@
 //! Phase 14: Cancellation and Interrupt
-//! 
+//!
 //! Tests for cancellation token support and clean pipeline interruption.
 
-use verdict::prelude::*;
 use serde_json::json;
 use std::sync::Arc;
+use verdict::prelude::*;
 
 #[tokio::test]
 async fn test_cancellation_token_basics() {
     // Test basic CancellationToken functionality
     let token = CancellationToken::new();
     assert!(!token.is_cancelled(), "token should start as not cancelled");
-    
+
     token.cancel();
-    assert!(token.is_cancelled(), "token should be cancelled after cancel()");
+    assert!(
+        token.is_cancelled(),
+        "token should be cancelled after cancel()"
+    );
 }
 
 #[tokio::test]
@@ -21,9 +24,12 @@ async fn test_cancellation_token_clone() {
     // Test that cloned tokens share cancellation state
     let token1 = CancellationToken::new();
     let token2 = token1.clone();
-    
+
     token1.cancel();
-    assert!(token2.is_cancelled(), "cloned token should reflect cancellation");
+    assert!(
+        token2.is_cancelled(),
+        "cloned token should reflect cancellation"
+    );
 }
 
 #[tokio::test]
@@ -31,15 +37,15 @@ async fn test_cancellation_await() {
     // Test that awaiting cancellation works correctly
     let token = CancellationToken::new();
     let token_clone = token.clone();
-    
+
     let handle = tokio::spawn(async move {
         token_clone.cancelled().await;
         "finished"
     });
-    
+
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     token.cancel();
-    
+
     let result = handle.await.unwrap();
     assert_eq!(result, "finished");
 }
@@ -48,7 +54,7 @@ async fn test_cancellation_await() {
 async fn test_cancellation_not_triggered() {
     // Test that a pipeline runs normally when cancellation is not triggered
     let mut runner = PipelineRunner::new();
-    
+
     let agent = Agent {
         name: "test_agent".into(),
         description: "Test agent".into(),
@@ -69,9 +75,9 @@ async fn test_cancellation_not_triggered() {
                     output_schema: None,
                     dependencies: vec![],
                     parallel: false,
-            input_processors: vec![],
-            output_processors: vec![],
-        },
+                    input_processors: vec![],
+                    output_processors: vec![],
+                },
                 AgentStep {
                     name: "step2".into(),
                     guard_in: Guard::None,
@@ -85,9 +91,9 @@ async fn test_cancellation_not_triggered() {
                     output_schema: None,
                     dependencies: vec![],
                     parallel: false,
-            input_processors: vec![],
-            output_processors: vec![],
-        },
+                    input_processors: vec![],
+                    output_processors: vec![],
+                },
             ],
             on_failure: FailureMode::Abort,
             max_retries: 0,
@@ -97,10 +103,10 @@ async fn test_cancellation_not_triggered() {
         policy: AgentPolicy::default(),
         scorers: vec![],
     };
-    
+
     let result = runner.run(&agent.pipeline, &agent, json!({})).await;
     assert!(result.is_ok(), "pipeline should succeed when not cancelled");
-    
+
     if let Ok(result) = result {
         assert_eq!(result.steps_passed.len(), 2, "both steps should pass");
         assert_eq!(result.steps_failed.len(), 0, "no steps should fail");
@@ -131,9 +137,9 @@ async fn test_cancellation_between_steps() {
                     output_schema: None,
                     dependencies: vec![],
                     parallel: false,
-            input_processors: vec![],
-            output_processors: vec![],
-        },
+                    input_processors: vec![],
+                    output_processors: vec![],
+                },
                 AgentStep {
                     name: "step2".into(),
                     guard_in: Guard::None,
@@ -147,9 +153,9 @@ async fn test_cancellation_between_steps() {
                     output_schema: None,
                     dependencies: vec![],
                     parallel: false,
-            input_processors: vec![],
-            output_processors: vec![],
-        },
+                    input_processors: vec![],
+                    output_processors: vec![],
+                },
             ],
             on_failure: FailureMode::Abort,
             max_retries: 0,
@@ -159,18 +165,27 @@ async fn test_cancellation_between_steps() {
         policy: AgentPolicy::default(),
         scorers: vec![],
     };
-    
+
     let mut runner = PipelineRunner::new();
     let result = runner.run(&agent.pipeline, &agent, json!({})).await;
-    
+
     // The pipeline should fail because cancellation was triggered between steps
-    assert!(result.is_err(), "pipeline should fail when cancellation token is signalled");
-    
+    assert!(
+        result.is_err(),
+        "pipeline should fail when cancellation token is signalled"
+    );
+
     if let Ok(result) = result {
         // Step 1 should have passed before cancellation
-        assert!(result.steps_passed.contains(&"step1".into()), "step1 should pass");
+        assert!(
+            result.steps_passed.contains(&"step1".into()),
+            "step1 should pass"
+        );
         // Step 2 should not have run (or failed due to cancellation check)
-        assert!(!result.steps_passed.contains(&"step2".into()), "step2 should not pass");
+        assert!(
+            !result.steps_passed.contains(&"step2".into()),
+            "step2 should not pass"
+        );
     }
 }
 
@@ -182,25 +197,23 @@ async fn test_cancellation_guard_detects_cancellation() {
         description: "Test agent".into(),
         pipeline: Pipeline {
             name: "test_pipeline".into(),
-            steps: vec![
-                AgentStep {
-                    name: "step1".into(),
-                    guard_in: Guard::None,
-                    action: StepAction::Custom(Arc::new(|ctx| {
-                        ctx.cancellation_token.cancel();
-                        Ok(StepOutput::new("output".into()))
-                    })),
-                    guard_out: Guard::CancellationCleanupComplete,
-                    verdict: Verdict::None,
-                    tools: ToolSet::None,
-                    injection_protection: InjectionProtection::None,
-                    output_schema: None,
-                    dependencies: vec![],
-                    parallel: false,
-            input_processors: vec![],
-            output_processors: vec![],
-        },
-            ],
+            steps: vec![AgentStep {
+                name: "step1".into(),
+                guard_in: Guard::None,
+                action: StepAction::Custom(Arc::new(|ctx| {
+                    ctx.cancellation_token.cancel();
+                    Ok(StepOutput::new("output".into()))
+                })),
+                guard_out: Guard::CancellationCleanupComplete,
+                verdict: Verdict::None,
+                tools: ToolSet::None,
+                injection_protection: InjectionProtection::None,
+                output_schema: None,
+                dependencies: vec![],
+                parallel: false,
+                input_processors: vec![],
+                output_processors: vec![],
+            }],
             on_failure: FailureMode::Abort,
             max_retries: 0,
         },
@@ -209,12 +222,15 @@ async fn test_cancellation_guard_detects_cancellation() {
         policy: AgentPolicy::default(),
         scorers: vec![],
     };
-    
+
     let mut runner = PipelineRunner::new();
     let result = runner.run(&agent.pipeline, &agent, json!({})).await;
-    
+
     // guard_out should fail because cancellation_token.is_cancelled() returns true
-    assert!(result.is_err(), "guard_out should fail when cancellation is detected");
+    assert!(
+        result.is_err(),
+        "guard_out should fail when cancellation is detected"
+    );
 }
 
 #[tokio::test]
@@ -222,9 +238,12 @@ async fn test_cancellation_child_token() {
     // Test that child tokens inherit parent cancellation
     let parent = CancellationToken::new();
     let child = parent.child_token();
-    
+
     parent.cancel();
-    assert!(child.is_cancelled(), "child token should reflect parent cancellation");
+    assert!(
+        child.is_cancelled(),
+        "child token should reflect parent cancellation"
+    );
 }
 
 #[tokio::test]
@@ -234,7 +253,10 @@ async fn test_multiple_cancellations_idempotent() {
     token.cancel();
     token.cancel();
     token.cancel();
-    assert!(token.is_cancelled(), "token should remain cancelled after multiple calls");
+    assert!(
+        token.is_cancelled(),
+        "token should remain cancelled after multiple calls"
+    );
 }
 
 #[tokio::test]
@@ -245,30 +267,30 @@ async fn test_cancellation_with_long_running_custom_action() {
         description: "Test agent".into(),
         pipeline: Pipeline {
             name: "test_pipeline".into(),
-            steps: vec![
-                AgentStep {
-                    name: "long_step".into(),
-                    guard_in: Guard::None,
-                    action: StepAction::Custom(Arc::new(|ctx| {
-                        // Simulate work
-                        for _ in 0..10 {
-                            if ctx.cancellation_token.is_cancelled() {
-                                return Err(StepError::ActionFailed { reason: "Cancelled during execution".into() });
-                            }
+            steps: vec![AgentStep {
+                name: "long_step".into(),
+                guard_in: Guard::None,
+                action: StepAction::Custom(Arc::new(|ctx| {
+                    // Simulate work
+                    for _ in 0..10 {
+                        if ctx.cancellation_token.is_cancelled() {
+                            return Err(StepError::ActionFailed {
+                                reason: "Cancelled during execution".into(),
+                            });
                         }
-                        Ok(StepOutput::new("completed".into()))
-                    })),
-                    guard_out: Guard::None,
-                    verdict: Verdict::None,
-                    tools: ToolSet::None,
-                    injection_protection: InjectionProtection::None,
-                    output_schema: None,
-                    dependencies: vec![],
-                    parallel: false,
-            input_processors: vec![],
-            output_processors: vec![],
-        },
-            ],
+                    }
+                    Ok(StepOutput::new("completed".into()))
+                })),
+                guard_out: Guard::None,
+                verdict: Verdict::None,
+                tools: ToolSet::None,
+                injection_protection: InjectionProtection::None,
+                output_schema: None,
+                dependencies: vec![],
+                parallel: false,
+                input_processors: vec![],
+                output_processors: vec![],
+            }],
             on_failure: FailureMode::Abort,
             max_retries: 0,
         },
@@ -277,11 +299,13 @@ async fn test_cancellation_with_long_running_custom_action() {
         policy: AgentPolicy::default(),
         scorers: vec![],
     };
-    
+
     let mut runner = PipelineRunner::new();
     let result = runner.run(&agent.pipeline, &agent, json!({})).await;
-    
-    // Without external cancellation, the step should complete successfully
-    assert!(result.is_ok(), "step should complete when not cancelled externally");
-}
 
+    // Without external cancellation, the step should complete successfully
+    assert!(
+        result.is_ok(),
+        "step should complete when not cancelled externally"
+    );
+}

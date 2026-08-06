@@ -5,10 +5,10 @@
 //! - Phase E: Telemetry export, Agent/Conversation registries
 //! - Phase F: Scorers, RubricLoop, Experiments
 
-use verdict::prelude::*;
-use std::sync::Arc;
-use std::collections::HashMap;
 use serde_json::json;
+use std::collections::HashMap;
+use std::sync::Arc;
+use verdict::prelude::*;
 
 // ============================================================================
 // Phase D Integration Tests — Runtime Behavior
@@ -18,7 +18,7 @@ use serde_json::json;
 #[tokio::test]
 async fn test_sleep_action_actually_waits() {
     let action = StepAction::Sleep { duration_ms: 50 };
-    
+
     let ctx = StepContext::new(
         "test_agent".into(),
         "test_pipeline".into(),
@@ -26,12 +26,15 @@ async fn test_sleep_action_actually_waits() {
         json!({}),
         Default::default(),
     );
-    
+
     // Verify the action can be created and type-checks
     let _action = action;
     let _ctx = ctx;
-    
-    assert!(true, "Sleep action compiles and context is set up correctly");
+
+    assert!(
+        true,
+        "Sleep action compiles and context is set up correctly"
+    );
 }
 
 /// Test 2: ForEach action iterates items
@@ -45,7 +48,7 @@ async fn test_foreach_action_iterates_items() {
         concurrency: 1,
         collect_results: true,
     };
-    
+
     // Create a pipeline with this action
     let pipeline = Pipeline {
         name: "foreach_pipeline".into(),
@@ -66,7 +69,7 @@ async fn test_foreach_action_iterates_items() {
         on_failure: FailureMode::Abort,
         max_retries: 0,
     };
-    
+
     // Create runner and agent
     let mut runner = PipelineRunner::new();
     let agent = Agent {
@@ -78,11 +81,11 @@ async fn test_foreach_action_iterates_items() {
         policy: AgentPolicy::default(),
         scorers: vec![],
     };
-    
+
     // Run the pipeline with items input
     let input = json!({ "items": ["a", "b", "c"] });
     let result = runner.run(&agent.pipeline, &agent, input).await;
-    
+
     // Verify success
     assert!(result.is_ok(), "Pipeline should execute successfully");
     let pipeline_result = result.unwrap();
@@ -97,7 +100,7 @@ async fn test_suspend_action_produces_suspended_result() {
         resume_schema: None,
         timeout_seconds: None,
     };
-    
+
     let pipeline = Pipeline {
         name: "suspend_pipeline".into(),
         steps: vec![AgentStep {
@@ -117,7 +120,7 @@ async fn test_suspend_action_produces_suspended_result() {
         on_failure: FailureMode::Abort,
         max_retries: 0,
     };
-    
+
     let mut runner = PipelineRunner::new();
     let agent = Agent {
         name: "suspend_agent".into(),
@@ -128,12 +131,15 @@ async fn test_suspend_action_produces_suspended_result() {
         policy: AgentPolicy::default(),
         scorers: vec![],
     };
-    
+
     let result = runner.run(&agent.pipeline, &agent, json!({})).await;
-    
+
     // Pipeline may succeed or fail depending on implementation,
     // but the important part is that it completes without panicking
-    assert!(result.is_ok() || result.is_err(), "Pipeline should return a result");
+    assert!(
+        result.is_ok() || result.is_err(),
+        "Pipeline should return a result"
+    );
 }
 
 /// Test 4: Detached agent step returns immediately
@@ -169,11 +175,11 @@ async fn test_detached_agent_step_returns_immediately() {
         policy: AgentPolicy::default(),
         scorers: vec![],
     };
-    
+
     // Register helper agent
     let mut agent_registry = AgentRegistry::new();
     agent_registry.register(helper_agent);
-    
+
     // Create main pipeline with detached delegation
     let delegate_action = StepAction::DelegateAgent {
         agent: "helper".into(),
@@ -182,7 +188,7 @@ async fn test_detached_agent_step_returns_immediately() {
         delegation_policy: DelegationPolicy::default(),
         detached: true,
     };
-    
+
     let main_agent = Agent {
         name: "main".into(),
         description: "Main agent".into(),
@@ -210,10 +216,12 @@ async fn test_detached_agent_step_returns_immediately() {
         policy: AgentPolicy::default(),
         scorers: vec![],
     };
-    
+
     let mut runner = PipelineRunner::with_agent_registry(Arc::new(agent_registry));
-    let result = runner.run(&main_agent.pipeline, &main_agent, json!({})).await;
-    
+    let result = runner
+        .run(&main_agent.pipeline, &main_agent, json!({}))
+        .await;
+
     // Verify it runs without error
     assert!(result.is_ok(), "Pipeline should execute successfully");
 }
@@ -225,7 +233,7 @@ async fn test_pipeline_builder_dsl_runs_correctly() {
     let custom_step = StepAction::Custom(Arc::new(|_ctx| {
         Ok(StepOutput::new("step1 output".to_string()))
     }));
-    
+
     let step = AgentStep {
         name: "step1".into(),
         guard_in: Guard::None,
@@ -240,14 +248,14 @@ async fn test_pipeline_builder_dsl_runs_correctly() {
         input_processors: vec![],
         output_processors: vec![],
     };
-    
+
     let pipeline = Pipeline {
         name: "builder_pipeline".into(),
         steps: vec![step],
         on_failure: FailureMode::Abort,
         max_retries: 0,
     };
-    
+
     let agent = Agent {
         name: "builder_agent".into(),
         description: "Builder test agent".into(),
@@ -257,10 +265,10 @@ async fn test_pipeline_builder_dsl_runs_correctly() {
         policy: AgentPolicy::default(),
         scorers: vec![],
     };
-    
+
     let mut runner = PipelineRunner::new();
     let result = runner.run(&agent.pipeline, &agent, json!({})).await;
-    
+
     assert!(result.is_ok(), "Pipeline should execute successfully");
     let pipeline_result = result.unwrap();
     assert!(pipeline_result.success, "Pipeline should pass");
@@ -271,11 +279,10 @@ async fn test_pipeline_builder_dsl_runs_correctly() {
 async fn test_guard_processor_warn_strategy_does_not_block() {
     let guard_processor = GuardProcessor::new("test_processor", Guard::NonEmptyOutput)
         .with_strategy(ProcessorStrategy::Warn);
-    
-    let step_action = StepAction::Custom(Arc::new(|_ctx| {
-        Ok(StepOutput::new("output".to_string()))
-    }));
-    
+
+    let step_action =
+        StepAction::Custom(Arc::new(|_ctx| Ok(StepOutput::new("output".to_string()))));
+
     let step = AgentStep {
         name: "protected_step".into(),
         guard_in: Guard::None,
@@ -290,14 +297,14 @@ async fn test_guard_processor_warn_strategy_does_not_block() {
         input_processors: vec![guard_processor],
         output_processors: vec![],
     };
-    
+
     let pipeline = Pipeline {
         name: "guard_processor_pipeline".into(),
         steps: vec![step],
         on_failure: FailureMode::Abort,
         max_retries: 0,
     };
-    
+
     let agent = Agent {
         name: "guard_processor_agent".into(),
         description: "Guard processor test".into(),
@@ -307,12 +314,15 @@ async fn test_guard_processor_warn_strategy_does_not_block() {
         policy: AgentPolicy::default(),
         scorers: vec![],
     };
-    
+
     let mut runner = PipelineRunner::new();
     let result = runner.run(&agent.pipeline, &agent, json!({})).await;
-    
+
     // Warn strategy should not block execution
-    assert!(result.is_ok() || result.is_err(), "Pipeline should return a result");
+    assert!(
+        result.is_ok() || result.is_err(),
+        "Pipeline should return a result"
+    );
 }
 
 // ============================================================================
@@ -325,11 +335,11 @@ async fn test_otel_stdout_exporter_produces_spans() {
     let step1 = StepAction::Custom(Arc::new(|_ctx| {
         Ok(StepOutput::new("step1 result".to_string()))
     }));
-    
+
     let step2 = StepAction::Custom(Arc::new(|_ctx| {
         Ok(StepOutput::new("step2 result".to_string()))
     }));
-    
+
     let pipeline = Pipeline {
         name: "otel_pipeline".into(),
         steps: vec![
@@ -365,7 +375,7 @@ async fn test_otel_stdout_exporter_produces_spans() {
         on_failure: FailureMode::Abort,
         max_retries: 0,
     };
-    
+
     let agent = Agent {
         name: "otel_agent".into(),
         description: "OTEL test agent".into(),
@@ -375,22 +385,25 @@ async fn test_otel_stdout_exporter_produces_spans() {
         policy: AgentPolicy::default(),
         scorers: vec![],
     };
-    
+
     let mut runner = PipelineRunner::new();
     let result = runner.run(&agent.pipeline, &agent, json!({})).await;
-    
+
     assert!(result.is_ok(), "Pipeline should execute");
     let pipeline_result = result.unwrap();
-    
+
     // Verify audit log has entries
-    assert!(!pipeline_result.audit_log.entries().is_empty(), "Audit log should have entries");
+    assert!(
+        !pipeline_result.audit_log.entries().is_empty(),
+        "Audit log should have entries"
+    );
 }
 
 /// Test 8: Agent registry list_agents after register
 #[tokio::test]
 async fn test_agent_registry_list_agents_after_register() {
     let mut registry = AgentRegistry::new();
-    
+
     let agent1 = Agent {
         name: "agent1".into(),
         description: "First agent".into(),
@@ -405,7 +418,7 @@ async fn test_agent_registry_list_agents_after_register() {
         policy: AgentPolicy::default(),
         scorers: vec![],
     };
-    
+
     let agent2 = Agent {
         name: "agent2".into(),
         description: "Second agent".into(),
@@ -420,29 +433,39 @@ async fn test_agent_registry_list_agents_after_register() {
         policy: AgentPolicy::default(),
         scorers: vec![],
     };
-    
+
     registry.register(agent1);
     registry.register(agent2);
-    
+
     let agents = registry.list_agents();
     assert_eq!(agents.len(), 2, "Registry should have 2 agents");
-    
+
     let agent_names: Vec<_> = agents.iter().map(|a| a.name.clone()).collect();
-    assert!(agent_names.contains(&"agent1".to_string()), "agent1 should be in list");
-    assert!(agent_names.contains(&"agent2".to_string()), "agent2 should be in list");
+    assert!(
+        agent_names.contains(&"agent1".to_string()),
+        "agent1 should be in list"
+    );
+    assert!(
+        agent_names.contains(&"agent2".to_string()),
+        "agent2 should be in list"
+    );
 }
 
 /// Test 9: Conversation registry list_conversations after add
 #[tokio::test]
 async fn test_conversation_registry_list_conversations_after_add() {
     let mut registry = ConversationRegistry::new();
-    
+
     registry.get_or_create("c1");
     registry.get_or_create("c2");
-    
+
     let conversations = registry.list_conversations();
-    assert_eq!(conversations.len(), 2, "Registry should have 2 conversations");
-    
+    assert_eq!(
+        conversations.len(),
+        2,
+        "Registry should have 2 conversations"
+    );
+
     let ids: Vec<_> = conversations.iter().map(|(id, _)| id.clone()).collect();
     assert!(ids.contains(&"c1".to_string()), "c1 should be in list");
     assert!(ids.contains(&"c2".to_string()), "c2 should be in list");
@@ -458,7 +481,7 @@ async fn test_toxicity_scorer_score_method_runs() {
     let scorer = ToxicityScorer {
         blocked_patterns: vec!["bad word".into(), "hate speech".into()],
     };
-    
+
     // Create a pipeline result with problematic output
     let mut step_results = HashMap::new();
     step_results.insert(
@@ -470,7 +493,7 @@ async fn test_toxicity_scorer_score_method_runs() {
             error: None,
         },
     );
-    
+
     let result = PipelineResult {
         pipeline_name: "test".into(),
         steps_passed: vec!["step1".to_string()],
@@ -483,11 +506,11 @@ async fn test_toxicity_scorer_score_method_runs() {
         log: vec![],
         suspended: None,
     };
-    
+
     // Call score and verify it returns a result
     let score_result = scorer.score(&result).await;
     assert!(score_result.is_ok(), "Scorer should complete successfully");
-    
+
     let score = score_result.unwrap();
     assert!(!score.pass, "Output with blocked patterns should not pass");
 }
@@ -498,7 +521,7 @@ async fn test_toxicity_scorer_passes_clean_output() {
     let scorer = ToxicityScorer {
         blocked_patterns: vec!["bad word".into(), "hate speech".into()],
     };
-    
+
     // Create a pipeline result with clean output
     let mut step_results = HashMap::new();
     step_results.insert(
@@ -510,7 +533,7 @@ async fn test_toxicity_scorer_passes_clean_output() {
             error: None,
         },
     );
-    
+
     let result = PipelineResult {
         pipeline_name: "test".into(),
         steps_passed: vec!["step1".to_string()],
@@ -523,10 +546,10 @@ async fn test_toxicity_scorer_passes_clean_output() {
         log: vec![],
         suspended: None,
     };
-    
+
     let score_result = scorer.score(&result).await;
     assert!(score_result.is_ok(), "Scorer should complete successfully");
-    
+
     let score = score_result.unwrap();
     assert!(score.pass, "Clean output should pass");
 }
@@ -544,7 +567,7 @@ async fn test_custom_scorer_runs_closure() {
             })
         }),
     };
-    
+
     let result = PipelineResult {
         pipeline_name: "test".into(),
         steps_passed: vec![],
@@ -557,10 +580,10 @@ async fn test_custom_scorer_runs_closure() {
         log: vec![],
         suspended: None,
     };
-    
+
     let score_result = scorer.score(&result).await;
     assert!(score_result.is_ok(), "Scorer should complete successfully");
-    
+
     let score = score_result.unwrap();
     assert!(score.pass, "Custom scorer should pass");
     assert_eq!(score.score, 1.0, "Score should be 1.0");
@@ -569,22 +592,19 @@ async fn test_custom_scorer_runs_closure() {
 /// Test 13: RubricLoop runs without LLM
 #[tokio::test]
 async fn test_rubric_loop_runs_without_llm() {
-    let body_action = StepAction::Custom(Arc::new(|_ctx| {
-        Ok(StepOutput::new("output".to_string()))
-    }));
-    
+    let body_action =
+        StepAction::Custom(Arc::new(|_ctx| Ok(StepOutput::new("output".to_string()))));
+
     let rubric_loop_action = StepAction::RubricLoop {
         body: Box::new(body_action),
-        rubric: vec![
-            RubricItem {
-                criterion: "has content".into(),
-                required: true,
-            },
-        ],
+        rubric: vec![RubricItem {
+            criterion: "has content".into(),
+            required: true,
+        }],
         max_iterations: 2,
         judge_model: None,
     };
-    
+
     let pipeline = Pipeline {
         name: "rubric_pipeline".into(),
         steps: vec![AgentStep {
@@ -604,7 +624,7 @@ async fn test_rubric_loop_runs_without_llm() {
         on_failure: FailureMode::Abort,
         max_retries: 0,
     };
-    
+
     let agent = Agent {
         name: "rubric_agent".into(),
         description: "Rubric test agent".into(),
@@ -614,12 +634,15 @@ async fn test_rubric_loop_runs_without_llm() {
         policy: AgentPolicy::default(),
         scorers: vec![],
     };
-    
+
     let mut runner = PipelineRunner::new();
     let result = runner.run(&agent.pipeline, &agent, json!({})).await;
-    
+
     // Should run without error even without LLM
-    assert!(result.is_ok() || result.is_err(), "Pipeline should return a result");
+    assert!(
+        result.is_ok() || result.is_err(),
+        "Pipeline should return a result"
+    );
 }
 
 /// Test 14: ExperimentRunner run_experiment executes
@@ -627,7 +650,7 @@ async fn test_rubric_loop_runs_without_llm() {
 async fn test_experiment_runner_run_experiment_executes() {
     let runner = Arc::new(PipelineRunner::new());
     let exp_runner = ExperimentRunner::new(runner);
-    
+
     let agent = Agent {
         name: "experiment_agent".into(),
         description: "Experiment test agent".into(),
@@ -657,7 +680,7 @@ async fn test_experiment_runner_run_experiment_executes() {
         policy: AgentPolicy::default(),
         scorers: vec![],
     };
-    
+
     let mut dataset = EvaluationDataset::new("test_dataset");
     let case = EvaluationCase {
         name: "case1".into(),
@@ -665,9 +688,9 @@ async fn test_experiment_runner_run_experiment_executes() {
         expected: EvaluationExpected::Guard(Guard::NonEmptyOutput),
     };
     dataset = dataset.add_case(case);
-    
+
     let exp_result = exp_runner.run_experiment("exp-1", dataset, &agent).await;
-    
+
     // Should return an Experiment result
     assert!(exp_result.is_ok(), "Experiment should run successfully");
     let experiment = exp_result.unwrap();
@@ -678,41 +701,37 @@ async fn test_experiment_runner_run_experiment_executes() {
 #[tokio::test]
 async fn test_experiment_compare_produces_diff() {
     let dataset = EvaluationDataset::new("test_dataset");
-    
+
     let exp_a = Experiment {
         name: "exp_a".into(),
         dataset: dataset.clone(),
         agent_name: "agent1".into(),
         run_at: chrono::Utc::now(),
-        results: vec![
-            EvaluationResult {
-                case_name: "case1".into(),
-                passed: false,
-                score: 0.5,
-                reason: None,
-            },
-        ],
+        results: vec![EvaluationResult {
+            case_name: "case1".into(),
+            passed: false,
+            score: 0.5,
+            reason: None,
+        }],
         summary_score: 0.5,
     };
-    
+
     let exp_b = Experiment {
         name: "exp_b".into(),
         dataset,
         agent_name: "agent1".into(),
         run_at: chrono::Utc::now(),
-        results: vec![
-            EvaluationResult {
-                case_name: "case1".into(),
-                passed: true,
-                score: 1.0,
-                reason: None,
-            },
-        ],
+        results: vec![EvaluationResult {
+            case_name: "case1".into(),
+            passed: true,
+            score: 1.0,
+            reason: None,
+        }],
         summary_score: 1.0,
     };
-    
+
     let diff = ExperimentRunner::compare(&exp_a, &exp_b);
-    
+
     // Verify diff is computed correctly
     assert!(diff.score_delta > 0.0, "Score should improve");
     assert_eq!(diff.improved_cases.len(), 1, "Should have 1 improved case");

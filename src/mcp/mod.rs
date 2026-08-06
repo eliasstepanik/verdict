@@ -5,6 +5,6 @@ pub mod client;
 pub mod server;
 pub mod tool_adapter;
 
-pub use client::{McpClient, McpError, DiscoveredTool};
+pub use client::{DiscoveredTool, McpClient, McpError};
 pub use server::McpServerConfig;
 pub use tool_adapter::McpToolAdapter;

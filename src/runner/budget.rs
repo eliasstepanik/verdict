@@ -1,5 +1,5 @@
-use super::PipelineRunner;
 use super::PipelineError;
+use super::PipelineRunner;
 use crate::action::StepError;
 use crate::agent::Agent;
 use crate::context::StepContext;
@@ -18,10 +18,7 @@ impl PipelineRunner {
             return Err(PipelineError::StepFailed {
                 step: ctx.step_name.clone(),
                 error: StepError::ActionFailed {
-                    reason: format!(
-                        "Max steps {} exceeded",
-                        agent.policy.max_steps
-                    ),
+                    reason: format!("Max steps {} exceeded", agent.policy.max_steps),
                 },
             });
         }

@@ -1,11 +1,11 @@
 //! Server mode: run AgentServer with StdioTransport
 
-use verdict::prelude::*;
-use crate::config::AppConfig;
 use crate::agent::{build_assistant_agent, build_echo_agent};
+use crate::config::AppConfig;
 use crate::memory;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use verdict::prelude::*;
 
 pub async fn run(config: AppConfig) {
     // Build agent based on LLM availability

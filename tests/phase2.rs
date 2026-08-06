@@ -1,8 +1,8 @@
+use serde_json::{json, Value};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
-use std::path::PathBuf;
 use verdict::prelude::*;
-use serde_json::{json, Value};
 
 // Helper: get workspace root (project root)
 fn workspace_root() -> PathBuf {
@@ -113,9 +113,7 @@ async fn test_function_tool_creation_and_call() {
         audit_log: Arc::new(Mutex::new(AuditLog::new())),
     };
 
-    let result = multiply_tool
-        .call(json!({ "a": 3.0, "b": 4.0 }), ctx)
-        .await;
+    let result = multiply_tool.call(json!({ "a": 3.0, "b": 4.0 }), ctx).await;
 
     assert!(result.is_ok());
     let output = result.unwrap();
@@ -137,15 +135,12 @@ async fn test_fs_read_cargo_toml() {
         audit_log: Arc::new(Mutex::new(AuditLog::new())),
     };
 
-    let result = fs_read
-        .call(json!({ "path": "Cargo.toml" }), ctx)
-        .await;
+    let result = fs_read.call(json!({ "path": "Cargo.toml" }), ctx).await;
 
     assert!(result.is_ok());
     let output = result.unwrap();
     assert!(output.raw.contains("verdict"));
 }
-
 
 #[tokio::test]
 async fn test_fs_read_rejects_path_escape() {
@@ -165,15 +160,14 @@ async fn test_fs_read_rejects_path_escape() {
     };
 
     // Try to escape workspace using absolute path outside temp_dir
-    let result = fs_read
-        .call(json!({ "path": "/etc/passwd" }), ctx)
-        .await;
+    let result = fs_read.call(json!({ "path": "/etc/passwd" }), ctx).await;
 
     // Should fail because /etc/passwd is outside workspace_root
-    assert!(result.is_err(), "fs.read should reject paths outside workspace_root");
+    assert!(
+        result.is_err(),
+        "fs.read should reject paths outside workspace_root"
+    );
 }
-
-
 
 #[tokio::test]
 async fn test_fs_write_and_read_roundtrip() {
@@ -183,7 +177,7 @@ async fn test_fs_write_and_read_roundtrip() {
 
     let temp_dir = std::env::temp_dir();
     let temp_filename = unique_temp_file("roundtrip");
-    
+
     let mut fs_policy = FilesystemPolicy::default();
     fs_policy.workspace_root = temp_dir.clone();
 
@@ -206,9 +200,7 @@ async fn test_fs_write_and_read_roundtrip() {
     assert!(write_result.is_ok());
 
     // Read back
-    let read_result = fs_read
-        .call(json!({ "path": &temp_filename }), ctx)
-        .await;
+    let read_result = fs_read.call(json!({ "path": &temp_filename }), ctx).await;
     assert!(read_result.is_ok());
     let output = read_result.unwrap();
     assert_eq!(output.raw, test_content);
@@ -232,17 +224,15 @@ async fn test_fs_list_directory() {
         audit_log: Arc::new(Mutex::new(AuditLog::new())),
     };
 
-    let result = fs_list
-        .call(json!({ "path": "." }), ctx)
-        .await;
+    let result = fs_list.call(json!({ "path": "." }), ctx).await;
 
     assert!(result.is_ok());
     let output = result.unwrap();
-    
+
     // Check that output is valid JSON
     let parsed = serde_json::from_str::<Value>(&output.raw);
     assert!(parsed.is_ok());
-    
+
     let entries = parsed.unwrap();
     let entries_array = entries.get("entries").and_then(|e| e.as_array());
     assert!(entries_array.is_some());
@@ -273,11 +263,11 @@ async fn test_search_grep_in_cargo_toml() {
 
     assert!(result.is_ok());
     let output = result.unwrap();
-    
+
     // Parse JSON response
     let parsed = serde_json::from_str::<Value>(&output.raw);
     assert!(parsed.is_ok());
-    
+
     let json_obj = parsed.unwrap();
     let matches = json_obj.get("matches").and_then(|m| m.as_array());
     assert!(matches.is_some());
@@ -303,7 +293,7 @@ async fn test_toolset_readonly_enforcement() {
 async fn test_pipeline_with_function_tool_call() {
     // Create a custom tool registry with a function tool
     let mut registry = ToolRegistry::new();
-    
+
     let greet_tool = FunctionTool::new(
         "greet",
         "Greet someone",
@@ -316,10 +306,7 @@ async fn test_pipeline_with_function_tool_call() {
         }),
         |args, _ctx| {
             Box::pin(async move {
-                let name = args
-                    .get("name")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("World");
+                let name = args.get("name").and_then(|v| v.as_str()).unwrap_or("World");
                 Ok(ToolOutput::text(format!("Hello, {}!", name)))
             })
         },
@@ -359,9 +346,7 @@ async fn test_pipeline_with_function_tool_call() {
         description: "Test agent".to_string(),
         pipeline: pipeline.clone(),
         tools: ToolSet::Allow(vec!["greet".to_string()]),
-        skills: SkillSet {
-            skills: vec![],
-        },
+        skills: SkillSet { skills: vec![] },
         policy,
         scorers: vec![],
     };
@@ -375,17 +360,24 @@ async fn test_pipeline_with_function_tool_call() {
     if let Err(ref e) = result {
         eprintln!("Pipeline error: {:?}", e);
     }
-    assert!(result.is_ok(), "Pipeline run should succeed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Pipeline run should succeed: {:?}",
+        result.err()
+    );
     let pipeline_result = result.unwrap();
     assert!(pipeline_result.success, "Pipeline should report success");
-    assert!(!pipeline_result.steps_passed.is_empty(), "Pipeline should have at least one passed step");
+    assert!(
+        !pipeline_result.steps_passed.is_empty(),
+        "Pipeline should have at least one passed step"
+    );
 }
 
 #[tokio::test]
 async fn test_audit_log_records_pipeline_events() {
     // Create a function tool
     let mut registry = ToolRegistry::new();
-    
+
     let test_tool = FunctionTool::new(
         "audit_test",
         "Test tool for audit",
@@ -394,11 +386,7 @@ async fn test_audit_log_records_pipeline_events() {
             "properties": {},
             "required": []
         }),
-        |_args, _ctx| {
-            Box::pin(async move {
-                Ok(ToolOutput::text("test output".to_string()))
-            })
-        },
+        |_args, _ctx| Box::pin(async move { Ok(ToolOutput::text("test output".to_string())) }),
     );
 
     registry.register(test_tool);
@@ -432,9 +420,7 @@ async fn test_audit_log_records_pipeline_events() {
         description: "Audit test agent".to_string(),
         pipeline: pipeline.clone(),
         tools: ToolSet::Allow(vec!["audit_test".to_string()]),
-        skills: SkillSet {
-            skills: vec![],
-        },
+        skills: SkillSet { skills: vec![] },
         policy: AgentPolicy {
             allowed_tools: ToolSet::Allow(vec!["audit_test".to_string()]),
             ..AgentPolicy::default()
@@ -443,34 +429,43 @@ async fn test_audit_log_records_pipeline_events() {
     };
 
     let mut runner = PipelineRunner::with_tool_registry(Arc::new(registry));
-    let result = runner
-        .run(&pipeline, &agent, json!({}))
-        .await;
+    let result = runner.run(&pipeline, &agent, json!({})).await;
 
     if let Err(ref e) = result {
         eprintln!("Pipeline error: {:?}", e);
     }
-    assert!(result.is_ok(), "Pipeline should succeed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Pipeline should succeed: {:?}",
+        result.err()
+    );
 
     // Check audit log for standard pipeline events
     let pipeline_result = result.unwrap();
     let audit_log = &pipeline_result.audit_log;
     let entries = audit_log.entries();
-    
+
     // Verify we have pipeline start/completion events
-    let has_pipeline_started = entries.iter().any(|e| {
-        matches!(e.event, AuditEvent::PipelineStarted)
-    });
-    let has_pipeline_completed = entries.iter().any(|e| {
-        matches!(e.event, AuditEvent::PipelineCompleted { .. })
-    });
-    let has_step_started = entries.iter().any(|e| {
-        matches!(e.event, AuditEvent::StepStarted)
-    });
+    let has_pipeline_started = entries
+        .iter()
+        .any(|e| matches!(e.event, AuditEvent::PipelineStarted));
+    let has_pipeline_completed = entries
+        .iter()
+        .any(|e| matches!(e.event, AuditEvent::PipelineCompleted { .. }));
+    let has_step_started = entries
+        .iter()
+        .any(|e| matches!(e.event, AuditEvent::StepStarted));
 
-    assert!(has_pipeline_started, "Audit log should contain PipelineStarted event");
-    assert!(has_pipeline_completed, "Audit log should contain PipelineCompleted event");
-    assert!(has_step_started, "Audit log should contain StepStarted event");
+    assert!(
+        has_pipeline_started,
+        "Audit log should contain PipelineStarted event"
+    );
+    assert!(
+        has_pipeline_completed,
+        "Audit log should contain PipelineCompleted event"
+    );
+    assert!(
+        has_step_started,
+        "Audit log should contain StepStarted event"
+    );
 }
-
-

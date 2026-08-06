@@ -3,9 +3,9 @@
 //! Verdict can run as a daemon that accepts work over IPC, initially via stdio JSON-RPC.
 //! This module provides the server infrastructure for accepting client requests and sending responses.
 
-use crate::session::{SessionRunner, SessionId, SessionPolicy, UserTurn, TurnResult, TurnContent};
+use crate::session::{SessionId, SessionPolicy, SessionRunner, TurnContent, TurnResult, UserTurn};
 use async_trait::async_trait;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 /// A server that accepts work over a transport (initially stdio JSON-RPC)
@@ -45,10 +45,22 @@ pub trait ServerTransport: Send + Sync {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ClientRequest {
-    NewSession { id: String, agent: String, policy: Option<serde_json::Value> },
-    Turn { session_id: String, content: String, attachments: Vec<String> },
-    CancelTurn { session_id: String },
-    CloseSession { session_id: String },
+    NewSession {
+        id: String,
+        agent: String,
+        policy: Option<serde_json::Value>,
+    },
+    Turn {
+        session_id: String,
+        content: String,
+        attachments: Vec<String>,
+    },
+    CancelTurn {
+        session_id: String,
+    },
+    CloseSession {
+        session_id: String,
+    },
     ListSessions,
     Ping,
 }
@@ -57,12 +69,28 @@ pub enum ClientRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ServerEvent {
-    SessionCreated { session_id: String },
-    Chunk { session_id: String, delta: String },
-    TurnCompleted { session_id: String, output: String, success: bool },
-    SessionClosed { session_id: String },
-    SessionList { sessions: Vec<String> },
-    Error { session_id: Option<String>, message: String },
+    SessionCreated {
+        session_id: String,
+    },
+    Chunk {
+        session_id: String,
+        delta: String,
+    },
+    TurnCompleted {
+        session_id: String,
+        output: String,
+        success: bool,
+    },
+    SessionClosed {
+        session_id: String,
+    },
+    SessionList {
+        sessions: Vec<String>,
+    },
+    Error {
+        session_id: Option<String>,
+        message: String,
+    },
     Pong,
 }
 
@@ -118,7 +146,11 @@ impl AgentServer {
                     sessions: sessions.iter().map(|m| m.id.to_string()).collect(),
                 }
             }
-            ClientRequest::NewSession { id, agent, policy: _ } => {
+            ClientRequest::NewSession {
+                id,
+                agent,
+                policy: _,
+            } => {
                 // Check policy
                 if !self.policy.allowed_agents.is_empty()
                     && !self.policy.allowed_agents.contains(&agent)
@@ -130,14 +162,20 @@ impl AgentServer {
                 }
                 let sess_policy = SessionPolicy::default();
                 match self.session_runner.new_session(&agent, sess_policy).await {
-                    Ok(sess_id) => ServerEvent::SessionCreated { session_id: sess_id.to_string() },
+                    Ok(sess_id) => ServerEvent::SessionCreated {
+                        session_id: sess_id.to_string(),
+                    },
                     Err(e) => ServerEvent::Error {
                         session_id: Some(id),
                         message: e.to_string(),
                     },
                 }
             }
-            ClientRequest::Turn { session_id, content, attachments: _ } => {
+            ClientRequest::Turn {
+                session_id,
+                content,
+                attachments: _,
+            } => {
                 let sess_id = SessionId::from(session_id.clone());
                 let turn = UserTurn {
                     content: TurnContent { text: content },
@@ -150,11 +188,13 @@ impl AgentServer {
                         output,
                         success: true,
                     },
-                    Ok(TurnResult::Cancelled { partial_output, .. }) => ServerEvent::TurnCompleted {
-                        session_id,
-                        output: partial_output,
-                        success: false,
-                    },
+                    Ok(TurnResult::Cancelled { partial_output, .. }) => {
+                        ServerEvent::TurnCompleted {
+                            session_id,
+                            output: partial_output,
+                            success: false,
+                        }
+                    }
                     Ok(other) => ServerEvent::TurnCompleted {
                         session_id,
                         output: format!("{:?}", other),
@@ -195,7 +235,7 @@ impl AgentServer {
 }
 
 /// Stdio JSON-RPC transport (newline-delimited JSON)
-/// 
+///
 /// For simplicity, uses blocking I/O wrapped in tokio::task::block_in_place
 /// to avoid creating/managing Mutex-wrapped stdio handles
 pub struct StdioTransport;
@@ -210,12 +250,13 @@ impl StdioTransport {
 impl ServerTransport for StdioTransport {
     async fn next_request(&self) -> Result<Option<ClientRequest>, ServerError> {
         use std::io::BufRead;
-        
+
         let line = tokio::task::block_in_place(|| {
             let mut line = String::new();
             let stdin = std::io::stdin();
             let mut handle = stdin.lock();
-            let n = handle.read_line(&mut line)
+            let n = handle
+                .read_line(&mut line)
                 .map_err(|e| ServerError::Io(e.to_string()))?;
             if n == 0 {
                 Ok::<Option<String>, ServerError>(None)
@@ -236,19 +277,20 @@ impl ServerTransport for StdioTransport {
 
     async fn send_event(&self, event: ServerEvent) -> Result<(), ServerError> {
         use std::io::Write;
-        
-        let json = serde_json::to_string(&event)
-            .map_err(|e| ServerError::Serialization(e.to_string()))?;
+
+        let json =
+            serde_json::to_string(&event).map_err(|e| ServerError::Serialization(e.to_string()))?;
 
         tokio::task::block_in_place(|| {
             let stdout = std::io::stdout();
             let mut handle = stdout.lock();
-            handle.write_all(json.as_bytes())
+            handle
+                .write_all(json.as_bytes())
                 .map_err(|e| ServerError::Io(e.to_string()))?;
-            handle.write_all(b"\n")
+            handle
+                .write_all(b"\n")
                 .map_err(|e| ServerError::Io(e.to_string()))?;
-            handle.flush()
-                .map_err(|e| ServerError::Io(e.to_string()))?;
+            handle.flush().map_err(|e| ServerError::Io(e.to_string()))?;
             Ok::<(), ServerError>(())
         })
     }

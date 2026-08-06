@@ -2,7 +2,7 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 mod commands;
-use commands::{new, dev, check, audit, run};
+use commands::{audit, check, dev, new, run};
 
 #[derive(Parser)]
 #[command(name = "verdict")]

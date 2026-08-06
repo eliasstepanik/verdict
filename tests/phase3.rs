@@ -2,10 +2,10 @@
 #![allow(unused_imports)]
 
 use serde_json::json;
-use verdict::prelude::*;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex as TokioMutex;
+use verdict::prelude::*;
 
 mod common;
 use common::create_dummy_mcp_client;
@@ -73,7 +73,11 @@ fn test_mcp_server_allowlist_filters_tools() {
 /// Test 5: McpToolAdapter creation and properties
 #[tokio::test]
 async fn test_mcp_tool_adapter_creation() {
-    let client = Arc::new(TokioMutex::new(create_dummy_mcp_client().await.expect("Failed to create dummy client")));
+    let client = Arc::new(TokioMutex::new(
+        create_dummy_mcp_client()
+            .await
+            .expect("Failed to create dummy client"),
+    ));
     let adapter = McpToolAdapter::new(
         "read_file",
         "Read a file from the workspace",
@@ -97,7 +101,11 @@ async fn test_mcp_tool_adapter_creation() {
 /// Test 6: McpToolAdapter source returns McpServer variant
 #[tokio::test]
 async fn test_mcp_tool_adapter_source() {
-    let client = Arc::new(TokioMutex::new(create_dummy_mcp_client().await.expect("Failed to create dummy client")));
+    let client = Arc::new(TokioMutex::new(
+        create_dummy_mcp_client()
+            .await
+            .expect("Failed to create dummy client"),
+    ));
     let adapter = McpToolAdapter::new(
         "test_tool",
         "A test tool",
@@ -124,7 +132,11 @@ async fn test_mcp_tool_adapter_source() {
 async fn test_tool_registry_register_mcp_tool() {
     let mut registry = ToolRegistry::new();
 
-    let client = Arc::new(TokioMutex::new(create_dummy_mcp_client().await.expect("Failed to create dummy client")));
+    let client = Arc::new(TokioMutex::new(
+        create_dummy_mcp_client()
+            .await
+            .expect("Failed to create dummy client"),
+    ));
     let adapter = McpToolAdapter::new(
         "read_file",
         "Read a file",
@@ -147,7 +159,11 @@ async fn test_tool_registry_register_mcp_tool() {
 async fn test_tool_registry_contains_registered_mcp_tool() {
     let mut registry = ToolRegistry::new();
 
-    let client1 = Arc::new(TokioMutex::new(create_dummy_mcp_client().await.expect("Failed to create dummy client")));
+    let client1 = Arc::new(TokioMutex::new(
+        create_dummy_mcp_client()
+            .await
+            .expect("Failed to create dummy client"),
+    ));
     let adapter1 = McpToolAdapter::new(
         "search_files",
         "Search for files",
@@ -157,7 +173,11 @@ async fn test_tool_registry_contains_registered_mcp_tool() {
         client1,
     );
 
-    let client2 = Arc::new(TokioMutex::new(create_dummy_mcp_client().await.expect("Failed to create dummy client")));
+    let client2 = Arc::new(TokioMutex::new(
+        create_dummy_mcp_client()
+            .await
+            .expect("Failed to create dummy client"),
+    ));
     let adapter2 = McpToolAdapter::new(
         "create_issue",
         "Create an issue",
@@ -178,8 +198,7 @@ async fn test_tool_registry_contains_registered_mcp_tool() {
 /// Test 9: Allowlist rejection
 #[test]
 fn test_mcp_server_allowlist_rejects_unlisted_tool() {
-    let config = McpServerConfig::new("strict")
-        .with_allowed_tools(vec!["whitelisted".to_string()]);
+    let config = McpServerConfig::new("strict").with_allowed_tools(vec!["whitelisted".to_string()]);
 
     assert!(config.is_tool_allowed("whitelisted"));
     assert!(!config.is_tool_allowed("blacklisted"));
@@ -191,7 +210,11 @@ async fn test_mcp_client_connect_url_only_succeeds() {
     let config = McpServerConfig::new("http_server").with_url("http://localhost:3000");
 
     let result = McpClient::connect(config).await;
-    assert!(result.is_ok(), "URL-only connect should succeed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "URL-only connect should succeed: {:?}",
+        result.err()
+    );
 }
 
 /// Test 11: McpClient::connect with nonexistent command returns error
@@ -222,15 +245,12 @@ async fn test_mcp_client_connect_config_only() {
 /// Test 13: McpToolAdapter call placeholder returns pending
 #[tokio::test]
 async fn test_mcp_tool_adapter_call_returns_stub() {
-    let client = Arc::new(TokioMutex::new(create_dummy_mcp_client().await.expect("Failed to create dummy client")));
-    let adapter = McpToolAdapter::new(
-        "test",
-        "A test tool",
-        json!({}),
-        "server",
-        "tool",
-        client,
-    );
+    let client = Arc::new(TokioMutex::new(
+        create_dummy_mcp_client()
+            .await
+            .expect("Failed to create dummy client"),
+    ));
+    let adapter = McpToolAdapter::new("test", "A test tool", json!({}), "server", "tool", client);
 
     let ctx = ToolContext {
         filesystem_policy: FilesystemPolicy {
@@ -301,7 +321,11 @@ async fn test_tool_registry_mixed_builtins_and_mcp() {
     let mut registry = ToolRegistry::with_builtins();
     let original_count = registry.list().len();
 
-    let client = Arc::new(TokioMutex::new(create_dummy_mcp_client().await.expect("Failed to create dummy client")));
+    let client = Arc::new(TokioMutex::new(
+        create_dummy_mcp_client()
+            .await
+            .expect("Failed to create dummy client"),
+    ));
     let adapter = McpToolAdapter::new(
         "custom",
         "Custom tool",
@@ -351,7 +375,11 @@ async fn test_mcp_tool_adapter_complex_schema() {
         }
     });
 
-    let client = Arc::new(TokioMutex::new(create_dummy_mcp_client().await.expect("Failed to create dummy client")));
+    let client = Arc::new(TokioMutex::new(
+        create_dummy_mcp_client()
+            .await
+            .expect("Failed to create dummy client"),
+    ));
     let adapter = McpToolAdapter::new(
         "complex",
         "Complex tool",

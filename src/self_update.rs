@@ -7,7 +7,6 @@ use chrono::Utc;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
-
 /// Configuration for self-update operations
 #[derive(Debug, Clone)]
 pub struct SelfUpdateConfig {
@@ -82,20 +81,17 @@ pub enum SelfUpdateError {
     #[error("patch touches forbidden path: {path}")]
     ForbiddenPath { path: String },
 
-
     #[error("patch is empty")]
     EmptyPatch,
 
     #[error("patch application failed: {0}")]
     PatchApplyFailed(String),
 
-
     #[error("compile validation failed: {reason}")]
     CompileFailed { reason: String },
 
     #[error("test validation failed: {reason}")]
     TestFailed { reason: String },
-
 
     #[error("sandbox setup failed: {0}")]
     SandboxSetupFailed(String),
@@ -173,11 +169,8 @@ fn extract_modified_paths(patch: &str) -> Vec<String> {
         .collect()
 }
 
-
-
 /// Engine for managing self-updates
 pub struct SelfUpdateEngine;
-
 
 impl SelfUpdateEngine {
     /// Validate a patch proposal against static checks
@@ -191,7 +184,8 @@ impl SelfUpdateEngine {
         }
 
         // Check if patch is a valid unified diff (has diff markers)
-        if !proposal.patch.contains("--- ") && !proposal.patch.contains("+++ ")
+        if !proposal.patch.contains("--- ")
+            && !proposal.patch.contains("+++ ")
             && !proposal.patch.contains("@@")
         {
             return Err(SelfUpdateError::InvalidDiff);
@@ -234,7 +228,6 @@ impl SelfUpdateEngine {
             }
         }
 
-
         // Risk-based validation
         match proposal.risk_level {
             RiskLevel::Critical => {
@@ -259,7 +252,6 @@ impl SelfUpdateEngine {
             }
             _ => {}
         }
-
 
         Ok(())
     }
@@ -317,7 +309,6 @@ impl SelfUpdateEngine {
         Ok(())
     }
 
-
     /// Create a new AgentVersion from the current agent and a change summary
     pub fn version_agent(
         agent: &Agent,
@@ -342,9 +333,7 @@ impl SelfUpdateEngine {
 
         AgentVersion {
             agent_name: agent.name.clone(),
-            version: chrono::Utc::now()
-                .format("%Y%m%d%H%M%S")
-                .to_string(),
+            version: chrono::Utc::now().format("%Y%m%d%H%M%S").to_string(),
             parent_version,
             created_at: Utc::now(),
             change_summary: change_summary.to_string(),
@@ -412,7 +401,8 @@ mod tests {
     #[test]
     fn test_validate_proposal_valid_diff() {
         let proposal = SelfUpdateProposal {
-            patch: "--- a/src/agents/test.rs\n+++ b/src/agents/test.rs\n@@ -1,1 +1,2 @@\n content".to_string(),
+            patch: "--- a/src/agents/test.rs\n+++ b/src/agents/test.rs\n@@ -1,1 +1,2 @@\n content"
+                .to_string(),
             summary: "test".to_string(),
             risk_level: RiskLevel::Low,
         };

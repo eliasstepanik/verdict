@@ -2,9 +2,9 @@
 //!
 //! Tests for JSON-RPC server transport and session management over stdio.
 
-use verdict::prelude::*;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use verdict::prelude::*;
 
 /// Mock in-memory transport for testing (doesn't use real stdio)
 struct MockTransport {
@@ -53,27 +53,27 @@ impl ServerTransport for MockTransport {
 fn create_echo_agent() -> Agent {
     let pipeline = Pipeline {
         name: "echo_pipeline".into(),
-        steps: vec![
-            AgentStep {
-                name: "echo_step".into(),
-                guard_in: Guard::None,
-                action: StepAction::Custom(Arc::new(|ctx| {
-                    let input = ctx.input.get("task")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("no input");
-                    Ok(StepOutput::new(format!("Echo: {}", input)))
-                })),
-                guard_out: Guard::NonEmptyOutput,
-                verdict: Verdict::Automated(Guard::NonEmptyOutput),
-                tools: ToolSet::None,
-                injection_protection: InjectionProtection::None,
-                output_schema: None,
-                dependencies: vec![],
-                parallel: false,
+        steps: vec![AgentStep {
+            name: "echo_step".into(),
+            guard_in: Guard::None,
+            action: StepAction::Custom(Arc::new(|ctx| {
+                let input = ctx
+                    .input
+                    .get("task")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("no input");
+                Ok(StepOutput::new(format!("Echo: {}", input)))
+            })),
+            guard_out: Guard::NonEmptyOutput,
+            verdict: Verdict::Automated(Guard::NonEmptyOutput),
+            tools: ToolSet::None,
+            injection_protection: InjectionProtection::None,
+            output_schema: None,
+            dependencies: vec![],
+            parallel: false,
             input_processors: vec![],
             output_processors: vec![],
-        },
-        ],
+        }],
         on_failure: FailureMode::Abort,
         max_retries: 0,
     };
@@ -114,17 +114,18 @@ async fn test_server_ping() {
 async fn test_server_new_session() {
     let mut registry = AgentRegistry::new();
     registry.register(create_echo_agent());
-    let runner = PipelineRunner::with_registries(Arc::new(ToolRegistry::with_builtins()), Arc::new(registry));
+    let runner = PipelineRunner::with_registries(
+        Arc::new(ToolRegistry::with_builtins()),
+        Arc::new(registry),
+    );
 
     let session_runner = Arc::new(SessionRunner::new(Arc::new(Mutex::new(runner))));
 
-    let mock_transport = Arc::new(MockTransport::new(vec![
-        ClientRequest::NewSession {
-            id: "req1".to_string(),
-            agent: "echo".to_string(),
-            policy: None,
-        },
-    ]));
+    let mock_transport = Arc::new(MockTransport::new(vec![ClientRequest::NewSession {
+        id: "req1".to_string(),
+        agent: "echo".to_string(),
+        policy: None,
+    }]));
     let server = AgentServer::new(session_runner, mock_transport.clone());
 
     let result = server.run().await;
@@ -144,7 +145,10 @@ async fn test_server_new_session() {
 async fn test_server_list_sessions() {
     let mut registry = AgentRegistry::new();
     registry.register(create_echo_agent());
-    let runner = PipelineRunner::with_registries(Arc::new(ToolRegistry::with_builtins()), Arc::new(registry));
+    let runner = PipelineRunner::with_registries(
+        Arc::new(ToolRegistry::with_builtins()),
+        Arc::new(registry),
+    );
 
     let session_runner = Arc::new(SessionRunner::new(Arc::new(Mutex::new(runner))));
 
@@ -174,7 +178,10 @@ async fn test_server_list_sessions() {
 async fn test_server_close_session() {
     let mut registry = AgentRegistry::new();
     registry.register(create_echo_agent());
-    let runner = PipelineRunner::with_registries(Arc::new(ToolRegistry::with_builtins()), Arc::new(registry));
+    let runner = PipelineRunner::with_registries(
+        Arc::new(ToolRegistry::with_builtins()),
+        Arc::new(registry),
+    );
 
     let session_runner = Arc::new(SessionRunner::new(Arc::new(Mutex::new(runner))));
 
@@ -206,7 +213,10 @@ async fn test_server_close_session() {
 async fn test_server_policy_reject() {
     let mut registry = AgentRegistry::new();
     registry.register(create_echo_agent());
-    let runner = PipelineRunner::with_registries(Arc::new(ToolRegistry::with_builtins()), Arc::new(registry));
+    let runner = PipelineRunner::with_registries(
+        Arc::new(ToolRegistry::with_builtins()),
+        Arc::new(registry),
+    );
 
     let session_runner = Arc::new(SessionRunner::new(Arc::new(Mutex::new(runner))));
 
@@ -242,7 +252,10 @@ async fn test_server_policy_reject() {
 async fn test_server_full_turn() {
     let mut registry = AgentRegistry::new();
     registry.register(create_echo_agent());
-    let runner = PipelineRunner::with_registries(Arc::new(ToolRegistry::with_builtins()), Arc::new(registry));
+    let runner = PipelineRunner::with_registries(
+        Arc::new(ToolRegistry::with_builtins()),
+        Arc::new(registry),
+    );
 
     let session_runner = Arc::new(SessionRunner::new(Arc::new(Mutex::new(runner))));
 
@@ -282,7 +295,10 @@ async fn test_server_full_turn() {
 async fn test_server_cancel_turn() {
     let mut registry = AgentRegistry::new();
     registry.register(create_echo_agent());
-    let runner = PipelineRunner::with_registries(Arc::new(ToolRegistry::with_builtins()), Arc::new(registry));
+    let runner = PipelineRunner::with_registries(
+        Arc::new(ToolRegistry::with_builtins()),
+        Arc::new(registry),
+    );
 
     let session_runner = Arc::new(SessionRunner::new(Arc::new(Mutex::new(runner))));
 
@@ -314,4 +330,3 @@ async fn test_server_cancel_turn() {
         e => panic!("Expected TurnCompleted, got {:?}", e),
     }
 }
-

@@ -12,11 +12,11 @@
 //!     model = "gpt-4o"
 //!     system_prompt = "You are a helpful assistant."
 
-mod config;
 mod agent;
 mod chat;
-mod server;
+mod config;
 mod memory;
+mod server;
 mod telemetry;
 
 use config::AppConfig;
@@ -30,7 +30,10 @@ async fn main() {
         Some("server") => server::run(config).await,
         Some("config-info") | Some("--config-info") => config.print_info(),
         Some("chat") => {
-            let agent_name = args.get(2).cloned().unwrap_or_else(|| "assistant".to_string());
+            let agent_name = args
+                .get(2)
+                .cloned()
+                .unwrap_or_else(|| "assistant".to_string());
             chat::run(config, agent_name).await;
         }
         Some("--help") | Some("-h") => {
@@ -55,7 +58,10 @@ async fn main() {
             println!("  OPENAI_MODEL      Model name");
         }
         None => {
-            let agent_name = args.get(2).cloned().unwrap_or_else(|| "assistant".to_string());
+            let agent_name = args
+                .get(2)
+                .cloned()
+                .unwrap_or_else(|| "assistant".to_string());
             chat::run(config, agent_name).await;
         }
         Some(cmd) => {

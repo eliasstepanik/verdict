@@ -12,11 +12,11 @@ pub mod tools;
 pub mod sqlite;
 
 // Re-export main types from verdict for convenience
-pub use verdict::memory::{MemoryStore, MemoryMessage, MemoryRole, SemanticResult, MemoryError};
+pub use verdict::memory::{MemoryError, MemoryMessage, MemoryRole, MemoryStore, SemanticResult};
 
 // Re-export implementations
 pub use in_memory::InMemoryStore;
-pub use tiers::{ThreadMemory, WorkingMemory, SemanticMemory, ObservationalMemory};
+pub use tiers::{ObservationalMemory, SemanticMemory, ThreadMemory, WorkingMemory};
 
 #[cfg(feature = "sqlite")]
 pub use sqlite::SqliteMemoryStore;

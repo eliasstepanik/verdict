@@ -9,7 +9,6 @@ use serde_json::{json, Value};
 use std::time::Duration;
 use url::Url;
 
-
 /// An HTTP tool that makes HTTP requests.
 pub struct HttpTool {
     pub name: String,
@@ -21,7 +20,11 @@ pub struct HttpTool {
 
 impl HttpTool {
     /// Create a new HTTP tool.
-    pub fn new(name: impl Into<String>, description: impl Into<String>, base_url: impl Into<String>) -> Self {
+    pub fn new(
+        name: impl Into<String>,
+        description: impl Into<String>,
+        base_url: impl Into<String>,
+    ) -> Self {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(30))
             .build()
@@ -42,7 +45,6 @@ impl HttpTool {
     }
 }
 
-
 #[async_trait]
 impl Tool for HttpTool {
     fn name(&self) -> &str {
@@ -59,7 +61,6 @@ impl Tool for HttpTool {
         }
     }
 
-
     async fn call(&self, args: Value, ctx: ToolContext) -> Result<ToolOutput, ToolError> {
         // Parse arguments first
         let method = args
@@ -70,21 +71,19 @@ impl Tool for HttpTool {
             })?
             .to_uppercase();
 
-        let path = args
-            .get("path")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| ToolError::SchemaValidationFailed {
+        let path = args.get("path").and_then(|v| v.as_str()).ok_or_else(|| {
+            ToolError::SchemaValidationFailed {
                 reason: "missing or invalid 'path'".into(),
-            })?;
+            }
+        })?;
 
         // Build URL
         let url = format!("{}{}", self.base_url, path);
 
         // Validate URL and check network policy
-        let url_parsed = Url::parse(&url)
-            .map_err(|e| ToolError::SchemaValidationFailed {
-                reason: format!("Invalid URL: {}", e),
-            })?;
+        let url_parsed = Url::parse(&url).map_err(|e| ToolError::SchemaValidationFailed {
+            reason: format!("Invalid URL: {}", e),
+        })?;
 
         // Check network policy
         match &ctx.network_policy {
@@ -96,9 +95,9 @@ impl Tool for HttpTool {
             NetworkPolicy::AllowList(allowed_hosts) => {
                 let host = url_parsed.host_str().unwrap_or("");
                 if !allowed_hosts.iter().any(|pattern| {
-                    host == pattern.as_str() || 
-                    host.ends_with(&format!(".{}", pattern)) ||
-                    url.starts_with(pattern.as_str())
+                    host == pattern.as_str()
+                        || host.ends_with(&format!(".{}", pattern))
+                        || url.starts_with(pattern.as_str())
                 }) {
                     return Err(ToolError::ExecutionFailed {
                         reason: format!("Host '{}' not in network allowlist", host),
@@ -149,29 +148,30 @@ impl Tool for HttpTool {
         }
 
         // Execute request
-        let response = request.send().await.map_err(|e| {
-            ToolError::ExecutionFailed {
+        let response = request
+            .send()
+            .await
+            .map_err(|e| ToolError::ExecutionFailed {
                 reason: format!("HTTP request failed: {}", e),
-            }
-        })?;
+            })?;
 
         let status_code = response.status().as_u16();
-        let response_text = response.text().await.map_err(|e| {
-            ToolError::ExecutionFailed {
+        let response_text = response
+            .text()
+            .await
+            .map_err(|e| ToolError::ExecutionFailed {
                 reason: format!("failed to read response body: {}", e),
-            }
-        })?;
+            })?;
 
         // Try to parse body as JSON, fall back to string
-        let body_value = serde_json::from_str::<Value>(&response_text)
-            .unwrap_or(Value::String(response_text));
+        let body_value =
+            serde_json::from_str::<Value>(&response_text).unwrap_or(Value::String(response_text));
 
         Ok(ToolOutput::json(json!({
             "status": status_code,
             "body": body_value
         })))
     }
-
 
     fn schema(&self) -> Value {
         json!({

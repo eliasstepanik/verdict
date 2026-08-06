@@ -1,13 +1,10 @@
+use super::{Guard, GuardError, TestRunner};
 use crate::context::StepContext;
 use crate::llm::LlmRequest;
-use tokio::process::Command;
-use super::{Guard, GuardError, TestRunner};
 use std::io;
+use tokio::process::Command;
 
-pub async fn check_compiles(
-    _guard: &Guard,
-    ctx: &StepContext,
-) -> Result<(), GuardError> {
+pub async fn check_compiles(_guard: &Guard, ctx: &StepContext) -> Result<(), GuardError> {
     let output = Command::new("cargo")
         .arg("check")
         .current_dir(&ctx.filesystem_policy.workspace_root)
@@ -28,10 +25,7 @@ pub async fn check_compiles(
     }
 }
 
-pub async fn check_tests_pass(
-    _guard: &Guard,
-    ctx: &StepContext,
-) -> Result<(), GuardError> {
+pub async fn check_tests_pass(_guard: &Guard, ctx: &StepContext) -> Result<(), GuardError> {
     let output = Command::new("cargo")
         .arg("test")
         .arg("--lib")
@@ -109,10 +103,7 @@ pub async fn check_tests_pass_with(
     }
 }
 
-pub async fn check_lint_pass(
-    _guard: &Guard,
-    ctx: &StepContext,
-) -> Result<(), GuardError> {
+pub async fn check_lint_pass(_guard: &Guard, ctx: &StepContext) -> Result<(), GuardError> {
     let output = Command::new("cargo")
         .arg("clippy")
         .arg("--all-targets")
@@ -138,10 +129,7 @@ pub async fn check_lint_pass(
     }
 }
 
-pub async fn check_format_pass(
-    _guard: &Guard,
-    ctx: &StepContext,
-) -> Result<(), GuardError> {
+pub async fn check_format_pass(_guard: &Guard, ctx: &StepContext) -> Result<(), GuardError> {
     let output = Command::new("rustfmt")
         .arg("--check")
         .arg("--recursive")
@@ -184,18 +172,12 @@ pub async fn check_semantic_check(
     })?;
 
     // Get the output to evaluate
-    let output_str = ctx
-        .output
-        .as_ref()
-        .map(|o| o.raw.as_str())
-        .unwrap_or("");
+    let output_str = ctx.output.as_ref().map(|o| o.raw.as_str()).unwrap_or("");
 
     // Build the LLM judge request
     let system = "You are a semantic checker. Evaluate whether the output satisfies the given requirement. \
                   Reply with exactly one word: PASS if satisfied, or FAIL followed by a brief reason if not.";
-    let user = format!(
-        "Requirement: {check_description}\n\nOutput to evaluate:\n{output_str}"
-    );
+    let user = format!("Requirement: {check_description}\n\nOutput to evaluate:\n{output_str}");
 
     let req = LlmRequest {
         system: system.to_string(),
@@ -208,10 +190,13 @@ pub async fn check_semantic_check(
         tool_choice: None,
     };
 
-    let response = llm_client.complete(req).await.map_err(|e| GuardError::Failed {
-        guard: "SemanticCheck".to_string(),
-        reason: format!("LLM call failed: {e}"),
-    })?;
+    let response = llm_client
+        .complete(req)
+        .await
+        .map_err(|e| GuardError::Failed {
+            guard: "SemanticCheck".to_string(),
+            reason: format!("LLM call failed: {e}"),
+        })?;
 
     let first_line = response.content.lines().next().unwrap_or("").trim();
     if first_line.to_uppercase().starts_with("PASS") {

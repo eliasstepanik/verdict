@@ -1,12 +1,11 @@
 //! Phase 9: Advanced Execution tests
 //! Tests for DAG pipelines, branching, remote agents, plugins, hot-reload, and monitoring
 
-use verdict::prelude::*;
-use verdict::agents;
-use verdict::context::{StepContext, PipelineTrace};
 use serde_json::json;
 use std::sync::{Arc, Mutex};
-
+use verdict::agents;
+use verdict::context::{PipelineTrace, StepContext};
+use verdict::prelude::*;
 
 #[test]
 fn test_dag_topological_sort_basic() {
@@ -28,9 +27,9 @@ fn test_dag_topological_sort_basic() {
         output_schema: None,
         dependencies: Vec::new(),
         parallel: false,
-            input_processors: vec![],
-            output_processors: vec![],
-        };
+        input_processors: vec![],
+        output_processors: vec![],
+    };
 
     let mut step_b = step_a.clone();
     step_b.name = "step_b".into();
@@ -52,7 +51,7 @@ fn test_dag_topological_sort_basic() {
     let sorted = runner.topological_sort(&pipeline);
     assert!(sorted.is_ok());
     let indices = sorted.unwrap();
-    
+
     // a should come before b, b before c
     let a_pos = indices.iter().position(|&i| i == 0).unwrap();
     let b_pos = indices.iter().position(|&i| i == 1).unwrap();
@@ -80,11 +79,11 @@ fn test_dag_circular_dependency_detection() {
         tools: ToolSet::None,
         injection_protection: InjectionProtection::None,
         output_schema: None,
-        dependencies: vec!["step_c".into()],  // Circular
+        dependencies: vec!["step_c".into()], // Circular
         parallel: false,
-            input_processors: vec![],
-            output_processors: vec![],
-        };
+        input_processors: vec![],
+        output_processors: vec![],
+    };
 
     let mut step_b = step_a.clone();
     step_b.name = "step_b".into();
@@ -199,7 +198,7 @@ async fn test_hot_reload_handle_swap_pipeline() {
     };
 
     let handle = HotReloadHandle::new(pipeline1.clone());
-    
+
     // Get initial pipeline
     let current = handle.get_pipeline().await;
     assert_eq!(current.name, "pipeline_v1");
@@ -249,15 +248,15 @@ impl Plugin for TestPlugin {
 #[test]
 fn test_plugin_registry_add_plugin() {
     let mut registry = PluginRegistry::new();
-    
+
     let plugin = TestPlugin {
         start_called: Arc::new(Mutex::new(false)),
         end_called: Arc::new(Mutex::new(false)),
     };
-    
+
     let plugin_arc = Arc::new(plugin);
     registry.register(plugin_arc.clone());
-    
+
     let plugins = registry.plugins();
     assert_eq!(plugins.len(), 1);
     assert_eq!(plugins[0].name(), "test_plugin");
@@ -267,7 +266,7 @@ fn test_plugin_registry_add_plugin() {
 fn test_monitoring_server_construction() {
     let audit_log = AuditLog::new();
     let trace = PipelineTrace::new();
-    
+
     let _server = MonitoringServer::new(audit_log, trace);
     // Verify server can be created
 }
@@ -337,9 +336,9 @@ fn test_agent_step_has_dag_fields() {
         output_schema: None,
         dependencies: vec!["step_a".into()],
         parallel: true,
-            input_processors: vec![],
-            output_processors: vec![],
-        };
+        input_processors: vec![],
+        output_processors: vec![],
+    };
 
     assert_eq!(step.dependencies, vec![String::from("step_a")]);
     assert_eq!(step.parallel, true);
@@ -369,7 +368,6 @@ fn test_plugin_error_types() {
     assert!(err2.to_string().len() > 0);
 }
 
-
 #[tokio::test]
 async fn test_pipeline_execution_with_dag_support() {
     use std::sync::{Arc, Mutex};
@@ -393,9 +391,9 @@ async fn test_pipeline_execution_with_dag_support() {
         output_schema: None,
         dependencies: Vec::new(),
         parallel: false,
-            input_processors: vec![],
-            output_processors: vec![],
-        };
+        input_processors: vec![],
+        output_processors: vec![],
+    };
 
     // Create step2: depends on step1
     let order_clone2 = Arc::clone(&execution_order);
@@ -413,9 +411,9 @@ async fn test_pipeline_execution_with_dag_support() {
         output_schema: None,
         dependencies: vec!["first".into()],
         parallel: false,
-            input_processors: vec![],
-            output_processors: vec![],
-        };
+        input_processors: vec![],
+        output_processors: vec![],
+    };
 
     // Create step3: depends on both step1 and step2
     let order_clone3 = Arc::clone(&execution_order);
@@ -433,9 +431,9 @@ async fn test_pipeline_execution_with_dag_support() {
         output_schema: None,
         dependencies: vec!["first".into(), "second".into()],
         parallel: false,
-            input_processors: vec![],
-            output_processors: vec![],
-        };
+        input_processors: vec![],
+        output_processors: vec![],
+    };
 
     let pipeline = Pipeline {
         name: "dag_pipeline".into(),
@@ -450,26 +448,37 @@ async fn test_pipeline_execution_with_dag_support() {
     // Run the pipeline
     let result = runner.run(&pipeline, &agent, json!({})).await;
     assert!(result.is_ok(), "Pipeline should execute successfully");
-    
+
     let pipeline_result = result.unwrap();
     assert!(pipeline_result.success, "Pipeline should report success");
-    assert_eq!(pipeline_result.steps_passed.len(), 3, "All 3 steps should pass");
+    assert_eq!(
+        pipeline_result.steps_passed.len(),
+        3,
+        "All 3 steps should pass"
+    );
 
     // Verify execution order respects dependencies
     let order = execution_order.lock().unwrap();
     assert_eq!(order.len(), 3, "All three steps should have executed");
-    
+
     // Verify "first" ran before "second" and "third"
-    let first_idx = order.iter().position(|s| s == "first").expect("first should run");
-    let second_idx = order.iter().position(|s| s == "second").expect("second should run");
-    let third_idx = order.iter().position(|s| s == "third").expect("third should run");
-    
+    let first_idx = order
+        .iter()
+        .position(|s| s == "first")
+        .expect("first should run");
+    let second_idx = order
+        .iter()
+        .position(|s| s == "second")
+        .expect("second should run");
+    let third_idx = order
+        .iter()
+        .position(|s| s == "third")
+        .expect("third should run");
+
     assert!(first_idx < second_idx, "first should run before second");
     assert!(first_idx < third_idx, "first should run before third");
     assert!(second_idx < third_idx, "second should run before third");
 }
-
-
 
 #[test]
 fn test_prelude_exports() {
@@ -487,5 +496,3 @@ fn test_prelude_exports() {
     };
     let _handle = HotReloadHandle::new(pipeline);
 }
-
-

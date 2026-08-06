@@ -1,18 +1,23 @@
-use verdict::prelude::*;
-use verdict::eval::{ToxicityScorer, ScorerConfig, RubricItem};
-use verdict::pipeline::{ProcessorStrategy, GuardProcessor};
 use crate::config::AppConfig;
-use std::sync::Arc;
 use serde_json::json;
+use std::sync::Arc;
+use verdict::eval::{RubricItem, ScorerConfig, ToxicityScorer};
+use verdict::pipeline::{GuardProcessor, ProcessorStrategy};
+use verdict::prelude::*;
 
 /// Build the main interactive assistant agent.
 /// Single ToolUseLoop step — Claude decides whether to use tools or reply directly.
 pub fn build_assistant_agent(config: &AppConfig, agent_name: &str) -> Agent {
     let system = config.effective_system_prompt();
     let tools = vec![
-        "fs.read".to_string(), "fs.list".to_string(), "fs.write".to_string(),
-        "search.files".to_string(), "search.grep".to_string(),
-        "shell.run".to_string(), "shell.cargo_check".to_string(), "shell.cargo_test".to_string(),
+        "fs.read".to_string(),
+        "fs.list".to_string(),
+        "fs.write".to_string(),
+        "search.files".to_string(),
+        "search.grep".to_string(),
+        "shell.run".to_string(),
+        "shell.cargo_check".to_string(),
+        "shell.cargo_test".to_string(),
     ];
     Agent {
         name: agent_name.to_string(),
@@ -25,7 +30,10 @@ pub fn build_assistant_agent(config: &AppConfig, agent_name: &str) -> Agent {
                 action: StepAction::ToolUseLoop {
                     system,
                     user: "{input}".to_string(),
-                    model: ProviderSpec { model: String::new(), provider: String::new() },
+                    model: ProviderSpec {
+                        model: String::new(),
+                        provider: String::new(),
+                    },
                     tools: tools.clone(),
                     max_rounds: 10,
                     stop_condition: StopCondition::TextOnly,
@@ -45,8 +53,13 @@ pub fn build_assistant_agent(config: &AppConfig, agent_name: &str) -> Agent {
             max_retries: 1,
         },
         tools: ToolSet::Allow(tools),
-        skills: SkillSet { skills: vec!["rust_debugging".to_string(), "code_review".to_string()] },
-        policy: AgentPolicy { allow_self_update: false, ..AgentPolicy::default() },
+        skills: SkillSet {
+            skills: vec!["rust_debugging".to_string(), "code_review".to_string()],
+        },
+        policy: AgentPolicy {
+            allow_self_update: false,
+            ..AgentPolicy::default()
+        },
         scorers: Vec::new(),
     }
 }
@@ -85,8 +98,6 @@ pub fn build_improve_pipeline() -> Pipeline {
         max_retries: 1,
     }
 }
-
-
 
 /// Fallback echo agent when no LLM is configured.
 pub fn build_echo_agent(agent_name: &str) -> Agent {
@@ -135,7 +146,8 @@ pub fn build_memory_agent(config: &AppConfig, agent_name: &str) -> Agent {
                 name: "understand".to_string(),
                 guard_in: Guard::None,
                 action: StepAction::LlmCall {
-                    system: "You are an intent parser. Extract the user's core request.".to_string(),
+                    system: "You are an intent parser. Extract the user's core request."
+                        .to_string(),
                     user: "Task: {input}".to_string(),
                     model: None,
                     conversation_id: None,
@@ -157,27 +169,42 @@ pub fn build_memory_agent(config: &AppConfig, agent_name: &str) -> Agent {
                 action: StepAction::ToolUseLoop {
                     system,
                     user: "Task: {understand}\n\nOriginal request: {input}".to_string(),
-                    model: ProviderSpec { model: String::new(), provider: String::new() },
-                    tools: vec!["fs.read".to_string(), "fs.list".to_string(), "fs.write".to_string()],
+                    model: ProviderSpec {
+                        model: String::new(),
+                        provider: String::new(),
+                    },
+                    tools: vec![
+                        "fs.read".to_string(),
+                        "fs.list".to_string(),
+                        "fs.write".to_string(),
+                    ],
                     max_rounds: 8,
                     stop_condition: StopCondition::TextOnly,
                 },
                 guard_out: Guard::NonEmptyOutput,
                 verdict: Verdict::Automated(Guard::NonEmptyOutput),
-                tools: ToolSet::Allow(vec!["fs.read".to_string(), "fs.list".to_string(), "fs.write".to_string()]),
+                tools: ToolSet::Allow(vec![
+                    "fs.read".to_string(),
+                    "fs.list".to_string(),
+                    "fs.write".to_string(),
+                ]),
                 injection_protection: InjectionProtection::Strict,
                 output_schema: None,
                 dependencies: vec![],
                 parallel: false,
                 input_processors: vec![],
-                output_processors: vec![
-                    GuardProcessor::new("empty_check", Guard::NonEmptyOutput)
-                        .with_strategy(ProcessorStrategy::Warn),
-                ],
+                output_processors: vec![GuardProcessor::new("empty_check", Guard::NonEmptyOutput)
+                    .with_strategy(ProcessorStrategy::Warn)],
             })
             .build(),
-        tools: ToolSet::Allow(vec!["fs.read".to_string(), "fs.list".to_string(), "fs.write".to_string()]),
-        skills: SkillSet { skills: vec!["rust_debugging".to_string()] },
+        tools: ToolSet::Allow(vec![
+            "fs.read".to_string(),
+            "fs.list".to_string(),
+            "fs.write".to_string(),
+        ]),
+        skills: SkillSet {
+            skills: vec!["rust_debugging".to_string()],
+        },
         policy: AgentPolicy::default(),
         scorers: vec![ScorerConfig {
             scorer: Arc::new(ToxicityScorer::new()),
@@ -227,8 +254,11 @@ pub fn build_multi_agent_pipeline(_primary_name: &str, helper_name: &str) -> Pip
             name: "summarize_result".to_string(),
             guard_in: Guard::StepPassed("delegate_to_helper".to_string()),
             action: StepAction::Custom(Arc::new(|ctx| {
-                let out = ctx.step_results.get("delegate_to_helper")
-                    .map(|r| r.output.raw.clone()).unwrap_or_default();
+                let out = ctx
+                    .step_results
+                    .get("delegate_to_helper")
+                    .map(|r| r.output.raw.clone())
+                    .unwrap_or_default();
                 Ok(StepOutput::new(format!("Summary:\n{}", out)))
             })),
             guard_out: Guard::NonEmptyOutput,
@@ -254,11 +284,19 @@ pub fn build_eval_pipeline() -> Pipeline {
             guard_in: Guard::None,
             action: StepAction::RubricLoop {
                 body: Box::new(StepAction::Custom(Arc::new(|_ctx| {
-                    Ok(StepOutput::new("This is a well-structured response.".to_string()))
+                    Ok(StepOutput::new(
+                        "This is a well-structured response.".to_string(),
+                    ))
                 }))),
                 rubric: vec![
-                    RubricItem { criterion: "Response is complete".to_string(), required: true },
-                    RubricItem { criterion: "Response is accurate".to_string(), required: true },
+                    RubricItem {
+                        criterion: "Response is complete".to_string(),
+                        required: true,
+                    },
+                    RubricItem {
+                        criterion: "Response is accurate".to_string(),
+                        required: true,
+                    },
                 ],
                 max_iterations: 3,
                 judge_model: None,

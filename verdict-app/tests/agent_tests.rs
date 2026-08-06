@@ -1,12 +1,12 @@
-use verdict::prelude::*;
-use verdict_app::agent::{
-    build_assistant_agent, build_improve_pipeline, build_echo_agent,
-    build_memory_agent, build_multi_agent_pipeline, build_eval_pipeline,
-};
-use verdict_app::memory;
-use verdict_app::config::AppConfig;
 use serde_json::json;
 use std::sync::Arc;
+use verdict::prelude::*;
+use verdict_app::agent::{
+    build_assistant_agent, build_echo_agent, build_eval_pipeline, build_improve_pipeline,
+    build_memory_agent, build_multi_agent_pipeline,
+};
+use verdict_app::config::AppConfig;
+use verdict_app::memory;
 
 // ============================================================================
 // ASSISTANT AGENT TESTS
@@ -40,7 +40,10 @@ fn test_understand_step_uses_llm_call() {
     // Check guards using pattern matching
     assert!(matches!(step.guard_in, Guard::None));
     assert!(matches!(step.tools, ToolSet::None));
-    assert!(matches!(step.injection_protection, InjectionProtection::Strict));
+    assert!(matches!(
+        step.injection_protection,
+        InjectionProtection::Strict
+    ));
 }
 
 #[test]
@@ -78,9 +81,7 @@ fn test_act_step_uses_tool_use_loop() {
     // Check guard_out is AllOf with NoSecretsInOutput
     match &step.guard_out {
         Guard::AllOf(guards) => {
-            let has_secrets_check = guards.iter().any(|g| {
-                matches!(g, Guard::NoSecretsInOutput)
-            });
+            let has_secrets_check = guards.iter().any(|g| matches!(g, Guard::NoSecretsInOutput));
             assert!(has_secrets_check, "Expected NoSecretsInOutput in AllOf");
         }
         _ => panic!("Expected AllOf guard_out"),
@@ -96,9 +97,7 @@ fn test_act_step_guard_out_checks_secrets() {
     // Verify guard_out contains NoSecretsInOutput
     match &step.guard_out {
         Guard::AllOf(guards) => {
-            let has_no_secrets = guards.iter().any(|g| {
-                matches!(g, Guard::NoSecretsInOutput)
-            });
+            let has_no_secrets = guards.iter().any(|g| matches!(g, Guard::NoSecretsInOutput));
             assert!(has_no_secrets, "Expected NoSecretsInOutput in guard_out");
         }
         _ => panic!("Expected AllOf guard_out"),
@@ -253,10 +252,7 @@ async fn test_echo_agent_custom_action_echoes_input() {
     let registry = AgentRegistry::new();
     let tool_registry = ToolRegistry::with_builtins();
 
-    let mut runner = PipelineRunner::with_registries(
-        Arc::new(tool_registry),
-        Arc::new(registry),
-    );
+    let mut runner = PipelineRunner::with_registries(Arc::new(tool_registry), Arc::new(registry));
 
     let input = json!("hello world");
     let result = runner
@@ -295,20 +291,14 @@ fn test_assistant_pipeline_failure_mode_is_abort() {
     let config = AppConfig::default();
     let agent = build_assistant_agent(&config, "test");
 
-    assert!(matches!(
-        agent.pipeline.on_failure,
-        FailureMode::Abort
-    ));
+    assert!(matches!(agent.pipeline.on_failure, FailureMode::Abort));
 }
 
 #[test]
 fn test_improve_pipeline_failure_mode_is_abort() {
     let pipeline = build_improve_pipeline();
 
-    assert!(matches!(
-        pipeline.on_failure,
-        FailureMode::Abort
-    ));
+    assert!(matches!(pipeline.on_failure, FailureMode::Abort));
 }
 
 #[test]
@@ -353,72 +343,74 @@ fn test_improve_pipeline_no_parallel_steps() {
     let pipeline = build_improve_pipeline();
 
     for step in &pipeline.steps {
+        // ============================================================================
+        // NEW PHASE A-F TESTS
+        // ============================================================================
 
-// ============================================================================
-// NEW PHASE A-F TESTS
-// ============================================================================
+        #[test]
+        fn test_build_memory_agent_uses_pipeline_builder() {
+            let config = AppConfig::default();
+            let agent = build_memory_agent(&config, "memory_agent");
 
-#[test]
-fn test_build_memory_agent_uses_pipeline_builder() {
-    let config = AppConfig::default();
-    let agent = build_memory_agent(&config, "memory_agent");
-
-    assert_eq!(agent.name, "memory_agent");
-    assert_eq!(agent.pipeline.name, "memory-pipeline");
-    assert_eq!(agent.pipeline.steps.len(), 2);
-    assert!(agent.scorers.len() >= 1, "Memory agent should have at least 1 scorer");
-}
-
-#[test]
-fn test_memory_agent_has_guard_processors() {
-    let config = AppConfig::default();
-    let agent = build_memory_agent(&config, "memory_agent");
-
-    let act_step = &agent.pipeline.steps[1];
-    assert_eq!(act_step.name, "act");
-    assert!(
-        act_step.output_processors.len() >= 1,
-        "Act step should have at least 1 output processor"
-    );
-}
-
-#[test]
-fn test_multi_agent_pipeline_has_two_steps() {
-    let pipeline = build_multi_agent_pipeline("primary", "helper");
-
-    assert_eq!(pipeline.name, "multi-agent-pipeline");
-    assert_eq!(pipeline.steps.len(), 2);
-    assert_eq!(pipeline.steps[0].name, "delegate_to_helper");
-    assert_eq!(pipeline.steps[1].name, "summarize_result");
-}
-
-#[test]
-fn test_eval_pipeline_uses_rubric_loop() {
-    let pipeline = build_eval_pipeline();
-
-    assert_eq!(pipeline.name, "eval-pipeline");
-    assert_eq!(pipeline.steps.len(), 1);
-    assert_eq!(pipeline.steps[0].name, "evaluate_with_rubric");
-
-    match &pipeline.steps[0].action {
-        StepAction::RubricLoop {
-            rubric,
-            max_iterations,
-            ..
-        } => {
-            assert_eq!(rubric.len(), 2);
-            assert_eq!(*max_iterations, 3);
+            assert_eq!(agent.name, "memory_agent");
+            assert_eq!(agent.pipeline.name, "memory-pipeline");
+            assert_eq!(agent.pipeline.steps.len(), 2);
+            assert!(
+                agent.scorers.len() >= 1,
+                "Memory agent should have at least 1 scorer"
+            );
         }
-        _ => panic!("Expected RubricLoop action"),
-    }
-}
 
-#[test]
-fn test_memory_store_is_arc_memory_store() {
-    let store = memory::build_memory_store();
-    // Just verify it's not null and is an Arc
-    assert!(Arc::strong_count(&store) >= 1);
-}
+        #[test]
+        fn test_memory_agent_has_guard_processors() {
+            let config = AppConfig::default();
+            let agent = build_memory_agent(&config, "memory_agent");
+
+            let act_step = &agent.pipeline.steps[1];
+            assert_eq!(act_step.name, "act");
+            assert!(
+                act_step.output_processors.len() >= 1,
+                "Act step should have at least 1 output processor"
+            );
+        }
+
+        #[test]
+        fn test_multi_agent_pipeline_has_two_steps() {
+            let pipeline = build_multi_agent_pipeline("primary", "helper");
+
+            assert_eq!(pipeline.name, "multi-agent-pipeline");
+            assert_eq!(pipeline.steps.len(), 2);
+            assert_eq!(pipeline.steps[0].name, "delegate_to_helper");
+            assert_eq!(pipeline.steps[1].name, "summarize_result");
+        }
+
+        #[test]
+        fn test_eval_pipeline_uses_rubric_loop() {
+            let pipeline = build_eval_pipeline();
+
+            assert_eq!(pipeline.name, "eval-pipeline");
+            assert_eq!(pipeline.steps.len(), 1);
+            assert_eq!(pipeline.steps[0].name, "evaluate_with_rubric");
+
+            match &pipeline.steps[0].action {
+                StepAction::RubricLoop {
+                    rubric,
+                    max_iterations,
+                    ..
+                } => {
+                    assert_eq!(rubric.len(), 2);
+                    assert_eq!(*max_iterations, 3);
+                }
+                _ => panic!("Expected RubricLoop action"),
+            }
+        }
+
+        #[test]
+        fn test_memory_store_is_arc_memory_store() {
+            let store = memory::build_memory_store();
+            // Just verify it's not null and is an Arc
+            assert!(Arc::strong_count(&store) >= 1);
+        }
 
         assert!(!step.parallel);
     }

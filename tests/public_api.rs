@@ -1,8 +1,7 @@
+use serde_json::json;
 /// Tests that exercise public API functions to prevent dead-code score degradation.
 /// These test that the public API surface is accessible and callable.
-
 use verdict::prelude::*;
-use serde_json::json;
 
 #[test]
 fn test_llm_client_from_env_signature_exists() {
@@ -187,9 +186,7 @@ fn test_audit_log_append() {
 
 #[test]
 fn test_pipeline_trace_new() {
-    let trace = verdict::context::PipelineTrace {
-        entries: vec![],
-    };
+    let trace = verdict::context::PipelineTrace { entries: vec![] };
     assert_eq!(trace.entries.len(), 0);
 }
 
@@ -202,10 +199,7 @@ fn test_step_output_new() {
 
 #[test]
 fn test_step_output_with_parsed() {
-    let output = StepOutput::with_parsed(
-        "test".into(),
-        json!({"key": "value"}),
-    );
+    let output = StepOutput::with_parsed("test".into(), json!({"key": "value"}));
     assert_eq!(output.raw, "test");
     assert!(output.parsed.is_some());
 }

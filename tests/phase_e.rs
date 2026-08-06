@@ -1,5 +1,5 @@
-use verdict::prelude::*;
 use std::sync::Arc;
+use verdict::prelude::*;
 
 // Phase E: Observability & Deployment Integration Tests
 // This validates the monitoring server enhancements and registry extensions
@@ -14,8 +14,7 @@ fn test_monitoring_server_with_agent_registry() {
     let trace = PipelineTrace::new();
     let agent_registry = Arc::new(AgentRegistry::new());
 
-    let _server = MonitoringServer::new(audit_log, trace)
-        .with_agent_registry(agent_registry);
+    let _server = MonitoringServer::new(audit_log, trace).with_agent_registry(agent_registry);
 
     // Verify we can construct monitoring server with agent registry
     assert!(true);
@@ -23,17 +22,17 @@ fn test_monitoring_server_with_agent_registry() {
 
 #[test]
 fn test_monitoring_server_with_conversation_registry() {
+    use std::sync::Mutex;
     use verdict::audit::{AuditLog, MonitoringServer};
     use verdict::context::PipelineTrace;
     use verdict::llm::ConversationRegistry;
-    use std::sync::Mutex;
 
     let audit_log = AuditLog::new();
     let trace = PipelineTrace::new();
     let conversation_registry = Arc::new(Mutex::new(ConversationRegistry::new()));
 
-    let _server = MonitoringServer::new(audit_log, trace)
-        .with_conversation_registry(conversation_registry);
+    let _server =
+        MonitoringServer::new(audit_log, trace).with_conversation_registry(conversation_registry);
 
     // Verify we can construct monitoring server with conversation registry
     assert!(true);
@@ -41,11 +40,11 @@ fn test_monitoring_server_with_conversation_registry() {
 
 #[test]
 fn test_agent_registry_list_agents() {
-    use verdict::registry::AgentRegistry;
     use verdict::agent::Agent;
+    use verdict::registry::AgentRegistry;
 
     let mut registry = AgentRegistry::new();
-    
+
     let agent = Agent {
         name: "test_agent".to_string(),
         description: "A test agent".to_string(),
@@ -56,9 +55,7 @@ fn test_agent_registry_list_agents() {
             max_retries: 0,
         },
         tools: ToolSet::ReadOnly,
-        skills: SkillSet {
-            skills: vec![],
-        },
+        skills: SkillSet { skills: vec![] },
         policy: AgentPolicy::default(),
         scorers: vec![],
     };
@@ -92,11 +89,11 @@ fn test_pipeline_trace_creation() {
 
 #[test]
 fn test_agent_registry_multiple_agents() {
-    use verdict::registry::AgentRegistry;
     use verdict::agent::Agent;
+    use verdict::registry::AgentRegistry;
 
     let mut registry = AgentRegistry::new();
-    
+
     for i in 0..3 {
         let agent = Agent {
             name: format!("agent{}", i),
@@ -108,15 +105,13 @@ fn test_agent_registry_multiple_agents() {
                 max_retries: 0,
             },
             tools: ToolSet::ReadOnly,
-            skills: SkillSet {
-                skills: vec![],
-            },
+            skills: SkillSet { skills: vec![] },
             policy: AgentPolicy::default(),
             scorers: vec![],
         };
         registry.register(agent);
     }
-    
+
     let agents = registry.list_agents();
     assert_eq!(agents.len(), 3);
 }
@@ -126,7 +121,7 @@ fn test_conversation_registry_multiple_conversations() {
     use verdict::llm::ConversationRegistry;
 
     let mut registry = ConversationRegistry::new();
-    
+
     for i in 0..5 {
         registry.get_or_create(&format!("conv-{}", i));
     }
@@ -144,7 +139,7 @@ fn test_monitoring_server_construction() {
     let trace = PipelineTrace::new();
 
     let _server = MonitoringServer::new(audit_log, trace);
-    
+
     // Verify basic construction works
     assert!(true);
 }

@@ -1,6 +1,6 @@
-use serde_json::Value;
-use crate::context::StepContext;
 use super::GuardError;
+use crate::context::StepContext;
+use serde_json::Value;
 
 pub fn check_reflection_has_actionable_finding(
     _guard: &super::Guard,
@@ -29,8 +29,9 @@ pub fn check_reflection_has_actionable_finding(
             }
             return Err(GuardError::Failed {
                 guard: "ReflectionHasActionableFinding".into(),
-                reason: "findings array present but no entry has both description and proposed_action"
-                    .into(),
+                reason:
+                    "findings array present but no entry has both description and proposed_action"
+                        .into(),
             });
         }
     }

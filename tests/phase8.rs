@@ -1,8 +1,8 @@
 //! Phase 8 — Self-Improvement Tests
 //! Comprehensive test suite for evaluation suites and self-update system
 
-use verdict::prelude::*;
 use serde_json::json;
+use verdict::prelude::*;
 
 // ============================================================================
 // EvaluationSuite Tests
@@ -211,7 +211,8 @@ fn test_self_update_validate_proposal_forbidden_path() {
 #[test]
 fn test_self_update_validate_proposal_valid_diff() {
     let proposal = SelfUpdateProposal {
-        patch: "--- a/src/agents/test.rs\n+++ b/src/agents/test.rs\n@@ -1,1 +1,2 @@\n content".to_string(),
+        patch: "--- a/src/agents/test.rs\n+++ b/src/agents/test.rs\n@@ -1,1 +1,2 @@\n content"
+            .to_string(),
         summary: "test".to_string(),
         risk_level: RiskLevel::Low,
     };
@@ -234,7 +235,6 @@ fn test_self_update_validate_proposal_valid_with_three_plus_markers() {
     assert!(result.is_ok());
 }
 
-
 #[tokio::test]
 async fn test_self_update_apply_in_sandbox_writes_patch() {
     // Check if git is available before running this test
@@ -256,7 +256,8 @@ async fn test_self_update_apply_in_sandbox_writes_patch() {
     std::fs::write(&test_file, "original content\n").unwrap();
 
     // Create a simple patch that adds a line
-    let patch = "--- a/test.txt\n+++ b/test.txt\n@@ -1 +1,2 @@\n original content\n+patched content\n";
+    let patch =
+        "--- a/test.txt\n+++ b/test.txt\n@@ -1 +1,2 @@\n original content\n+patched content\n";
     let workspace_root = temp_dir.clone();
 
     let result = SelfUpdateEngine::apply_in_sandbox(patch, &temp_dir, &workspace_root).await;
@@ -271,18 +272,22 @@ async fn test_self_update_apply_in_sandbox_writes_patch() {
         Err(SelfUpdateError::PatchApplyFailed(_)) => {
             // git apply was available but patch format was invalid
             // This is acceptable for the test environment
-            assert!(true, "apply_in_sandbox returned PatchApplyFailed as expected");
+            assert!(
+                true,
+                "apply_in_sandbox returned PatchApplyFailed as expected"
+            );
         }
         Err(e) => {
             // For other errors, log but don't fail - environment may not have git properly set up
-            println!("apply_in_sandbox returned error (acceptable in test environment): {:?}", e);
+            println!(
+                "apply_in_sandbox returned error (acceptable in test environment): {:?}",
+                e
+            );
         }
     }
 
     let _ = std::fs::remove_dir_all(&temp_dir);
 }
-
-
 
 #[test]
 fn test_self_update_version_agent_creates_version() {
@@ -296,12 +301,9 @@ fn test_self_update_version_agent_creates_version() {
             max_retries: 0,
         },
         tools: ToolSet::ReadOnly,
-        skills: SkillSet {
-            skills: vec![],
-        },
+        skills: SkillSet { skills: vec![] },
         policy: AgentPolicy::default(),
         scorers: Vec::new(),
-
     };
 
     let version = SelfUpdateEngine::version_agent(&agent, "improved performance", Some(0.95));
@@ -327,7 +329,6 @@ fn test_self_update_version_agent_name_matches() {
         skills: SkillSet { skills: vec![] },
         policy: AgentPolicy::default(),
         scorers: Vec::new(),
-
     };
 
     let version = SelfUpdateEngine::version_agent(&agent, "test", None);
@@ -346,16 +347,12 @@ fn test_self_update_version_agent_has_eval_score() {
             max_retries: 0,
         },
         tools: ToolSet::ReadOnly,
-        skills: SkillSet {
-            skills: vec![],
-        },
+        skills: SkillSet { skills: vec![] },
         policy: AgentPolicy::default(),
         scorers: Vec::new(),
-
     };
 
-    let version_with_score =
-        SelfUpdateEngine::version_agent(&agent, "improved", Some(0.85));
+    let version_with_score = SelfUpdateEngine::version_agent(&agent, "improved", Some(0.85));
     let version_without_score = SelfUpdateEngine::version_agent(&agent, "improved", None);
 
     assert_eq!(version_with_score.evaluation_score, Some(0.85));
@@ -419,7 +416,7 @@ fn test_agent_version_with_eval_score() {
 
 #[tokio::test]
 async fn test_guard_evaluation_improves_or_equal_passes_with_score() {
-    use verdict::guards::{GuardEngine, Guard};
+    use verdict::guards::{Guard, GuardEngine};
 
     let mut ctx = StepContext::new(
         "test".to_string(),
@@ -437,7 +434,7 @@ async fn test_guard_evaluation_improves_or_equal_passes_with_score() {
 
 #[tokio::test]
 async fn test_guard_evaluation_improves_or_equal_passes_no_output() {
-    use verdict::guards::{GuardEngine, Guard};
+    use verdict::guards::{Guard, GuardEngine};
 
     let ctx = StepContext::new(
         "test".to_string(),
@@ -453,7 +450,7 @@ async fn test_guard_evaluation_improves_or_equal_passes_no_output() {
 
 #[tokio::test]
 async fn test_guard_agent_version_created_passes_with_version() {
-    use verdict::guards::{GuardEngine, Guard};
+    use verdict::guards::{Guard, GuardEngine};
 
     let mut ctx = StepContext::new(
         "test".to_string(),
@@ -463,7 +460,9 @@ async fn test_guard_agent_version_created_passes_with_version() {
         FilesystemPolicy::default(),
     );
 
-    ctx.output = Some(StepOutput::new(r#"{"version": "20240101120000", "agent_name": "test"}"#.to_string()));
+    ctx.output = Some(StepOutput::new(
+        r#"{"version": "20240101120000", "agent_name": "test"}"#.to_string(),
+    ));
 
     let result = GuardEngine::evaluate(&Guard::AgentVersionCreated, &ctx).await;
     assert!(result.is_ok());
@@ -471,7 +470,7 @@ async fn test_guard_agent_version_created_passes_with_version() {
 
 #[tokio::test]
 async fn test_guard_agent_version_created_passes_no_output() {
-    use verdict::guards::{GuardEngine, Guard};
+    use verdict::guards::{Guard, GuardEngine};
 
     let ctx = StepContext::new(
         "test".to_string(),
@@ -487,7 +486,7 @@ async fn test_guard_agent_version_created_passes_no_output() {
 
 #[tokio::test]
 async fn test_guard_patch_applies_cleanly_passes() {
-    use verdict::guards::{GuardEngine, Guard};
+    use verdict::guards::{Guard, GuardEngine};
 
     let mut ctx = StepContext::new(
         "test".to_string(),
@@ -507,7 +506,7 @@ async fn test_guard_patch_applies_cleanly_passes() {
 
 #[tokio::test]
 async fn test_guard_patch_applies_cleanly_fails_on_non_diff() {
-    use verdict::guards::{GuardEngine, Guard};
+    use verdict::guards::{Guard, GuardEngine};
 
     let mut ctx = StepContext::new(
         "test".to_string(),
@@ -517,9 +516,7 @@ async fn test_guard_patch_applies_cleanly_fails_on_non_diff() {
         FilesystemPolicy::default(),
     );
 
-    ctx.output = Some(StepOutput::new(
-        "this is not a diff".to_string(),
-    ));
+    ctx.output = Some(StepOutput::new("this is not a diff".to_string()));
 
     let result = GuardEngine::evaluate(&Guard::PatchAppliesCleanly, &ctx).await;
     assert!(result.is_err());
@@ -527,7 +524,7 @@ async fn test_guard_patch_applies_cleanly_fails_on_non_diff() {
 
 #[tokio::test]
 async fn test_guard_reflection_has_finding_passes() {
-    use verdict::guards::{GuardEngine, Guard};
+    use verdict::guards::{Guard, GuardEngine};
 
     let mut ctx = StepContext::new(
         "test".to_string(),
@@ -547,7 +544,7 @@ async fn test_guard_reflection_has_finding_passes() {
 
 #[tokio::test]
 async fn test_guard_reflection_has_finding_fails() {
-    use verdict::guards::{GuardEngine, Guard};
+    use verdict::guards::{Guard, GuardEngine};
 
     let mut ctx = StepContext::new(
         "test".to_string(),
@@ -557,9 +554,7 @@ async fn test_guard_reflection_has_finding_fails() {
         FilesystemPolicy::default(),
     );
 
-    ctx.output = Some(StepOutput::new(
-        "The agent is already optimal".to_string(),
-    ));
+    ctx.output = Some(StepOutput::new("The agent is already optimal".to_string()));
 
     let result = GuardEngine::evaluate(&Guard::ReflectionHasActionableFinding, &ctx).await;
     assert!(result.is_err());

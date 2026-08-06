@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use crate::action::{StepAction, StepOutput};
 use crate::guards::Guard;
-use crate::verdict::Verdict;
 use crate::toolset::ToolSet;
+use crate::verdict::Verdict;
 
 /// Injection protection strategy for a step
 #[derive(Debug, Clone)]
@@ -92,7 +92,6 @@ impl std::fmt::Debug for GuardProcessor {
             .finish()
     }
 }
-
 
 /// How to handle step failure
 #[derive(Debug, Clone)]
@@ -568,4 +567,3 @@ impl AgentStep {
         AgentStepBuilder::new(name, action)
     }
 }
-

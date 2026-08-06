@@ -7,8 +7,6 @@ use serde::{Deserialize, Serialize};
 use std::pin::Pin;
 use thiserror::Error;
 
-
-
 /// Role of a message in a conversation
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ChatRole {
@@ -33,19 +31,38 @@ pub struct ChatMessage {
 
 impl ChatMessage {
     pub fn user(content: String) -> Self {
-        Self { role: ChatRole::User, content, tool_calls_json: None, tool_call_id: None }
+        Self {
+            role: ChatRole::User,
+            content,
+            tool_calls_json: None,
+            tool_call_id: None,
+        }
     }
     pub fn assistant(content: String) -> Self {
-        Self { role: ChatRole::Assistant, content, tool_calls_json: None, tool_call_id: None }
+        Self {
+            role: ChatRole::Assistant,
+            content,
+            tool_calls_json: None,
+            tool_call_id: None,
+        }
     }
     pub fn assistant_with_tool_calls(content: String, tool_calls: serde_json::Value) -> Self {
-        Self { role: ChatRole::Assistant, content, tool_calls_json: Some(tool_calls), tool_call_id: None }
+        Self {
+            role: ChatRole::Assistant,
+            content,
+            tool_calls_json: Some(tool_calls),
+            tool_call_id: None,
+        }
     }
     pub fn tool_result(tool_call_id: String, content: String) -> Self {
-        Self { role: ChatRole::Tool, content, tool_calls_json: None, tool_call_id: Some(tool_call_id) }
+        Self {
+            role: ChatRole::Tool,
+            content,
+            tool_calls_json: None,
+            tool_call_id: Some(tool_call_id),
+        }
     }
 }
-
 
 /// Conversation history for multi-turn LLM interactions
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -63,7 +80,12 @@ impl MessageHistory {
     /// Append a message to the history
     /// Append a message to the history
     pub fn push(&mut self, role: ChatRole, content: String) {
-        self.messages.push(ChatMessage { role, content, tool_calls_json: None, tool_call_id: None });
+        self.messages.push(ChatMessage {
+            role,
+            content,
+            tool_calls_json: None,
+            tool_call_id: None,
+        });
     }
 
     /// Returns true if the history has no messages
@@ -160,7 +182,6 @@ pub struct LlmRequest {
     /// Optional tool_choice override. "auto" (default when tools provided), "required" (force tool use), or "none".
     #[serde(default)]
     pub tool_choice: Option<String>,
-
 }
 
 /// A tool call extracted from LLM response
@@ -168,7 +189,7 @@ pub struct LlmRequest {
 pub struct ToolCall {
     pub name: String,
     pub arguments: serde_json::Value,
-    pub id: Option<String>,  // Tool call ID from LLM response
+    pub id: Option<String>, // Tool call ID from LLM response
 }
 
 /// Response from an LLM provider.
@@ -207,9 +228,7 @@ pub enum LlmError {
 
     #[error("LLM not configured — set OPENAI_API_KEY or add api_key to ~/.config/verdict-app/config.toml")]
     NotConfigured,
-
 }
-
 
 /// Trait for LLM providers.
 #[async_trait]
@@ -287,8 +306,6 @@ struct SseStreamChunk {
     choices: Vec<SseStreamChoice>,
 }
 
-
-
 #[derive(Debug, Deserialize)]
 struct OpenAiMessage {
     #[serde(default)]
@@ -325,7 +342,6 @@ impl LlmProvider for OpenAiCompatibleProvider {
         &self.default_model
     }
 
-
     async fn complete(&self, req: LlmRequest) -> Result<LlmResponse, LlmError> {
         // Build the messages array: system first, then history, then new user turn
         let mut messages = vec![serde_json::json!({"role": "system", "content": req.system})];
@@ -337,7 +353,7 @@ impl LlmProvider for OpenAiCompatibleProvider {
                     ChatRole::Assistant => "assistant",
                     ChatRole::Tool => "tool",
                 };
-                
+
                 if let Some(tool_calls) = &msg.tool_calls_json {
                     // Assistant message that made tool calls
                     messages.push(serde_json::json!({
@@ -362,7 +378,6 @@ impl LlmProvider for OpenAiCompatibleProvider {
         if !req.user.is_empty() {
             messages.push(serde_json::json!({"role": "user", "content": req.user}));
         }
-
 
         // Use default model if req.model is empty
         let model = if req.model.is_empty() {
@@ -403,24 +418,32 @@ impl LlmProvider for OpenAiCompatibleProvider {
                 .collect();
             if !tools_json.is_empty() {
                 body["tools"] = serde_json::json!(tools_json);
-                let choice = req.tool_choice.as_deref().unwrap_or("auto");
-                body["tool_choice"] = serde_json::json!(choice);
-
+                // Convert OpenAI tool_choice format to Anthropic format
+                let choice_value = match req.tool_choice.as_deref() {
+                    Some("required") => serde_json::json!({"type": "any"}),
+                    Some("none") => serde_json::json!({"type": "none"}),
+                    _ => serde_json::json!({"type": "auto"}),
+                };
+                body["tool_choice"] = choice_value;
             }
         }
 
         // Debug: log whether tools are included in request
-        eprintln!("[llm-req] model={} tools_count={} tool_choice={}", 
+        eprintln!(
+            "[llm-req] model={} tools_count={} tool_choice={}",
             model,
-            body.get("tools").and_then(|t| t.as_array()).map(|a| a.len()).unwrap_or(0),
-            body.get("tool_choice").map(|v| v.to_string()).unwrap_or_else(|| "none".into()));
-
+            body.get("tools")
+                .and_then(|t| t.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0),
+            body.get("tool_choice")
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "none".into())
+        );
 
         // Construct the URL — strip any trailing /v1 from base_url to avoid double-path
         let base = self.base_url.trim_end_matches('/').trim_end_matches("/v1");
         let url = format!("{}/v1/chat/completions", base);
-
-
 
         // Make the HTTP request
         let response = self
@@ -447,7 +470,9 @@ impl LlmProvider for OpenAiCompatibleProvider {
                 .text()
                 .await
                 .unwrap_or_else(|_| String::from("(could not read response body)"));
-            if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+            if status == reqwest::StatusCode::UNAUTHORIZED
+                || status == reqwest::StatusCode::FORBIDDEN
+            {
                 return Err(LlmError::AuthFailed);
             }
             if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
@@ -460,23 +485,33 @@ impl LlmProvider for OpenAiCompatibleProvider {
             )));
         }
 
-
         // Read raw body so we can deserialize
-        let raw_body = response.text().await
+        let raw_body = response
+            .text()
+            .await
             .map_err(|e| LlmError::InvalidResponse(e.to_string()))?;
 
         // Debug: log first 300 chars of raw response to see if tool_calls are present
-        let preview_end = raw_body.char_indices().nth(300).map(|(i,_)| i).unwrap_or(raw_body.len());
-        eprintln!("[llm-raw] status={} has_tool_calls={} body_preview={}", 
+        let preview_end = raw_body
+            .char_indices()
+            .nth(300)
+            .map(|(i, _)| i)
+            .unwrap_or(raw_body.len());
+        eprintln!(
+            "[llm-raw] status={} has_tool_calls={} body_preview={}",
             status,
             raw_body.contains("\"tool_calls\""),
-            &raw_body[..preview_end]);
+            &raw_body[..preview_end]
+        );
 
         // Deserialize the response
-        let api_response: OpenAiResponse = serde_json::from_str(&raw_body)
-            .map_err(|e| LlmError::InvalidResponse(format!("{}: body={}", e, &raw_body[..raw_body.len().min(500)])))?;
-
-
+        let api_response: OpenAiResponse = serde_json::from_str(&raw_body).map_err(|e| {
+            LlmError::InvalidResponse(format!(
+                "{}: body={}",
+                e,
+                &raw_body[..raw_body.len().min(500)]
+            ))
+        })?;
 
         // Extract first choice
         let first_choice = api_response
@@ -504,7 +539,6 @@ impl LlmProvider for OpenAiCompatibleProvider {
                             name: tc.function.name,
                             arguments,
                             id: tc.id.clone(),
-
                         })
                     })
                     .collect::<Vec<_>>()
@@ -524,7 +558,6 @@ impl LlmProvider for OpenAiCompatibleProvider {
             tool_calls,
         })
     }
-
 
     fn stream(
         &self,
@@ -552,7 +585,7 @@ impl LlmProvider for OpenAiCompatibleProvider {
                     ChatRole::Assistant => "assistant",
                     ChatRole::Tool => "tool",
                 };
-                
+
                 if let Some(tool_calls) = &msg.tool_calls_json {
                     // Assistant message that made tool calls
                     messages.push(serde_json::json!({
@@ -586,8 +619,10 @@ impl LlmProvider for OpenAiCompatibleProvider {
             body["temperature"] = serde_json::json!(t);
         }
 
-
-        let base = base_url.trim_end_matches('/').trim_end_matches("/v1").to_string();
+        let base = base_url
+            .trim_end_matches('/')
+            .trim_end_matches("/v1")
+            .to_string();
         let url = format!("{}/v1/chat/completions", base);
 
         // Real SSE streaming with incremental byte processing
@@ -604,9 +639,13 @@ impl LlmProvider for OpenAiCompatibleProvider {
 
                 let status = resp.status();
                 if !status.is_success() {
-                    let body_text = resp.text().await
+                    let body_text = resp
+                        .text()
+                        .await
                         .unwrap_or_else(|_| String::from("(could not read response body)"));
-                    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+                    if status == reqwest::StatusCode::UNAUTHORIZED
+                        || status == reqwest::StatusCode::FORBIDDEN
+                    {
                         return Err(LlmError::AuthFailed);
                     }
                     return Err(LlmError::RequestFailed(format!(
@@ -614,9 +653,10 @@ impl LlmProvider for OpenAiCompatibleProvider {
                     )));
                 }
 
-
                 // Get the full text response (unfortunate but necessary for now without proper SSE lib)
-                let full_text = resp.text().await
+                let full_text = resp
+                    .text()
+                    .await
                     .map_err(|e| LlmError::NetworkError(e.to_string()))?;
                 Ok(full_text)
             })
@@ -636,7 +676,9 @@ impl LlmProvider for OpenAiCompatibleProvider {
                                     // Find next newline
                                     if let Some(newline_pos) = response[pos..].find('\n') {
                                         let line_end = pos + newline_pos;
-                                        let line = response[pos..line_end].trim_end_matches('\r').to_string();
+                                        let line = response[pos..line_end]
+                                            .trim_end_matches('\r')
+                                            .to_string();
                                         pos = line_end + 1;
 
                                         if line == "data: [DONE]" {
@@ -644,14 +686,18 @@ impl LlmProvider for OpenAiCompatibleProvider {
                                         }
 
                                         if let Some(data) = line.strip_prefix("data: ") {
-                                            if let Ok(json) = serde_json::from_str::<serde_json::Value>(data) {
+                                            if let Ok(json) =
+                                                serde_json::from_str::<serde_json::Value>(data)
+                                            {
                                                 if let Some(choice) = json["choices"].get(0) {
                                                     // Always emit chunks (even when delta.content is missing)
                                                     let delta = choice["delta"]["content"]
                                                         .as_str()
                                                         .unwrap_or("")
                                                         .to_string();
-                                                    let finish_reason = choice["finish_reason"].as_str().map(String::from);
+                                                    let finish_reason = choice["finish_reason"]
+                                                        .as_str()
+                                                        .map(String::from);
                                                     return Some((
                                                         Ok(LlmChunk {
                                                             delta,
@@ -668,13 +714,17 @@ impl LlmProvider for OpenAiCompatibleProvider {
                                         if pos < response.len() {
                                             let remaining = response[pos..].trim();
                                             if let Some(data) = remaining.strip_prefix("data: ") {
-                                                if let Ok(json) = serde_json::from_str::<serde_json::Value>(data) {
+                                                if let Ok(json) =
+                                                    serde_json::from_str::<serde_json::Value>(data)
+                                                {
                                                     if let Some(choice) = json["choices"].get(0) {
                                                         let delta = choice["delta"]["content"]
                                                             .as_str()
                                                             .unwrap_or("")
                                                             .to_string();
-                                                        let finish_reason = choice["finish_reason"].as_str().map(String::from);
+                                                        let finish_reason = choice["finish_reason"]
+                                                            .as_str()
+                                                            .map(String::from);
                                                         let response_len = response.len();
                                                         return Some((
                                                             Ok(LlmChunk {
@@ -695,7 +745,7 @@ impl LlmProvider for OpenAiCompatibleProvider {
                         .boxed()
                     }
                 }
-            })
+            }),
         )
     }
 }

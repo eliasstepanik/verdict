@@ -4,9 +4,9 @@
 //! Tests verify delegation depth, allowlists, tool scope inheritance,
 //! step_result namespacing, schema validation, and audit event ordering.
 
+use serde_json::json;
 use std::sync::Arc;
 use verdict::prelude::*;
-use serde_json::json;
 
 // Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ helpers Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
@@ -22,9 +22,9 @@ fn custom_step_simple(name: &str, output: &'static str) -> AgentStep {
         output_schema: None,
         dependencies: vec![],
         parallel: false,
-            input_processors: vec![],
-            output_processors: vec![],
-        }
+        input_processors: vec![],
+        output_processors: vec![],
+    }
 }
 
 fn leaf_agent(name: &str, step_name: &str, output: &'static str) -> Agent {
@@ -46,7 +46,13 @@ fn leaf_agent(name: &str, step_name: &str, output: &'static str) -> Agent {
     }
 }
 
-fn delegate_step(step_name: &str, agent_name: &str, input: serde_json::Value, max_depth: u32, allowed: Vec<String>) -> AgentStep {
+fn delegate_step(
+    step_name: &str,
+    agent_name: &str,
+    input: serde_json::Value,
+    max_depth: u32,
+    allowed: Vec<String>,
+) -> AgentStep {
     AgentStep {
         name: step_name.into(),
         guard_in: Guard::None,
@@ -76,9 +82,9 @@ fn delegate_step(step_name: &str, agent_name: &str, input: serde_json::Value, ma
         output_schema: None,
         dependencies: vec![],
         parallel: false,
-            input_processors: vec![],
-            output_processors: vec![],
-        }
+        input_processors: vec![],
+        output_processors: vec![],
+    }
 }
 
 // Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Test 1: Two-level delegation depth increments in audit log Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
@@ -93,12 +99,16 @@ async fn test_delegation_two_level_depth_in_audit_log() {
     let b_pipeline = Pipeline {
         name: "B_pipeline".into(),
         steps: vec![b_step],
-        on_failure: FailureMode::Abort, max_retries: 0,
+        on_failure: FailureMode::Abort,
+        max_retries: 0,
     };
     let agent_b = Agent {
-        name: "B".into(), description: "middle agent".into(),
-        pipeline: b_pipeline.clone(), tools: ToolSet::None,
-        skills: SkillSet::default(), policy: AgentPolicy::default(),
+        name: "B".into(),
+        description: "middle agent".into(),
+        pipeline: b_pipeline.clone(),
+        tools: ToolSet::None,
+        skills: SkillSet::default(),
+        policy: AgentPolicy::default(),
         scorers: vec![],
     };
 
@@ -107,12 +117,16 @@ async fn test_delegation_two_level_depth_in_audit_log() {
     let a_pipeline = Pipeline {
         name: "A_pipeline".into(),
         steps: vec![a_step],
-        on_failure: FailureMode::Abort, max_retries: 0,
+        on_failure: FailureMode::Abort,
+        max_retries: 0,
     };
     let agent_a = Agent {
-        name: "A".into(), description: "top agent".into(),
-        pipeline: a_pipeline.clone(), tools: ToolSet::None,
-        skills: SkillSet::default(), policy: AgentPolicy::default(),
+        name: "A".into(),
+        description: "top agent".into(),
+        pipeline: a_pipeline.clone(),
+        tools: ToolSet::None,
+        skills: SkillSet::default(),
+        policy: AgentPolicy::default(),
         scorers: vec![],
     };
 
@@ -126,14 +140,25 @@ async fn test_delegation_two_level_depth_in_audit_log() {
     assert!(result.success);
 
     // Check that audit log has two DelegationStarted events with correct depths
-    let starts: Vec<(String, String, u32)> = result.audit_log.entries().iter()
+    let starts: Vec<(String, String, u32)> = result
+        .audit_log
+        .entries()
+        .iter()
         .filter_map(|e| match &e.event {
-            AuditEvent::DelegationStarted { parent_agent, child_agent, depth } =>
-                Some((parent_agent.clone(), child_agent.clone(), *depth)),
+            AuditEvent::DelegationStarted {
+                parent_agent,
+                child_agent,
+                depth,
+            } => Some((parent_agent.clone(), child_agent.clone(), *depth)),
             _ => None,
-        }).collect();
+        })
+        .collect();
 
-    assert_eq!(starts.len(), 2, "expected 2 DelegationStarted events, got {starts:?}");
+    assert_eq!(
+        starts.len(),
+        2,
+        "expected 2 DelegationStarted events, got {starts:?}"
+    );
     assert_eq!(starts[0], ("A".into(), "B".into(), 1));
     assert_eq!(starts[1], ("B".into(), "C".into(), 2));
 }
@@ -167,33 +192,47 @@ async fn test_delegation_max_depth_blocks_grandchild() {
             },
             detached: false,
         },
-        guard_out: Guard::None, verdict: Verdict::None, tools: ToolSet::None,
-        injection_protection: InjectionProtection::None, output_schema: None,
-        dependencies: vec![], parallel: false,
-            input_processors: vec![],
-            output_processors: vec![],
-        };
+        guard_out: Guard::None,
+        verdict: Verdict::None,
+        tools: ToolSet::None,
+        injection_protection: InjectionProtection::None,
+        output_schema: None,
+        dependencies: vec![],
+        parallel: false,
+        input_processors: vec![],
+        output_processors: vec![],
+    };
     let b_pipeline = Pipeline {
-        name: "B_pipeline".into(), steps: vec![b_step],
-        on_failure: FailureMode::Abort, max_retries: 0,
+        name: "B_pipeline".into(),
+        steps: vec![b_step],
+        on_failure: FailureMode::Abort,
+        max_retries: 0,
     };
     let agent_b = Agent {
-        name: "B".into(), description: "middle".into(),
-        pipeline: b_pipeline.clone(), tools: ToolSet::None,
-        skills: SkillSet::default(), policy: AgentPolicy::default(),
+        name: "B".into(),
+        description: "middle".into(),
+        pipeline: b_pipeline.clone(),
+        tools: ToolSet::None,
+        skills: SkillSet::default(),
+        policy: AgentPolicy::default(),
         scorers: vec![],
     };
 
     // A delegates to B with Skip so we can inspect both outcomes
     let a_step = delegate_step("delegate_to_b", "B", json!({}), 5, vec![]);
     let a_pipeline = Pipeline {
-        name: "A_pipeline".into(), steps: vec![a_step],
-        on_failure: FailureMode::Skip, max_retries: 0,
+        name: "A_pipeline".into(),
+        steps: vec![a_step],
+        on_failure: FailureMode::Skip,
+        max_retries: 0,
     };
     let agent_a = Agent {
-        name: "A".into(), description: "top".into(),
-        pipeline: a_pipeline.clone(), tools: ToolSet::None,
-        skills: SkillSet::default(), policy: AgentPolicy::default(),
+        name: "A".into(),
+        description: "top".into(),
+        pipeline: a_pipeline.clone(),
+        tools: ToolSet::None,
+        skills: SkillSet::default(),
+        policy: AgentPolicy::default(),
         scorers: vec![],
     };
 
@@ -206,8 +245,11 @@ async fn test_delegation_max_depth_blocks_grandchild() {
 
     // The BÃ¢â€ â€™C delegation fails, which cascades up, so delegate_to_b is failed
     assert!(!result.success);
-    assert!(result.steps_failed.contains(&"delegate_to_b".to_string()),
-        "delegation step should fail: {:?}", result.steps_failed);
+    assert!(
+        result.steps_failed.contains(&"delegate_to_b".to_string()),
+        "delegation step should fail: {:?}",
+        result.steps_failed
+    );
 }
 
 // Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Test 3: allowed_agents restricts which agents can be delegated to Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
@@ -244,15 +286,24 @@ async fn test_delegation_allowed_agents_blocks_disallowed_target() {
             },
             detached: false,
         },
-        guard_out: Guard::None, verdict: Verdict::None, tools: ToolSet::None,
-        injection_protection: InjectionProtection::None, output_schema: None,
-        dependencies: vec![], parallel: false,
-            input_processors: vec![],
-            output_processors: vec![],
-        };
+        guard_out: Guard::None,
+        verdict: Verdict::None,
+        tools: ToolSet::None,
+        injection_protection: InjectionProtection::None,
+        output_schema: None,
+        dependencies: vec![],
+        parallel: false,
+        input_processors: vec![],
+        output_processors: vec![],
+    };
     // Step 2: delegate to planner (IS in allowed list) Ã¢â€ â€™ succeeds
-    let allowed_step = delegate_step("delegate_to_planner", "planner", json!({}), 3,
-        vec!["planner".into()]);
+    let allowed_step = delegate_step(
+        "delegate_to_planner",
+        "planner",
+        json!({}),
+        3,
+        vec!["planner".into()],
+    );
 
     let pipeline = Pipeline {
         name: "p".into(),
@@ -261,26 +312,46 @@ async fn test_delegation_allowed_agents_blocks_disallowed_target() {
         max_retries: 0,
     };
     let agent = Agent {
-        name: "root".into(), description: "root".into(),
-        pipeline: pipeline.clone(), tools: ToolSet::None,
-        skills: SkillSet::default(), policy: AgentPolicy::default(),
+        name: "root".into(),
+        description: "root".into(),
+        pipeline: pipeline.clone(),
+        tools: ToolSet::None,
+        skills: SkillSet::default(),
+        policy: AgentPolicy::default(),
         scorers: vec![],
     };
 
     let mut runner = PipelineRunner::with_agent_registry(Arc::new(reg));
     let result = runner.run(&pipeline, &agent, json!({})).await.unwrap();
 
-    assert!(!result.success, "overall should fail because coder delegation failed");
-    assert!(result.steps_failed.contains(&"delegate_to_coder".to_string()),
-        "coder delegation must fail");
-    assert!(result.steps_passed.contains(&"delegate_to_planner".to_string()),
-        "planner delegation must succeed: {:?}", result.steps_passed);
+    assert!(
+        !result.success,
+        "overall should fail because coder delegation failed"
+    );
+    assert!(
+        result
+            .steps_failed
+            .contains(&"delegate_to_coder".to_string()),
+        "coder delegation must fail"
+    );
+    assert!(
+        result
+            .steps_passed
+            .contains(&"delegate_to_planner".to_string()),
+        "planner delegation must succeed: {:?}",
+        result.steps_passed
+    );
 
     // planner's step result must exist; coder's must not
-    assert!(result.step_results.contains_key("planner.plan"),
-        "planner step result must be present: {:?}", result.step_results.keys().collect::<Vec<_>>());
-    assert!(!result.step_results.contains_key("coder.code"),
-        "coder step result must NOT be present");
+    assert!(
+        result.step_results.contains_key("planner.plan"),
+        "planner step result must be present: {:?}",
+        result.step_results.keys().collect::<Vec<_>>()
+    );
+    assert!(
+        !result.step_results.contains_key("coder.code"),
+        "coder step result must NOT be present"
+    );
 }
 
 // Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Test 4: inherit_tool_scope=true lets child use parent's tool Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
@@ -300,23 +371,36 @@ async fn test_delegation_inherit_tool_scope_true_child_calls_parent_tool() {
     let child_step = AgentStep {
         name: "use_tool".into(),
         guard_in: Guard::None,
-        action: StepAction::ToolCall { tool: "local.parent_ping".into(), args: json!({}) },
-        guard_out: Guard::None, verdict: Verdict::None,
+        action: StepAction::ToolCall {
+            tool: "local.parent_ping".into(),
+            args: json!({}),
+        },
+        guard_out: Guard::None,
+        verdict: Verdict::None,
         tools: ToolSet::Full,
         injection_protection: InjectionProtection::None,
-        output_schema: None, dependencies: vec![], parallel: false,
-            input_processors: vec![],
-            output_processors: vec![],
-        };
+        output_schema: None,
+        dependencies: vec![],
+        parallel: false,
+        input_processors: vec![],
+        output_processors: vec![],
+    };
     let child_pipeline = Pipeline {
-        name: "child_pipeline".into(), steps: vec![child_step],
-        on_failure: FailureMode::Abort, max_retries: 0,
+        name: "child_pipeline".into(),
+        steps: vec![child_step],
+        on_failure: FailureMode::Abort,
+        max_retries: 0,
     };
     let child_agent = Agent {
-        name: "child".into(), description: "child".into(),
+        name: "child".into(),
+        description: "child".into(),
         pipeline: child_pipeline.clone(),
-        tools: ToolSet::Full, skills: SkillSet::default(),
-        policy: AgentPolicy { allowed_tools: ToolSet::Full, ..Default::default() },
+        tools: ToolSet::Full,
+        skills: SkillSet::default(),
+        policy: AgentPolicy {
+            allowed_tools: ToolSet::Full,
+            ..Default::default()
+        },
         scorers: vec![],
     };
 
@@ -332,10 +416,12 @@ async fn test_delegation_inherit_tool_scope_true_child_calls_parent_tool() {
             input: json!({}),
             expected_output_schema: None,
             delegation_policy: DelegationPolicy {
-                max_depth: 3, allowed_agents: vec![],
+                max_depth: 3,
+                allowed_agents: vec![],
                 require_output_schema: false,
                 inherit_tool_scope: true, // key: child gets parent's ToolRegistry
-                inherit_budget: false, require_user_approval: false,
+                inherit_budget: false,
+                require_user_approval: false,
                 on_delegation_start: None,
                 on_delegation_complete: None,
                 on_iteration_complete: None,
@@ -344,34 +430,48 @@ async fn test_delegation_inherit_tool_scope_true_child_calls_parent_tool() {
             },
             detached: false,
         },
-        guard_out: Guard::None, verdict: Verdict::None, tools: ToolSet::Full,
-        injection_protection: InjectionProtection::None, output_schema: None,
-        dependencies: vec![], parallel: false,
-            input_processors: vec![],
-            output_processors: vec![],
-        };
+        guard_out: Guard::None,
+        verdict: Verdict::None,
+        tools: ToolSet::Full,
+        injection_protection: InjectionProtection::None,
+        output_schema: None,
+        dependencies: vec![],
+        parallel: false,
+        input_processors: vec![],
+        output_processors: vec![],
+    };
     let parent_pipeline = Pipeline {
-        name: "parent_pipeline".into(), steps: vec![parent_step],
-        on_failure: FailureMode::Abort, max_retries: 0,
+        name: "parent_pipeline".into(),
+        steps: vec![parent_step],
+        on_failure: FailureMode::Abort,
+        max_retries: 0,
     };
     let parent_agent = Agent {
-        name: "parent".into(), description: "parent".into(),
+        name: "parent".into(),
+        description: "parent".into(),
         pipeline: parent_pipeline.clone(),
-        tools: ToolSet::Full, skills: SkillSet::default(),
-        policy: AgentPolicy { allowed_tools: ToolSet::Full, ..Default::default() },
+        tools: ToolSet::Full,
+        skills: SkillSet::default(),
+        policy: AgentPolicy {
+            allowed_tools: ToolSet::Full,
+            ..Default::default()
+        },
         scorers: vec![],
     };
 
-    let mut runner = PipelineRunner::with_registries(
-        Arc::new(tool_reg),
-        Arc::new(agent_reg),
-    );
-    let result = runner.run(&parent_pipeline, &parent_agent, json!({})).await.unwrap();
+    let mut runner = PipelineRunner::with_registries(Arc::new(tool_reg), Arc::new(agent_reg));
+    let result = runner
+        .run(&parent_pipeline, &parent_agent, json!({}))
+        .await
+        .unwrap();
 
     assert!(result.success);
     // Child's tool step output should be "pong"
-    assert!(result.step_results.contains_key("child.use_tool"),
-        "child step result must be present: {:?}", result.step_results.keys().collect::<Vec<_>>());
+    assert!(
+        result.step_results.contains_key("child.use_tool"),
+        "child step result must be present: {:?}",
+        result.step_results.keys().collect::<Vec<_>>()
+    );
     assert_eq!(result.step_results["child.use_tool"].output.raw, "pong");
 }
 
@@ -385,12 +485,16 @@ async fn test_delegation_step_results_namespaced_correctly() {
     let worker_pipeline = Pipeline {
         name: "worker_pipeline".into(),
         steps: vec![step_a, step_b],
-        on_failure: FailureMode::Abort, max_retries: 0,
+        on_failure: FailureMode::Abort,
+        max_retries: 0,
     };
     let worker = Agent {
-        name: "worker".into(), description: "worker".into(),
-        pipeline: worker_pipeline.clone(), tools: ToolSet::None,
-        skills: SkillSet::default(), policy: AgentPolicy::default(),
+        name: "worker".into(),
+        description: "worker".into(),
+        pipeline: worker_pipeline.clone(),
+        tools: ToolSet::None,
+        skills: SkillSet::default(),
+        policy: AgentPolicy::default(),
         scorers: vec![],
     };
 
@@ -399,36 +503,57 @@ async fn test_delegation_step_results_namespaced_correctly() {
 
     let parent_step = delegate_step("delegate", "worker", json!({}), 3, vec![]);
     let parent_pipeline = Pipeline {
-        name: "p".into(), steps: vec![parent_step],
-        on_failure: FailureMode::Abort, max_retries: 0,
+        name: "p".into(),
+        steps: vec![parent_step],
+        on_failure: FailureMode::Abort,
+        max_retries: 0,
     };
     let parent_agent = Agent {
-        name: "parent".into(), description: "parent".into(),
-        pipeline: parent_pipeline.clone(), tools: ToolSet::None,
-        skills: SkillSet::default(), policy: AgentPolicy::default(),
+        name: "parent".into(),
+        description: "parent".into(),
+        pipeline: parent_pipeline.clone(),
+        tools: ToolSet::None,
+        skills: SkillSet::default(),
+        policy: AgentPolicy::default(),
         scorers: vec![],
     };
 
     let mut runner = PipelineRunner::with_agent_registry(Arc::new(reg));
-    let result = runner.run(&parent_pipeline, &parent_agent, json!({})).await.unwrap();
+    let result = runner
+        .run(&parent_pipeline, &parent_agent, json!({}))
+        .await
+        .unwrap();
 
     assert!(result.success);
 
     // Namespaced results
-    assert!(result.step_results.contains_key("worker.phase_a"),
-        "worker.phase_a must be present: {:?}", result.step_results.keys().collect::<Vec<_>>());
-    assert!(result.step_results.contains_key("worker.phase_b"),
-        "worker.phase_b must be present");
+    assert!(
+        result.step_results.contains_key("worker.phase_a"),
+        "worker.phase_a must be present: {:?}",
+        result.step_results.keys().collect::<Vec<_>>()
+    );
+    assert!(
+        result.step_results.contains_key("worker.phase_b"),
+        "worker.phase_b must be present"
+    );
     assert_eq!(result.step_results["worker.phase_a"].output.raw, "alpha");
     assert_eq!(result.step_results["worker.phase_b"].output.raw, "beta");
 
     // Parent's own delegation step present without namespace
-    assert!(result.step_results.contains_key("delegate"),
-        "parent delegation step must be present");
+    assert!(
+        result.step_results.contains_key("delegate"),
+        "parent delegation step must be present"
+    );
 
     // Unprefixed child step names must NOT appear
-    assert!(!result.step_results.contains_key("phase_a"), "phase_a must not appear without namespace");
-    assert!(!result.step_results.contains_key("phase_b"), "phase_b must not appear without namespace");
+    assert!(
+        !result.step_results.contains_key("phase_a"),
+        "phase_a must not appear without namespace"
+    );
+    assert!(
+        !result.step_results.contains_key("phase_b"),
+        "phase_b must not appear without namespace"
+    );
 }
 
 // Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Test 6: Child pipeline failure causes parent step to fail Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
@@ -439,22 +564,33 @@ async fn test_delegation_child_failure_aborts_parent() {
         name: "fail".into(),
         guard_in: Guard::None,
         action: StepAction::Custom(Arc::new(|_| {
-            Err(StepError::ActionFailed { reason: "child error".into() })
+            Err(StepError::ActionFailed {
+                reason: "child error".into(),
+            })
         })),
-        guard_out: Guard::None, verdict: Verdict::None, tools: ToolSet::None,
-        injection_protection: InjectionProtection::None, output_schema: None,
-        dependencies: vec![], parallel: false,
-            input_processors: vec![],
-            output_processors: vec![],
-        };
+        guard_out: Guard::None,
+        verdict: Verdict::None,
+        tools: ToolSet::None,
+        injection_protection: InjectionProtection::None,
+        output_schema: None,
+        dependencies: vec![],
+        parallel: false,
+        input_processors: vec![],
+        output_processors: vec![],
+    };
     let child_pipeline = Pipeline {
-        name: "child_pipeline".into(), steps: vec![failing_step],
-        on_failure: FailureMode::Abort, max_retries: 0,
+        name: "child_pipeline".into(),
+        steps: vec![failing_step],
+        on_failure: FailureMode::Abort,
+        max_retries: 0,
     };
     let child = Agent {
-        name: "child".into(), description: "child".into(),
-        pipeline: child_pipeline.clone(), tools: ToolSet::None,
-        skills: SkillSet::default(), policy: AgentPolicy::default(),
+        name: "child".into(),
+        description: "child".into(),
+        pipeline: child_pipeline.clone(),
+        tools: ToolSet::None,
+        skills: SkillSet::default(),
+        policy: AgentPolicy::default(),
         scorers: vec![],
     };
 
@@ -463,25 +599,35 @@ async fn test_delegation_child_failure_aborts_parent() {
 
     let parent_step = delegate_step("delegate", "child", json!({}), 3, vec![]);
     let parent_pipeline = Pipeline {
-        name: "p".into(), steps: vec![parent_step],
-        on_failure: FailureMode::Abort, max_retries: 0,
+        name: "p".into(),
+        steps: vec![parent_step],
+        on_failure: FailureMode::Abort,
+        max_retries: 0,
     };
     let parent_agent = Agent {
-        name: "parent".into(), description: "parent".into(),
-        pipeline: parent_pipeline.clone(), tools: ToolSet::None,
-        skills: SkillSet::default(), policy: AgentPolicy::default(),
+        name: "parent".into(),
+        description: "parent".into(),
+        pipeline: parent_pipeline.clone(),
+        tools: ToolSet::None,
+        skills: SkillSet::default(),
+        policy: AgentPolicy::default(),
         scorers: vec![],
     };
 
     let mut runner = PipelineRunner::with_agent_registry(Arc::new(reg));
-    let err = runner.run(&parent_pipeline, &parent_agent, json!({})).await.unwrap_err();
+    let err = runner
+        .run(&parent_pipeline, &parent_agent, json!({}))
+        .await
+        .unwrap_err();
 
     match err {
         PipelineError::StepFailed { step, error } => {
             assert_eq!(step, "delegate");
             let msg = error.to_string();
-            assert!(msg.contains("Delegation") || msg.contains("child") || msg.contains("failed"),
-                "error should mention delegation/child failure: {msg}");
+            assert!(
+                msg.contains("Delegation") || msg.contains("child") || msg.contains("failed"),
+                "error should mention delegation/child failure: {msg}"
+            );
         }
         other => panic!("expected StepFailed, got {other:?}"),
     }
@@ -495,23 +641,34 @@ async fn test_delegation_unknown_agent_fails_gracefully() {
 
     let parent_step = delegate_step("try_unknown", "nonexistent_agent", json!({}), 3, vec![]);
     let parent_pipeline = Pipeline {
-        name: "p".into(), steps: vec![parent_step],
-        on_failure: FailureMode::Abort, max_retries: 0,
+        name: "p".into(),
+        steps: vec![parent_step],
+        on_failure: FailureMode::Abort,
+        max_retries: 0,
     };
     let parent_agent = Agent {
-        name: "parent".into(), description: "parent".into(),
-        pipeline: parent_pipeline.clone(), tools: ToolSet::None,
-        skills: SkillSet::default(), policy: AgentPolicy::default(),
+        name: "parent".into(),
+        description: "parent".into(),
+        pipeline: parent_pipeline.clone(),
+        tools: ToolSet::None,
+        skills: SkillSet::default(),
+        policy: AgentPolicy::default(),
         scorers: vec![],
     };
 
     let mut runner = PipelineRunner::with_agent_registry(Arc::new(reg));
-    let err = runner.run(&parent_pipeline, &parent_agent, json!({})).await.unwrap_err();
+    let err = runner
+        .run(&parent_pipeline, &parent_agent, json!({}))
+        .await
+        .unwrap_err();
 
     // Should get either DelegationFailed or StepFailed with delegation reason
     let msg = format!("{err:?}");
     assert!(
-        matches!(err, PipelineError::DelegationFailed { .. } | PipelineError::StepFailed { .. }),
+        matches!(
+            err,
+            PipelineError::DelegationFailed { .. } | PipelineError::StepFailed { .. }
+        ),
         "expected delegation-related error, got: {msg}"
     );
     assert!(
@@ -540,12 +697,16 @@ async fn test_delegation_sequential_plan_code_review() {
     let pipeline = Pipeline {
         name: "orchestrate".into(),
         steps: vec![step1, step2, step3],
-        on_failure: FailureMode::Abort, max_retries: 0,
+        on_failure: FailureMode::Abort,
+        max_retries: 0,
     };
     let agent = Agent {
-        name: "orchestrator".into(), description: "orchestrator".into(),
-        pipeline: pipeline.clone(), tools: ToolSet::None,
-        skills: SkillSet::default(), policy: AgentPolicy::default(),
+        name: "orchestrator".into(),
+        description: "orchestrator".into(),
+        pipeline: pipeline.clone(),
+        tools: ToolSet::None,
+        skills: SkillSet::default(),
+        policy: AgentPolicy::default(),
         scorers: vec![],
     };
 
@@ -553,26 +714,47 @@ async fn test_delegation_sequential_plan_code_review() {
     let result = runner.run(&pipeline, &agent, json!({})).await.unwrap();
 
     assert!(result.success);
-    assert_eq!(result.step_results["plan_agent.do_work"].output.raw, "plan-out");
-    assert_eq!(result.step_results["code_agent.do_work"].output.raw, "code-out");
-    assert_eq!(result.step_results["review_agent.do_work"].output.raw, "review-out");
+    assert_eq!(
+        result.step_results["plan_agent.do_work"].output.raw,
+        "plan-out"
+    );
+    assert_eq!(
+        result.step_results["code_agent.do_work"].output.raw,
+        "code-out"
+    );
+    assert_eq!(
+        result.step_results["review_agent.do_work"].output.raw,
+        "review-out"
+    );
 
     // Audit log: 3 Started + 3 Completed pairs in order
-    let delegation_events: Vec<(&str, String)> = result.audit_log.entries().iter()
+    let delegation_events: Vec<(&str, String)> = result
+        .audit_log
+        .entries()
+        .iter()
         .filter_map(|e| match &e.event {
-            AuditEvent::DelegationStarted { child_agent, .. } => Some(("start", child_agent.clone())),
-            AuditEvent::DelegationCompleted { child_agent, .. } => Some(("complete", child_agent.clone())),
+            AuditEvent::DelegationStarted { child_agent, .. } => {
+                Some(("start", child_agent.clone()))
+            }
+            AuditEvent::DelegationCompleted { child_agent, .. } => {
+                Some(("complete", child_agent.clone()))
+            }
             _ => None,
-        }).collect();
+        })
+        .collect();
 
-    assert_eq!(delegation_events, vec![
-        ("start", "plan_agent".into()),
-        ("complete", "plan_agent".into()),
-        ("start", "code_agent".into()),
-        ("complete", "code_agent".into()),
-        ("start", "review_agent".into()),
-        ("complete", "review_agent".into()),
-    ], "delegation events must be in correct order: {delegation_events:?}");
+    assert_eq!(
+        delegation_events,
+        vec![
+            ("start", "plan_agent".into()),
+            ("complete", "plan_agent".into()),
+            ("start", "code_agent".into()),
+            ("complete", "code_agent".into()),
+            ("start", "review_agent".into()),
+            ("complete", "review_agent".into()),
+        ],
+        "delegation events must be in correct order: {delegation_events:?}"
+    );
 }
 
 // Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Test 9: Downstream step reads child output from step_results Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
@@ -591,27 +773,41 @@ async fn test_delegation_downstream_step_reads_child_output() {
         name: "consume".into(),
         guard_in: Guard::None,
         action: StepAction::Custom(Arc::new(|ctx| {
-            let v = ctx.step_results.get("worker.compute")
-                .ok_or_else(|| StepError::ActionFailed { reason: "missing worker.compute".into() })?
-                .output.raw.clone();
+            let v = ctx
+                .step_results
+                .get("worker.compute")
+                .ok_or_else(|| StepError::ActionFailed {
+                    reason: "missing worker.compute".into(),
+                })?
+                .output
+                .raw
+                .clone();
             Ok(StepOutput::new(format!("{v}{v}")))
         })),
-        guard_out: Guard::None, verdict: Verdict::None, tools: ToolSet::None,
-        injection_protection: InjectionProtection::None, output_schema: None,
-        dependencies: vec![], parallel: false,
-            input_processors: vec![],
-            output_processors: vec![],
-        };
+        guard_out: Guard::None,
+        verdict: Verdict::None,
+        tools: ToolSet::None,
+        injection_protection: InjectionProtection::None,
+        output_schema: None,
+        dependencies: vec![],
+        parallel: false,
+        input_processors: vec![],
+        output_processors: vec![],
+    };
 
     let pipeline = Pipeline {
         name: "p".into(),
         steps: vec![delegate, consume],
-        on_failure: FailureMode::Abort, max_retries: 0,
+        on_failure: FailureMode::Abort,
+        max_retries: 0,
     };
     let agent = Agent {
-        name: "root".into(), description: "root".into(),
-        pipeline: pipeline.clone(), tools: ToolSet::None,
-        skills: SkillSet::default(), policy: AgentPolicy::default(),
+        name: "root".into(),
+        description: "root".into(),
+        pipeline: pipeline.clone(),
+        tools: ToolSet::None,
+        skills: SkillSet::default(),
+        policy: AgentPolicy::default(),
         scorers: vec![],
     };
 
@@ -630,25 +826,35 @@ async fn test_delegation_audit_started_precedes_completed_invariant() {
 
     let b_step = delegate_step("delegate_to_c", "C", json!({}), 5, vec![]);
     let b_pipeline = Pipeline {
-        name: "B_pipeline".into(), steps: vec![b_step],
-        on_failure: FailureMode::Abort, max_retries: 0,
+        name: "B_pipeline".into(),
+        steps: vec![b_step],
+        on_failure: FailureMode::Abort,
+        max_retries: 0,
     };
     let agent_b = Agent {
-        name: "B".into(), description: "B".into(),
-        pipeline: b_pipeline.clone(), tools: ToolSet::None,
-        skills: SkillSet::default(), policy: AgentPolicy::default(),
+        name: "B".into(),
+        description: "B".into(),
+        pipeline: b_pipeline.clone(),
+        tools: ToolSet::None,
+        skills: SkillSet::default(),
+        policy: AgentPolicy::default(),
         scorers: vec![],
     };
 
     let a_step = delegate_step("delegate_to_b", "B", json!({}), 5, vec![]);
     let a_pipeline = Pipeline {
-        name: "A_pipeline".into(), steps: vec![a_step],
-        on_failure: FailureMode::Abort, max_retries: 0,
+        name: "A_pipeline".into(),
+        steps: vec![a_step],
+        on_failure: FailureMode::Abort,
+        max_retries: 0,
     };
     let agent_a = Agent {
-        name: "A".into(), description: "A".into(),
-        pipeline: a_pipeline.clone(), tools: ToolSet::None,
-        skills: SkillSet::default(), policy: AgentPolicy::default(),
+        name: "A".into(),
+        description: "A".into(),
+        pipeline: a_pipeline.clone(),
+        tools: ToolSet::None,
+        skills: SkillSet::default(),
+        policy: AgentPolicy::default(),
         scorers: vec![],
     };
 
@@ -664,26 +870,48 @@ async fn test_delegation_audit_started_precedes_completed_invariant() {
     let mut open: HashMap<(String, String, u32), u32> = HashMap::new();
     for entry in result.audit_log.entries() {
         match &entry.event {
-            AuditEvent::DelegationStarted { parent_agent, child_agent, depth } => {
-                *open.entry((parent_agent.clone(), child_agent.clone(), *depth)).or_insert(0) += 1;
+            AuditEvent::DelegationStarted {
+                parent_agent,
+                child_agent,
+                depth,
+            } => {
+                *open
+                    .entry((parent_agent.clone(), child_agent.clone(), *depth))
+                    .or_insert(0) += 1;
             }
-            AuditEvent::DelegationCompleted { parent_agent, child_agent, depth } => {
+            AuditEvent::DelegationCompleted {
+                parent_agent,
+                child_agent,
+                depth,
+            } => {
                 let key = (parent_agent.clone(), child_agent.clone(), *depth);
-                let cnt = open.get_mut(&key)
+                let cnt = open
+                    .get_mut(&key)
                     .expect("DelegationCompleted without matching DelegationStarted");
                 *cnt -= 1;
-                if *cnt == 0 { open.remove(&key); }
+                if *cnt == 0 {
+                    open.remove(&key);
+                }
             }
-            AuditEvent::DelegationFailed { parent_agent, child_agent, depth, .. } => {
+            AuditEvent::DelegationFailed {
+                parent_agent,
+                child_agent,
+                depth,
+                ..
+            } => {
                 let key = (parent_agent.clone(), child_agent.clone(), *depth);
                 if let Some(cnt) = open.get_mut(&key) {
                     *cnt -= 1;
-                    if *cnt == 0 { open.remove(&key); }
+                    if *cnt == 0 {
+                        open.remove(&key);
+                    }
                 }
             }
             _ => {}
         }
     }
-    assert!(open.is_empty(), "unclosed delegations (Started without Completed): {open:?}");
+    assert!(
+        open.is_empty(),
+        "unclosed delegations (Started without Completed): {open:?}"
+    );
 }
-

@@ -1,15 +1,20 @@
 //! Tool registry and implementations
 
-pub mod tool;
-pub mod function;
-pub mod shell;
+pub mod delegation;
 pub mod filesystem;
-pub mod search;
+pub mod function;
 pub mod http;
+pub mod search;
+pub mod shell;
+pub mod tool;
 
-pub use tool::{Tool, ToolOutput, ToolError, ToolContext, ToolSource, ToolChunk, DiagnosticSeverity, DiagnosticEntry, StructuredOutput};
+pub use delegation::{call_agent_tool, CallAgentTool, DelegationRequest};
+pub use filesystem::{DeleteFileTool, ListDirTool, ReadFileTool, WriteFileTool};
 pub use function::FunctionTool;
-pub use shell::{CargoCheckTool, CargoTestTool, CargoFmtTool, RunCommandTool};
-pub use filesystem::{ReadFileTool, WriteFileTool, ListDirTool, DeleteFileTool};
-pub use search::{SearchFilesTool, GrepTool};
 pub use http::HttpTool;
+pub use search::{GrepTool, SearchFilesTool};
+pub use shell::{CargoCheckTool, CargoFmtTool, CargoTestTool, RunCommandTool};
+pub use tool::{
+    DiagnosticEntry, DiagnosticSeverity, StructuredOutput, Tool, ToolChunk, ToolContext, ToolError,
+    ToolOutput, ToolSource,
+};

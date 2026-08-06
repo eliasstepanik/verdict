@@ -1,6 +1,6 @@
 //! Budget tracking and rate limiting — Phase 7
 
-use std::time::{Instant, Duration};
+use std::time::{Duration, Instant};
 use thiserror::Error;
 
 /// Errors that can occur during budget checking
@@ -16,10 +16,7 @@ pub enum BudgetError {
     ToolCallLimitExceeded { used: u32, max: u32 },
 
     #[error("Runtime exceeded: {elapsed_secs}s, max {max_secs}s")]
-    RuntimeExceeded {
-        elapsed_secs: u64,
-        max_secs: u64,
-    },
+    RuntimeExceeded { elapsed_secs: u64, max_secs: u64 },
 
     #[error("Rate limit exceeded: {calls_this_minute} calls, max {max_calls} per minute")]
     RateLimitExceeded {
@@ -264,9 +261,8 @@ impl RateLimiter {
 
     /// Get remaining calls in current window
     pub fn remaining_calls_this_minute(&self) -> Option<u32> {
-        self.max_calls_per_minute.map(|max| {
-            (max as i32 - self.calls_this_minute as i32).max(0) as u32
-        })
+        self.max_calls_per_minute
+            .map(|max| (max as i32 - self.calls_this_minute as i32).max(0) as u32)
     }
 }
 
@@ -382,8 +378,7 @@ mod tests {
 
     #[test]
     fn test_budget_tracker_remaining_usd() {
-        let tracker = BudgetTracker::new()
-            .with_max_cost_usd(10.0);
+        let tracker = BudgetTracker::new().with_max_cost_usd(10.0);
         let mut tracker = tracker;
         tracker.spent_usd = 3.0;
 

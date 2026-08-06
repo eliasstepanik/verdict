@@ -1,8 +1,8 @@
 #![cfg(test)]
 
-use verdict::prelude::*;
 use serde_json::json;
 use std::sync::Arc;
+use verdict::prelude::*;
 
 // A1 â€” Step-Level Tool Approval API
 #[tokio::test]
@@ -15,9 +15,7 @@ async fn test_a1_tool_approval_registration() {
         "local.test_tool",
         "Test tool for approval",
         json!({"type": "object", "properties": {}}),
-        |_args, _ctx| {
-            Box::pin(async { Ok(ToolOutput::text("test output".into())) })
-        },
+        |_args, _ctx| Box::pin(async { Ok(ToolOutput::text("test output".into())) }),
     );
 
     // Register with approval
@@ -119,10 +117,7 @@ fn test_a4_foreach_step_action() {
 // A5 â€” Guard::AllOfCollect
 #[tokio::test]
 async fn test_a5_guard_all_of_collect() {
-    let guards = vec![
-        Guard::NonEmptyOutput,
-        Guard::ValidJson,
-    ];
+    let guards = vec![Guard::NonEmptyOutput, Guard::ValidJson];
 
     let guard = Guard::AllOfCollect(guards);
     assert_eq!(guard.name(), "AllOfCollect");

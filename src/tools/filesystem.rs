@@ -8,26 +8,24 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::fs;
 
-use crate::tools::tool::{Tool, ToolOutput, ToolError, ToolSource, ToolContext};
+use crate::tools::tool::{Tool, ToolContext, ToolError, ToolOutput, ToolSource};
 
 /// Check if a path is within workspace root
 fn is_within_workspace(path: &Path, workspace_root: &Path) -> bool {
     // Resolve the path; for not-yet-existing files canonicalize the parent
     // directory (which must exist) and re-attach the filename so we get the
     // same long-name form as canonicalize(workspace_root).
-    let resolved = std::fs::canonicalize(path).or_else(|_| {
-        match (path.parent(), path.file_name()) {
-            (Some(parent), Some(name)) => {
-                std::fs::canonicalize(parent).map(|p| p.join(name))
-            }
+    let resolved =
+        std::fs::canonicalize(path).or_else(|_| match (path.parent(), path.file_name()) {
+            (Some(parent), Some(name)) => std::fs::canonicalize(parent).map(|p| p.join(name)),
             _ => Err(std::io::Error::new(
                 std::io::ErrorKind::NotFound,
                 "no parent",
             )),
-        }
-    });
+        });
 
-    let (Ok(canonical_path), Ok(canonical_root)) = (resolved, std::fs::canonicalize(workspace_root))
+    let (Ok(canonical_path), Ok(canonical_root)) =
+        (resolved, std::fs::canonicalize(workspace_root))
     else {
         return false;
     };
@@ -81,12 +79,11 @@ impl Tool for ReadFileTool {
     }
 
     async fn call(&self, args: Value, ctx: ToolContext) -> Result<ToolOutput, ToolError> {
-        let path_str = args
-            .get("path")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| ToolError::SchemaValidationFailed {
+        let path_str = args.get("path").and_then(|v| v.as_str()).ok_or_else(|| {
+            ToolError::SchemaValidationFailed {
                 reason: "missing 'path' field".to_string(),
-            })?;
+            }
+        })?;
 
         let workspace_root = &ctx.filesystem_policy.workspace_root;
         let full_path = workspace_root.join(path_str);
@@ -101,15 +98,19 @@ impl Tool for ReadFileTool {
         // Check filesystem policy forbidden paths
         if !ctx.filesystem_policy.is_path_allowed(&full_path) {
             return Err(ToolError::ExecutionFailed {
-                reason: format!("path '{}' is not allowed by filesystem policy (forbidden)", path_str),
+                reason: format!(
+                    "path '{}' is not allowed by filesystem policy (forbidden)",
+                    path_str
+                ),
             });
         }
 
-        let content = fs::read_to_string(&full_path)
-            .await
-            .map_err(|e| ToolError::ExecutionFailed {
-                reason: format!("failed to read file: {}", e),
-            })?;
+        let content =
+            fs::read_to_string(&full_path)
+                .await
+                .map_err(|e| ToolError::ExecutionFailed {
+                    reason: format!("failed to read file: {}", e),
+                })?;
 
         Ok(ToolOutput::text(content))
     }
@@ -150,12 +151,11 @@ impl Tool for WriteFileTool {
     }
 
     async fn call(&self, args: Value, ctx: ToolContext) -> Result<ToolOutput, ToolError> {
-        let path_str = args
-            .get("path")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| ToolError::SchemaValidationFailed {
+        let path_str = args.get("path").and_then(|v| v.as_str()).ok_or_else(|| {
+            ToolError::SchemaValidationFailed {
                 reason: "missing 'path' field".to_string(),
-            })?;
+            }
+        })?;
 
         let content = args
             .get("content")
@@ -174,14 +174,15 @@ impl Tool for WriteFileTool {
             });
         }
 
-
         // Check filesystem policy for write access
         if !ctx.filesystem_policy.is_write_allowed(&full_path) {
             return Err(ToolError::ExecutionFailed {
-                reason: format!("path '{}' is not allowed for writing by filesystem policy", path_str),
+                reason: format!(
+                    "path '{}' is not allowed for writing by filesystem policy",
+                    path_str
+                ),
             });
         }
-
 
         // Create parent directories
         if let Some(parent) = full_path.parent() {
@@ -233,12 +234,11 @@ impl Tool for ListDirTool {
     }
 
     async fn call(&self, args: Value, ctx: ToolContext) -> Result<ToolOutput, ToolError> {
-        let path_str = args
-            .get("path")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| ToolError::SchemaValidationFailed {
+        let path_str = args.get("path").and_then(|v| v.as_str()).ok_or_else(|| {
+            ToolError::SchemaValidationFailed {
                 reason: "missing 'path' field".to_string(),
-            })?;
+            }
+        })?;
 
         let workspace_root = &ctx.filesystem_policy.workspace_root;
         let full_path = workspace_root.join(path_str);
@@ -253,36 +253,33 @@ impl Tool for ListDirTool {
         // Check filesystem policy for read access
         if !ctx.filesystem_policy.is_read_allowed(&full_path) {
             return Err(ToolError::ExecutionFailed {
-                reason: format!("path '{}' is not allowed for reading by filesystem policy", path_str),
+                reason: format!(
+                    "path '{}' is not allowed for reading by filesystem policy",
+                    path_str
+                ),
             });
         }
 
-
-        let mut entries = fs::read_dir(&full_path)
-            .await
-            .map_err(|e| ToolError::ExecutionFailed {
-                reason: format!("failed to read directory: {}", e),
-            })?;
+        let mut entries =
+            fs::read_dir(&full_path)
+                .await
+                .map_err(|e| ToolError::ExecutionFailed {
+                    reason: format!("failed to read directory: {}", e),
+                })?;
 
         let mut entries_list = Vec::new();
-        while let Some(entry) = entries
-            .next_entry()
-            .await
-            .map_err(|e| ToolError::ExecutionFailed {
-                reason: format!("failed to iterate directory: {}", e),
-            })?
+        while let Some(entry) =
+            entries
+                .next_entry()
+                .await
+                .map_err(|e| ToolError::ExecutionFailed {
+                    reason: format!("failed to iterate directory: {}", e),
+                })?
         {
             let path = entry.path();
-            let name = entry
-                .file_name()
-                .to_string_lossy()
-                .to_string();
+            let name = entry.file_name().to_string_lossy().to_string();
 
-            let entry_type = if path.is_dir() {
-                "directory"
-            } else {
-                "file"
-            };
+            let entry_type = if path.is_dir() { "directory" } else { "file" };
 
             entries_list.push(json!({
                 "name": name,
@@ -327,12 +324,11 @@ impl Tool for DeleteFileTool {
     }
 
     async fn call(&self, args: Value, ctx: ToolContext) -> Result<ToolOutput, ToolError> {
-        let path_str = args
-            .get("path")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| ToolError::SchemaValidationFailed {
+        let path_str = args.get("path").and_then(|v| v.as_str()).ok_or_else(|| {
+            ToolError::SchemaValidationFailed {
                 reason: "missing 'path' field".to_string(),
-            })?;
+            }
+        })?;
 
         let workspace_root = &ctx.filesystem_policy.workspace_root;
         let full_path = workspace_root.join(path_str);
@@ -347,11 +343,12 @@ impl Tool for DeleteFileTool {
         // Check filesystem policy for write access (deletion is a write operation)
         if !ctx.filesystem_policy.is_write_allowed(&full_path) {
             return Err(ToolError::ExecutionFailed {
-                reason: format!("path '{}' is not allowed for deletion by filesystem policy", path_str),
+                reason: format!(
+                    "path '{}' is not allowed for deletion by filesystem policy",
+                    path_str
+                ),
             });
         }
-
-
 
         fs::remove_file(&full_path)
             .await

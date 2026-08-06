@@ -2,9 +2,9 @@
 use reqwest::Client as ReqwestClient;
 use serde_json::{json, Value};
 use std::process::Stdio;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use thiserror::Error;
-use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::io::AsyncWriteExt;
 
 use tokio::process::{Child, Command};
@@ -65,7 +65,6 @@ pub struct McpClient {
     request_id: Arc<AtomicU64>,
 }
 
-
 impl McpClient {
     /// Create an inert McpClient with no active connection — for testing only.
     /// Does NOT send any initialize handshake or spawn any process.
@@ -79,7 +78,6 @@ impl McpClient {
             request_id: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1)),
         }
     }
-
 
     /// Connect to an MCP server
     /// For command-based servers, spawns the process immediately.
@@ -139,7 +137,7 @@ impl McpClient {
             base_url: None,
             request_id: Arc::new(AtomicU64::new(1)),
         };
-        
+
         // Send initialize handshake for stdio-based servers
         if client.process.is_some() {
             client.initialize_handshake().await?;
@@ -177,29 +175,104 @@ impl McpClient {
                     .json()
                     .await
                     .map_err(|e| McpError::JsonRpc(e.to_string()))?;
-                
+
                 // Verify response is valid
-                let _protocol_version = response.get("result")
+                let _protocol_version = response
+                    .get("result")
                     .and_then(|r| r.get("protocolVersion"))
-                    .ok_or_else(|| McpError::JsonRpc("initialize failed: missing protocolVersion in response".into()))?;
-                
+                    .ok_or_else(|| {
+                        McpError::JsonRpc(
+                            "initialize failed: missing protocolVersion in response".into(),
+                        )
+                    })?;
+
                 return Ok(());
             }
         }
 
-        // For stdio transport, would need to write to stdin and read from stdout
-        // This is a stub for now - actual stdio initialization would go here
+        // Stdio transport: send initialize, read response, send initialized notification
+        if let Some(process) = self.process.as_mut() {
+            let init_request_str = format!("{}\n", init_request.to_string());
+
+            // Write initialize request to stdin
+            {
+                let stdin = process
+                    .stdin
+                    .as_mut()
+                    .ok_or(McpError::Io("no stdin".into()))?;
+                stdin
+                    .write_all(init_request_str.as_bytes())
+                    .await
+                    .map_err(|e| McpError::Io(e.to_string()))?;
+                stdin
+                    .flush()
+                    .await
+                    .map_err(|e| McpError::Io(e.to_string()))?;
+            }
+
+            // Read initialize response from stdout
+            let init_response: Value;
+            {
+                let stdout = process
+                    .stdout
+                    .as_mut()
+                    .ok_or(McpError::Io("no stdout".into()))?;
+                use tokio::io::{AsyncBufReadExt, BufReader};
+                let mut reader = BufReader::new(stdout);
+                let mut response_line = String::new();
+                reader
+                    .read_line(&mut response_line)
+                    .await
+                    .map_err(|e| McpError::Io(e.to_string()))?;
+
+                init_response = serde_json::from_str(response_line.trim()).map_err(|e| {
+                    McpError::JsonRpc(format!("initialize response parse error: {}", e))
+                })?;
+            }
+
+            // Check for errors in initialize response
+            if let Some(error) = init_response.get("error") {
+                let msg = error
+                    .get("message")
+                    .and_then(|m| m.as_str())
+                    .unwrap_or("unknown error");
+                return Err(McpError::JsonRpc(format!("initialize failed: {}", msg)));
+            }
+
+            // Send notifications/initialized (MCP spec requirement)
+            let initialized_notif = json!({
+                "jsonrpc": "2.0",
+                "method": "notifications/initialized",
+                "params": {}
+            });
+            let notif_str = format!("{}\n", initialized_notif.to_string());
+
+            {
+                let stdin = process
+                    .stdin
+                    .as_mut()
+                    .ok_or(McpError::Io("no stdin".into()))?;
+                stdin
+                    .write_all(notif_str.as_bytes())
+                    .await
+                    .map_err(|e| McpError::Io(e.to_string()))?;
+                stdin
+                    .flush()
+                    .await
+                    .map_err(|e| McpError::Io(e.to_string()))?;
+            }
+        }
+
         Ok(())
     }
-
-
 
     /// Discover tools available from the MCP server
     pub async fn discover_tools(&mut self) -> Result<Vec<DiscoveredTool>, McpError> {
         // Handle HTTP-based servers (Phase 12)
         if let (Some(http_client), Some(base_url)) = (&self.http_client, &self.base_url) {
             let id = self.request_id.fetch_add(1, Ordering::Relaxed);
-            let req_body = json!({"jsonrpc": "2.0", "id": id, "method": "tools/list", "params": {}});
+            let req_body =
+                json!({"jsonrpc": "2.0", "id": id, "method": "tools/list", "params": {}});
             let response: Value = http_client
                 .post(format!("{}/tools/list", base_url.trim_end_matches('/')))
                 .header("Content-Type", "application/json")
@@ -210,28 +283,37 @@ impl McpClient {
                 .json()
                 .await
                 .map_err(|e| McpError::JsonRpc(e.to_string()))?;
-            
-            let tools_arr = response.get("result")
+
+            let tools_arr = response
+                .get("result")
                 .and_then(|r| r.get("tools"))
                 .and_then(|t| t.as_array())
                 .ok_or_else(|| McpError::JsonRpc("missing 'result.tools'".into()))?;
-            
+
             let mut discovered = Vec::new();
             for tool_def in tools_arr {
-                let name = tool_def.get("name")
+                let name = tool_def
+                    .get("name")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| McpError::InvalidToolDef("missing 'name'".into()))?
                     .to_string();
-                let description = tool_def.get("description")
+                let description = tool_def
+                    .get("description")
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
-                let input_schema = tool_def.get("inputSchema")
+                let input_schema = tool_def
+                    .get("inputSchema")
                     .cloned()
                     .unwrap_or_else(|| json!({}));
-                
-                if self.config.allowed_tools.is_empty() || self.config.allowed_tools.contains(&name) {
-                    discovered.push(DiscoveredTool { name, description, input_schema });
+
+                if self.config.allowed_tools.is_empty() || self.config.allowed_tools.contains(&name)
+                {
+                    discovered.push(DiscoveredTool {
+                        name,
+                        description,
+                        input_schema,
+                    });
                 }
             }
             return Ok(discovered);
@@ -244,8 +326,14 @@ impl McpClient {
 
         // Get a reference to stdin and stdout from the child process
         let process = self.process.as_mut().ok_or(McpError::NotRunning)?;
-        let stdin = process.stdin.as_mut().ok_or(McpError::Io("no stdin".into()))?;
-        let stdout = process.stdout.as_mut().ok_or(McpError::Io("no stdout".into()))?;
+        let stdin = process
+            .stdin
+            .as_mut()
+            .ok_or(McpError::Io("no stdin".into()))?;
+        let stdout = process
+            .stdout
+            .as_mut()
+            .ok_or(McpError::Io("no stdout".into()))?;
 
         let id = self.request_id.fetch_add(1, Ordering::Relaxed);
         let request = json!({
@@ -273,10 +361,9 @@ impl McpClient {
             .await
             .map_err(|e| McpError::Io(e.to_string()))?;
 
-
         // Parse JSON-RPC response
-        let response: Value = serde_json::from_str(&response_line)
-            .map_err(|e| McpError::JsonRpc(e.to_string()))?;
+        let response: Value =
+            serde_json::from_str(&response_line).map_err(|e| McpError::JsonRpc(e.to_string()))?;
 
         // Validate that the response id matches the request id
         let response_id = response.get("id").and_then(|v| v.as_u64());
@@ -286,7 +373,6 @@ impl McpClient {
                 id, response_id
             )));
         }
-
 
         let tools = response
             .get("result")
@@ -317,7 +403,7 @@ impl McpClient {
     }
 
     /// Parse a tool definition from a JSON object
-    /// 
+    ///
     /// Note: Currently unused, but kept for future use in Phase 4+ when
     /// full JSON-RPC communication is implemented.
     #[allow(dead_code)]
@@ -334,10 +420,7 @@ impl McpClient {
             .unwrap_or_default()
             .to_string();
 
-        let input_schema = tool_def
-            .get("inputSchema")
-            .cloned()
-            .unwrap_or(json!({}));
+        let input_schema = tool_def.get("inputSchema").cloned().unwrap_or(json!({}));
 
         Ok(DiscoveredTool {
             name,
@@ -355,12 +438,12 @@ impl McpClient {
         // Handle HTTP-based servers (Phase 12)
         if let (Some(http_client), Some(base_url)) = (&self.http_client, &self.base_url) {
             let id = self.request_id.fetch_add(1, Ordering::Relaxed);
-            
+
             let req_body = json!({
                 "jsonrpc": "2.0", "id": id, "method": "tools/call",
                 "params": {"name": tool_name, "arguments": arguments}
             });
-            
+
             let response: Value = http_client
                 .post(format!("{}/tools/call", base_url.trim_end_matches('/')))
                 .header("Content-Type", "application/json")
@@ -371,19 +454,21 @@ impl McpClient {
                 .json()
                 .await
                 .map_err(|e| McpError::JsonRpc(e.to_string()))?;
-            
+
             if let Some(error) = response.get("error") {
-                let msg = error.get("message")
+                let msg = error
+                    .get("message")
                     .and_then(|m| m.as_str())
                     .unwrap_or("unknown error");
                 return Err(McpError::JsonRpc(format!("tool call failed: {}", msg)));
             }
-            
-            let content = response.get("result")
+
+            let content = response
+                .get("result")
                 .and_then(|r| r.get("content"))
                 .cloned()
                 .ok_or_else(|| McpError::JsonRpc("missing 'result.content'".into()))?;
-            
+
             return Ok(content);
         }
 
@@ -395,7 +480,6 @@ impl McpClient {
         // Increment ID counter
         // Increment ID counter
         let id = self.request_id.fetch_add(1, Ordering::Relaxed);
-
 
         // Build JSON-RPC request
         let request = json!({
@@ -410,7 +494,10 @@ impl McpClient {
 
         // Write request to child stdin
         let process = self.process.as_mut().ok_or(McpError::NotRunning)?;
-        let stdin = process.stdin.as_mut().ok_or(McpError::Io("no stdin".into()))?;
+        let stdin = process
+            .stdin
+            .as_mut()
+            .ok_or(McpError::Io("no stdin".into()))?;
 
         use tokio::io::AsyncWriteExt;
         let request_str = format!("{}\n", request.to_string());
@@ -424,7 +511,10 @@ impl McpClient {
             .map_err(|e| McpError::Io(e.to_string()))?;
 
         // Read response from child stdout
-        let stdout = process.stdout.as_mut().ok_or(McpError::Io("no stdout".into()))?;
+        let stdout = process
+            .stdout
+            .as_mut()
+            .ok_or(McpError::Io("no stdout".into()))?;
         use tokio::io::{AsyncBufReadExt, BufReader};
         let mut reader = BufReader::new(stdout);
         let mut response_line = String::new();
@@ -433,10 +523,9 @@ impl McpClient {
             .await
             .map_err(|e| McpError::Io(e.to_string()))?;
 
-
         // Parse JSON-RPC response
-        let response: Value = serde_json::from_str(&response_line)
-            .map_err(|e| McpError::JsonRpc(e.to_string()))?;
+        let response: Value =
+            serde_json::from_str(&response_line).map_err(|e| McpError::JsonRpc(e.to_string()))?;
 
         // Validate that the response id matches the request id
         let response_id = response.get("id").and_then(|v| v.as_u64());
@@ -447,10 +536,10 @@ impl McpClient {
             )));
         }
 
-
         // Check for error in response
         if let Some(error) = response.get("error") {
-            let msg = error.get("message")
+            let msg = error
+                .get("message")
                 .and_then(|m| m.as_str())
                 .unwrap_or("unknown error");
             return Err(McpError::JsonRpc(format!("tool call failed: {}", msg)));
@@ -475,15 +564,13 @@ impl Drop for McpClient {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[tokio::test]
     async fn test_mcp_client_connect_nonexistent_command() {
-        let config = McpServerConfig::new("nonexistent")
-            .with_command("nonexistent_command_xyz");
+        let config = McpServerConfig::new("nonexistent").with_command("nonexistent_command_xyz");
 
         let result = McpClient::connect(config).await;
         assert!(result.is_err());
@@ -500,11 +587,13 @@ mod tests {
             Ok(_) => {} // server happened to be running
             Err(e) => {
                 let msg = format!("{:?}", e);
-                assert!(!msg.contains("NotImplemented"),
-                    "URL-only transport returned NotImplemented: {}", msg);
+                assert!(
+                    !msg.contains("NotImplemented"),
+                    "URL-only transport returned NotImplemented: {}",
+                    msg
+                );
             }
         }
-
     }
 
     #[tokio::test]

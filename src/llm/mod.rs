@@ -1,15 +1,13 @@
 //! LLM provider integration.
 
-pub mod provider;
 pub mod client;
+pub mod provider;
 
-
-pub use provider::{
-    LlmProvider, LlmRequest, LlmResponse, LlmUsage, LlmError, OpenAiCompatibleProvider,
-    LlmChunk, ChatRole, ChatMessage, MessageHistory, ConversationRegistry, ToolSchema, ToolCall,
-};
 pub use client::LlmClient;
-
+pub use provider::{
+    ChatMessage, ChatRole, ConversationRegistry, LlmChunk, LlmError, LlmProvider, LlmRequest,
+    LlmResponse, LlmUsage, MessageHistory, OpenAiCompatibleProvider, ToolCall, ToolSchema,
+};
 
 // Re-export ProviderSpec from action module (moved there to resolve conflict)
 pub use crate::action::ProviderSpec;

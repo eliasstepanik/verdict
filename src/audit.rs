@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
-use serde_json::{json, Value};
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 
 /// Represents a node in the agent delegation call tree
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -25,18 +25,46 @@ pub enum CallTreeStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AuditEvent {
     StepStarted,
-    GuardPassed { guard: String },
-    GuardFailed { guard: String, reason: String },
-    VerdictPassed { verdict: String },
-    VerdictFailed { verdict: String, reason: String },
-    StepCompleted { verdict_passed: bool },
-    StepFailed { error: String },
-    ToolCallStarted { tool: String, args: String },
-    ToolCallCompleted { tool: String, output_bytes: usize },
-    ToolCallFailed { tool: String, reason: String },
+    GuardPassed {
+        guard: String,
+    },
+    GuardFailed {
+        guard: String,
+        reason: String,
+    },
+    VerdictPassed {
+        verdict: String,
+    },
+    VerdictFailed {
+        verdict: String,
+        reason: String,
+    },
+    StepCompleted {
+        verdict_passed: bool,
+    },
+    StepFailed {
+        error: String,
+    },
+    ToolCallStarted {
+        tool: String,
+        args: String,
+    },
+    ToolCallCompleted {
+        tool: String,
+        output_bytes: usize,
+    },
+    ToolCallFailed {
+        tool: String,
+        reason: String,
+    },
     PipelineStarted,
-    PipelineCompleted { steps_passed: u32, steps_failed: u32 },
-    PipelineFailed { reason: String },
+    PipelineCompleted {
+        steps_passed: u32,
+        steps_failed: u32,
+    },
+    PipelineFailed {
+        reason: String,
+    },
     /// Delegation to a child agent started
     DelegationStarted {
         parent_agent: String,
@@ -263,11 +291,12 @@ impl AuditLog {
                     entry_json.get("step_name").and_then(|v| v.as_str()),
                     entry_json.get("event").and_then(|v| v.as_object()),
                 ) {
-                    let timestamp = DateTime::parse_from_rfc3339(timestamp_str)?
-                        .with_timezone(&Utc);
+                    let timestamp =
+                        DateTime::parse_from_rfc3339(timestamp_str)?.with_timezone(&Utc);
 
                     // Reconstruct AuditEvent from JSON object
-                    let event = if let Some(event_type) = event_obj.get("type").and_then(|v| v.as_str())
+                    let event = if let Some(event_type) =
+                        event_obj.get("type").and_then(|v| v.as_str())
                     {
                         match event_type {
                             "StepStarted" => AuditEvent::StepStarted,
@@ -343,7 +372,8 @@ impl AuditLog {
                                 output_bytes: event_obj
                                     .get("output_bytes")
                                     .and_then(|v| v.as_u64())
-                                    .unwrap_or(0) as usize,
+                                    .unwrap_or(0)
+                                    as usize,
                             },
                             "ToolCallFailed" => AuditEvent::ToolCallFailed {
                                 tool: event_obj
@@ -362,11 +392,13 @@ impl AuditLog {
                                 steps_passed: event_obj
                                     .get("steps_passed")
                                     .and_then(|v| v.as_u64())
-                                    .unwrap_or(0) as u32,
+                                    .unwrap_or(0)
+                                    as u32,
                                 steps_failed: event_obj
                                     .get("steps_failed")
                                     .and_then(|v| v.as_u64())
-                                    .unwrap_or(0) as u32,
+                                    .unwrap_or(0)
+                                    as u32,
                             },
                             "PipelineFailed" => AuditEvent::PipelineFailed {
                                 reason: event_obj
@@ -386,10 +418,8 @@ impl AuditLog {
                                     .and_then(|v| v.as_str())
                                     .unwrap_or("")
                                     .to_string(),
-                                depth: event_obj
-                                    .get("depth")
-                                    .and_then(|v| v.as_u64())
-                                    .unwrap_or(0) as u32,
+                                depth: event_obj.get("depth").and_then(|v| v.as_u64()).unwrap_or(0)
+                                    as u32,
                             },
                             "DelegationCompleted" => AuditEvent::DelegationCompleted {
                                 parent_agent: event_obj
@@ -402,10 +432,8 @@ impl AuditLog {
                                     .and_then(|v| v.as_str())
                                     .unwrap_or("")
                                     .to_string(),
-                                depth: event_obj
-                                    .get("depth")
-                                    .and_then(|v| v.as_u64())
-                                    .unwrap_or(0) as u32,
+                                depth: event_obj.get("depth").and_then(|v| v.as_u64()).unwrap_or(0)
+                                    as u32,
                             },
                             "DelegationFailed" => AuditEvent::DelegationFailed {
                                 parent_agent: event_obj
@@ -418,10 +446,8 @@ impl AuditLog {
                                     .and_then(|v| v.as_str())
                                     .unwrap_or("")
                                     .to_string(),
-                                depth: event_obj
-                                    .get("depth")
-                                    .and_then(|v| v.as_u64())
-                                    .unwrap_or(0) as u32,
+                                depth: event_obj.get("depth").and_then(|v| v.as_u64()).unwrap_or(0)
+                                    as u32,
                                 reason: event_obj
                                     .get("reason")
                                     .and_then(|v| v.as_str())
@@ -458,7 +484,8 @@ impl AuditLog {
                                 calls_this_minute: event_obj
                                     .get("calls_this_minute")
                                     .and_then(|v| v.as_u64())
-                                    .unwrap_or(0) as u32,
+                                    .unwrap_or(0)
+                                    as u32,
                             },
                             "SelfUpdateProposed" => AuditEvent::SelfUpdateProposed {
                                 agent_name: event_obj
@@ -497,7 +524,6 @@ impl AuditLog {
                                     .to_string(),
                             },
                             _ => continue,
-
                         }
                     } else {
                         continue;
@@ -533,7 +559,8 @@ pub fn call_tree_from_audit_log(entries: &[AuditEntry]) -> Vec<CallTreeNode> {
     // Build: child_agent_name -> parent_agent_name
     let mut parent_of: HashMap<String, String> = HashMap::new();
     // Build: agent_name -> (started_at, completed_at, status)
-    let mut node_data: HashMap<String, (DateTime<Utc>, Option<DateTime<Utc>>, CallTreeStatus)> = HashMap::new();
+    let mut node_data: HashMap<String, (DateTime<Utc>, Option<DateTime<Utc>>, CallTreeStatus)> =
+        HashMap::new();
 
     for entry in entries {
         match &entry.event {
@@ -543,12 +570,16 @@ pub fn call_tree_from_audit_log(entries: &[AuditEntry]) -> Vec<CallTreeNode> {
                 ..
             } => {
                 parent_of.insert(child_agent.clone(), parent_agent.clone());
-                node_data
-                    .entry(child_agent.clone())
-                    .or_insert((entry.timestamp, None, CallTreeStatus::Running));
-                node_data
-                    .entry(parent_agent.clone())
-                    .or_insert((entry.timestamp, None, CallTreeStatus::Running));
+                node_data.entry(child_agent.clone()).or_insert((
+                    entry.timestamp,
+                    None,
+                    CallTreeStatus::Running,
+                ));
+                node_data.entry(parent_agent.clone()).or_insert((
+                    entry.timestamp,
+                    None,
+                    CallTreeStatus::Running,
+                ));
             }
             AuditEvent::DelegationCompleted { child_agent, .. } => {
                 if let Some(data) = node_data.get_mut(child_agent) {
@@ -557,7 +588,9 @@ pub fn call_tree_from_audit_log(entries: &[AuditEntry]) -> Vec<CallTreeNode> {
                 }
             }
             AuditEvent::DelegationFailed {
-                child_agent, reason, ..
+                child_agent,
+                reason,
+                ..
             } => {
                 if let Some(data) = node_data.get_mut(child_agent) {
                     data.1 = Some(entry.timestamp);
@@ -579,10 +612,11 @@ pub fn call_tree_from_audit_log(entries: &[AuditEntry]) -> Vec<CallTreeNode> {
         node_data: &HashMap<String, (DateTime<Utc>, Option<DateTime<Utc>>, CallTreeStatus)>,
         parent_of: &HashMap<String, String>,
     ) -> CallTreeNode {
-        let (started, completed, status) = node_data
-            .get(agent_name)
-            .cloned()
-            .unwrap_or((Utc::now(), None, CallTreeStatus::Running));
+        let (started, completed, status) = node_data.get(agent_name).cloned().unwrap_or((
+            Utc::now(),
+            None,
+            CallTreeStatus::Running,
+        ));
 
         let children: Vec<CallTreeNode> = parent_of
             .iter()
@@ -612,7 +646,8 @@ pub struct MonitoringServer {
     audit_log: std::sync::Arc<std::sync::Mutex<AuditLog>>,
     trace: std::sync::Arc<std::sync::Mutex<crate::context::PipelineTrace>>,
     agent_registry: Option<std::sync::Arc<crate::registry::AgentRegistry>>,
-    conversation_registry: Option<std::sync::Arc<std::sync::Mutex<crate::llm::ConversationRegistry>>>,
+    conversation_registry:
+        Option<std::sync::Arc<std::sync::Mutex<crate::llm::ConversationRegistry>>>,
 }
 
 impl MonitoringServer {
@@ -627,13 +662,19 @@ impl MonitoringServer {
     }
 
     /// Add agent registry to monitoring server
-    pub fn with_agent_registry(mut self, registry: std::sync::Arc<crate::registry::AgentRegistry>) -> Self {
+    pub fn with_agent_registry(
+        mut self,
+        registry: std::sync::Arc<crate::registry::AgentRegistry>,
+    ) -> Self {
         self.agent_registry = Some(registry);
         self
     }
 
     /// Add conversation registry to monitoring server
-    pub fn with_conversation_registry(mut self, registry: std::sync::Arc<std::sync::Mutex<crate::llm::ConversationRegistry>>) -> Self {
+    pub fn with_conversation_registry(
+        mut self,
+        registry: std::sync::Arc<std::sync::Mutex<crate::llm::ConversationRegistry>>,
+    ) -> Self {
         self.conversation_registry = Some(registry);
         self
     }
@@ -641,11 +682,10 @@ impl MonitoringServer {
     /// Start the monitoring HTTP server on the given address
     pub async fn serve(self, addr: std::net::SocketAddr) -> Result<(), Box<dyn std::error::Error>> {
         use axum::{
-            routing::get,
             extract::State,
-            Json,
-            Router,
             response::{Html as AxumHtml, IntoResponse},
+            routing::get,
+            Json, Router,
         };
 
         let audit_log = self.audit_log.clone();
@@ -659,7 +699,8 @@ impl MonitoringServer {
             audit_log: std::sync::Arc<std::sync::Mutex<AuditLog>>,
             trace: std::sync::Arc<std::sync::Mutex<crate::context::PipelineTrace>>,
             agent_registry: Option<std::sync::Arc<crate::registry::AgentRegistry>>,
-            conversation_registry: Option<std::sync::Arc<std::sync::Mutex<crate::llm::ConversationRegistry>>>,
+            conversation_registry:
+                Option<std::sync::Arc<std::sync::Mutex<crate::llm::ConversationRegistry>>>,
         }
 
         let app_state = AppState {
@@ -712,26 +753,15 @@ impl MonitoringServer {
             AxumHtml(html)
         }
 
-        async fn entries_handler(
-            State(state): State<AppState>,
-        ) -> Json<Vec<AuditEntry>> {
+        async fn entries_handler(State(state): State<AppState>) -> Json<Vec<AuditEntry>> {
             let log = state.audit_log.lock().ok();
             let entries: Vec<_> = log
-                .map(|l| {
-                    l.entries()
-                        .iter()
-                        .rev()
-                        .take(100)
-                        .cloned()
-                        .collect()
-                })
+                .map(|l| l.entries().iter().rev().take(100).cloned().collect())
                 .unwrap_or_default();
             Json(entries)
         }
 
-        async fn trace_handler(
-            State(state): State<AppState>,
-        ) -> Json<serde_json::Value> {
+        async fn trace_handler(State(state): State<AppState>) -> Json<serde_json::Value> {
             match state.trace.lock() {
                 Ok(t) => {
                     let entries = t.entries.clone();
@@ -744,9 +774,7 @@ impl MonitoringServer {
             }
         }
 
-        async fn agents_handler(
-            State(state): State<AppState>,
-        ) -> Json<serde_json::Value> {
+        async fn agents_handler(State(state): State<AppState>) -> Json<serde_json::Value> {
             if let Some(registry) = &state.agent_registry {
                 let agents = registry.list_agents();
                 let agent_list: Vec<serde_json::Value> = agents
@@ -764,9 +792,7 @@ impl MonitoringServer {
             }
         }
 
-        async fn conversations_handler(
-            State(state): State<AppState>,
-        ) -> Json<serde_json::Value> {
+        async fn conversations_handler(State(state): State<AppState>) -> Json<serde_json::Value> {
             if let Some(registry) = &state.conversation_registry {
                 match registry.lock() {
                     Ok(r) => {
@@ -782,7 +808,9 @@ impl MonitoringServer {
                             .collect();
                         Json(json!({ "conversations": conv_list }))
                     }
-                    Err(_) => Json(json!({ "conversations": [], "error": "registry mutex poisoned" })),
+                    Err(_) => {
+                        Json(json!({ "conversations": [], "error": "registry mutex poisoned" }))
+                    }
                 }
             } else {
                 Json(json!({ "conversations": [], "error": "conversation registry not available" }))

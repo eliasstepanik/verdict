@@ -4,9 +4,9 @@
 //! Tests the full pipeline: SessionRunner Ã¢â€ â€™ PipelineRunner Ã¢â€ â€™ GuardEngine Ã¢â€ â€™ VerdictEngine
 //! across multiple agents, delegations, and tool invocations.
 
-use verdict::prelude::*;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use verdict::prelude::*;
 
 // ============================================================================
 // HELPERS
@@ -18,10 +18,7 @@ fn create_echo_agent(name: &str) -> Agent {
         name: "echo".into(),
         guard_in: Guard::None,
         action: StepAction::Custom(Arc::new(move |ctx| {
-            let input = ctx.input["task"]
-                .as_str()
-                .unwrap_or("(empty)")
-                .to_string();
+            let input = ctx.input["task"].as_str().unwrap_or("(empty)").to_string();
             let output = format!("Echo: {}", input);
             Ok(StepOutput::new(output))
         })),
@@ -32,9 +29,9 @@ fn create_echo_agent(name: &str) -> Agent {
         output_schema: None,
         dependencies: vec![],
         parallel: false,
-            input_processors: vec![],
-            output_processors: vec![],
-        };
+        input_processors: vec![],
+        output_processors: vec![],
+    };
 
     Agent {
         name: name.into(),
@@ -59,9 +56,9 @@ fn create_session_runner(agents: Vec<Agent>) -> SessionRunner {
         registry.register(agent);
     }
 
-    let runner = Arc::new(Mutex::new(
-        PipelineRunner::with_agent_registry(Arc::new(registry))
-    ));
+    let runner = Arc::new(Mutex::new(PipelineRunner::with_agent_registry(Arc::new(
+        registry,
+    ))));
     SessionRunner::new(runner)
 }
 
@@ -72,11 +69,10 @@ fn create_session_runner(agents: Vec<Agent>) -> SessionRunner {
 /// Test: Create and execute a single turn in a session
 #[tokio::test]
 async fn test_full_session_to_server_stack_single_turn() {
-    let sr = create_session_runner(vec![
-        create_echo_agent("assistant"),
-    ]);
+    let sr = create_session_runner(vec![create_echo_agent("assistant")]);
 
-    let id = sr.new_session("assistant", SessionPolicy::default())
+    let id = sr
+        .new_session("assistant", SessionPolicy::default())
         .await
         .expect("should create session");
 
@@ -94,11 +90,10 @@ async fn test_full_session_to_server_stack_single_turn() {
 /// Test: Execute multiple turns in a single session
 #[tokio::test]
 async fn test_full_session_to_server_stack_multiple_turns() {
-    let sr = create_session_runner(vec![
-        create_echo_agent("assistant"),
-    ]);
+    let sr = create_session_runner(vec![create_echo_agent("assistant")]);
 
-    let id = sr.new_session("assistant", SessionPolicy::default())
+    let id = sr
+        .new_session("assistant", SessionPolicy::default())
         .await
         .expect("should create session");
 
@@ -123,15 +118,15 @@ async fn test_full_session_to_server_stack_multiple_turns() {
 /// Test: Session listing
 #[tokio::test]
 async fn test_session_listing() {
-    let sr = create_session_runner(vec![
-        create_echo_agent("assistant"),
-    ]);
+    let sr = create_session_runner(vec![create_echo_agent("assistant")]);
 
-    let id1 = sr.new_session("assistant", SessionPolicy::default())
+    let id1 = sr
+        .new_session("assistant", SessionPolicy::default())
         .await
         .expect("should create session 1");
 
-    let id2 = sr.new_session("assistant", SessionPolicy::default())
+    let id2 = sr
+        .new_session("assistant", SessionPolicy::default())
         .await
         .expect("should create session 2");
 
@@ -144,11 +139,10 @@ async fn test_session_listing() {
 /// Test: Session closure
 #[tokio::test]
 async fn test_session_closure() {
-    let sr = create_session_runner(vec![
-        create_echo_agent("assistant"),
-    ]);
+    let sr = create_session_runner(vec![create_echo_agent("assistant")]);
 
-    let id = sr.new_session("assistant", SessionPolicy::default())
+    let id = sr
+        .new_session("assistant", SessionPolicy::default())
         .await
         .expect("should create session");
 
@@ -180,23 +174,25 @@ async fn test_server_protocol_ping() {
     impl ServerTransport for VecTransport {
         async fn next_request(&self) -> Result<Option<ClientRequest>, ServerError> {
             let mut q = self.requests.lock().await;
-            if q.is_empty() { Ok(None) } else { Ok(Some(q.remove(0))) }
+            if q.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(q.remove(0)))
+            }
         }
         async fn send_event(&self, e: ServerEvent) -> Result<(), ServerError> {
             self.events.lock().await.push(e);
             Ok(())
         }
-        async fn shutdown(&self) -> Result<(), ServerError> { Ok(()) }
+        async fn shutdown(&self) -> Result<(), ServerError> {
+            Ok(())
+        }
     }
 
-    let sr = Arc::new(create_session_runner(vec![
-        create_echo_agent("assistant"),
-    ]));
+    let sr = Arc::new(create_session_runner(vec![create_echo_agent("assistant")]));
 
     let transport = Arc::new(VecTransport {
-        requests: TokioMutex::new(vec![
-            ClientRequest::Ping,
-        ]),
+        requests: TokioMutex::new(vec![ClientRequest::Ping]),
         events: TokioMutex::new(vec![]),
     });
 
@@ -221,27 +217,29 @@ async fn test_server_protocol_new_session() {
     impl ServerTransport for VecTransport {
         async fn next_request(&self) -> Result<Option<ClientRequest>, ServerError> {
             let mut q = self.requests.lock().await;
-            if q.is_empty() { Ok(None) } else { Ok(Some(q.remove(0))) }
+            if q.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(q.remove(0)))
+            }
         }
         async fn send_event(&self, e: ServerEvent) -> Result<(), ServerError> {
             self.events.lock().await.push(e);
             Ok(())
         }
-        async fn shutdown(&self) -> Result<(), ServerError> { Ok(()) }
+        async fn shutdown(&self) -> Result<(), ServerError> {
+            Ok(())
+        }
     }
 
-    let sr = Arc::new(create_session_runner(vec![
-        create_echo_agent("assistant"),
-    ]));
+    let sr = Arc::new(create_session_runner(vec![create_echo_agent("assistant")]));
 
     let transport = Arc::new(VecTransport {
-        requests: TokioMutex::new(vec![
-            ClientRequest::NewSession {
-                id: "s1".into(),
-                agent: "assistant".into(),
-                policy: None,
-            },
-        ]),
+        requests: TokioMutex::new(vec![ClientRequest::NewSession {
+            id: "s1".into(),
+            agent: "assistant".into(),
+            policy: None,
+        }]),
         events: TokioMutex::new(vec![]),
     });
 
@@ -257,16 +255,17 @@ async fn test_server_protocol_new_session() {
 async fn test_server_protocol_turn() {
     // This test creates a session directly and then executes a turn
     // to verify the Turn protocol works end-to-end
-    let sr = Arc::new(create_session_runner(vec![
-        create_echo_agent("assistant"),
-    ]));
+    let sr = Arc::new(create_session_runner(vec![create_echo_agent("assistant")]));
 
-    let session_id = sr.new_session("assistant", SessionPolicy::default())
+    let session_id = sr
+        .new_session("assistant", SessionPolicy::default())
         .await
         .expect("should create session");
 
     let turn = UserTurn::text("test message");
-    let result = sr.turn(&session_id, turn).await
+    let result = sr
+        .turn(&session_id, turn)
+        .await
         .expect("should execute turn");
 
     match result {
@@ -292,23 +291,25 @@ async fn test_server_protocol_list_sessions() {
     impl ServerTransport for VecTransport {
         async fn next_request(&self) -> Result<Option<ClientRequest>, ServerError> {
             let mut q = self.requests.lock().await;
-            if q.is_empty() { Ok(None) } else { Ok(Some(q.remove(0))) }
+            if q.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(q.remove(0)))
+            }
         }
         async fn send_event(&self, e: ServerEvent) -> Result<(), ServerError> {
             self.events.lock().await.push(e);
             Ok(())
         }
-        async fn shutdown(&self) -> Result<(), ServerError> { Ok(()) }
+        async fn shutdown(&self) -> Result<(), ServerError> {
+            Ok(())
+        }
     }
 
-    let sr = Arc::new(create_session_runner(vec![
-        create_echo_agent("assistant"),
-    ]));
+    let sr = Arc::new(create_session_runner(vec![create_echo_agent("assistant")]));
 
     let transport = Arc::new(VecTransport {
-        requests: TokioMutex::new(vec![
-            ClientRequest::ListSessions,
-        ]),
+        requests: TokioMutex::new(vec![ClientRequest::ListSessions]),
         events: TokioMutex::new(vec![]),
     });
 
@@ -361,9 +362,9 @@ async fn test_full_stack_with_delegation() {
                 output_schema: None,
                 dependencies: vec![],
                 parallel: false,
-            input_processors: vec![],
-            output_processors: vec![],
-        }],
+                input_processors: vec![],
+                output_processors: vec![],
+            }],
             on_failure: FailureMode::Abort,
             max_retries: 0,
         },
@@ -375,7 +376,8 @@ async fn test_full_stack_with_delegation() {
 
     let sr = create_session_runner(vec![worker, orchestrator]);
 
-    let id = sr.new_session("orchestrator", SessionPolicy::default())
+    let id = sr
+        .new_session("orchestrator", SessionPolicy::default())
         .await
         .expect("should create session");
 
@@ -397,11 +399,10 @@ async fn test_full_stack_with_delegation() {
 /// Test: Conversation history accumulation across turns
 #[tokio::test]
 async fn test_conversation_history_accumulation() {
-    let sr = create_session_runner(vec![
-        create_echo_agent("assistant"),
-    ]);
+    let sr = create_session_runner(vec![create_echo_agent("assistant")]);
 
-    let id = sr.new_session("assistant", SessionPolicy::default())
+    let id = sr
+        .new_session("assistant", SessionPolicy::default())
         .await
         .expect("should create session");
 
@@ -416,4 +417,3 @@ async fn test_conversation_history_accumulation() {
     assert_eq!(meta.turn_count, 3);
     assert!(meta.total_tokens.total_tokens > 0);
 }
-

@@ -1,6 +1,6 @@
-use verdict::prelude::*;
 use serde_json::json;
 use std::sync::Arc;
+use verdict::prelude::*;
 use verdict_app::agent::build_eval_pipeline;
 use verdict_app::memory;
 
@@ -27,9 +27,9 @@ async fn test_two_step_pipeline_understand_then_act() {
                 output_schema: None,
                 dependencies: vec![],
                 parallel: false,
-            input_processors: vec![],
-            output_processors: vec![],
-        },
+                input_processors: vec![],
+                output_processors: vec![],
+            },
             AgentStep {
                 name: "act".to_string(),
                 guard_in: Guard::StepPassed("understand".to_string()),
@@ -43,9 +43,9 @@ async fn test_two_step_pipeline_understand_then_act() {
                 output_schema: None,
                 dependencies: vec![],
                 parallel: false,
-            input_processors: vec![],
-            output_processors: vec![],
-        },
+                input_processors: vec![],
+                output_processors: vec![],
+            },
         ],
         on_failure: FailureMode::Abort,
         max_retries: 0,
@@ -56,9 +56,7 @@ async fn test_two_step_pipeline_understand_then_act() {
         description: "Test agent".to_string(),
         pipeline,
         tools: ToolSet::None,
-        skills: SkillSet {
-            skills: vec![],
-        },
+        skills: SkillSet { skills: vec![] },
         policy: AgentPolicy::default(),
         scorers: vec![],
     };
@@ -95,9 +93,9 @@ async fn test_act_blocked_when_understand_fails() {
                 output_schema: None,
                 dependencies: vec![],
                 parallel: false,
-            input_processors: vec![],
-            output_processors: vec![],
-        },
+                input_processors: vec![],
+                output_processors: vec![],
+            },
             AgentStep {
                 name: "act".to_string(),
                 guard_in: Guard::StepPassed("understand".to_string()),
@@ -111,9 +109,9 @@ async fn test_act_blocked_when_understand_fails() {
                 output_schema: None,
                 dependencies: vec![],
                 parallel: false,
-            input_processors: vec![],
-            output_processors: vec![],
-        },
+                input_processors: vec![],
+                output_processors: vec![],
+            },
         ],
         on_failure: FailureMode::Abort,
         max_retries: 0,
@@ -124,9 +122,7 @@ async fn test_act_blocked_when_understand_fails() {
         description: "Test agent".to_string(),
         pipeline,
         tools: ToolSet::None,
-        skills: SkillSet {
-            skills: vec![],
-        },
+        skills: SkillSet { skills: vec![] },
         policy: AgentPolicy::default(),
         scorers: vec![],
     };
@@ -151,9 +147,7 @@ async fn test_guard_out_noemptyoutput_blocks_empty_response() {
         steps: vec![AgentStep {
             name: "test_step".to_string(),
             guard_in: Guard::None,
-            action: StepAction::Custom(Arc::new(|_ctx| {
-                Ok(StepOutput::new("".to_string()))
-            })),
+            action: StepAction::Custom(Arc::new(|_ctx| Ok(StepOutput::new("".to_string())))),
             guard_out: Guard::NonEmptyOutput,
             verdict: Verdict::Automated(Guard::NonEmptyOutput),
             tools: ToolSet::None,
@@ -173,9 +167,7 @@ async fn test_guard_out_noemptyoutput_blocks_empty_response() {
         description: "Test agent".to_string(),
         pipeline,
         tools: ToolSet::None,
-        skills: SkillSet {
-            skills: vec![],
-        },
+        skills: SkillSet { skills: vec![] },
         policy: AgentPolicy::default(),
         scorers: vec![],
     };
@@ -218,9 +210,7 @@ async fn test_guard_out_noemptyoutput_passes_nonempty() {
         description: "Test agent".to_string(),
         pipeline,
         tools: ToolSet::None,
-        skills: SkillSet {
-            skills: vec![],
-        },
+        skills: SkillSet { skills: vec![] },
         policy: AgentPolicy::default(),
         scorers: vec![],
     };
@@ -252,9 +242,7 @@ async fn test_agent_registry_lookup() {
             max_retries: 0,
         },
         tools: ToolSet::None,
-        skills: SkillSet {
-            skills: vec![],
-        },
+        skills: SkillSet { skills: vec![] },
         policy: AgentPolicy::default(),
         scorers: vec![],
     };
@@ -335,9 +323,9 @@ async fn test_step_results_are_tracked() {
                 output_schema: None,
                 dependencies: vec![],
                 parallel: false,
-            input_processors: vec![],
-            output_processors: vec![],
-        },
+                input_processors: vec![],
+                output_processors: vec![],
+            },
             AgentStep {
                 name: "step2".to_string(),
                 guard_in: Guard::StepPassed("step1".to_string()),
@@ -351,9 +339,9 @@ async fn test_step_results_are_tracked() {
                 output_schema: None,
                 dependencies: vec![],
                 parallel: false,
-            input_processors: vec![],
-            output_processors: vec![],
-        },
+                input_processors: vec![],
+                output_processors: vec![],
+            },
         ],
         on_failure: FailureMode::Abort,
         max_retries: 0,
@@ -364,9 +352,7 @@ async fn test_step_results_are_tracked() {
         description: "Test agent".to_string(),
         pipeline,
         tools: ToolSet::None,
-        skills: SkillSet {
-            skills: vec![],
-        },
+        skills: SkillSet { skills: vec![] },
         policy: AgentPolicy::default(),
         scorers: vec![],
     };
@@ -398,9 +384,7 @@ async fn test_automated_verdict_passes() {
         steps: vec![AgentStep {
             name: "test_step".to_string(),
             guard_in: Guard::None,
-            action: StepAction::Custom(Arc::new(|_ctx| {
-                Ok(StepOutput::new("valid".to_string()))
-            })),
+            action: StepAction::Custom(Arc::new(|_ctx| Ok(StepOutput::new("valid".to_string())))),
             guard_out: Guard::NonEmptyOutput,
             verdict: Verdict::Automated(Guard::NonEmptyOutput),
             tools: ToolSet::None,
@@ -420,9 +404,7 @@ async fn test_automated_verdict_passes() {
         description: "Test agent".to_string(),
         pipeline,
         tools: ToolSet::None,
-        skills: SkillSet {
-            skills: vec![],
-        },
+        skills: SkillSet { skills: vec![] },
         policy: AgentPolicy::default(),
         scorers: vec![],
     };
@@ -449,9 +431,7 @@ async fn test_single_step_pipeline() {
         steps: vec![AgentStep {
             name: "only_step".to_string(),
             guard_in: Guard::None,
-            action: StepAction::Custom(Arc::new(|_ctx| {
-                Ok(StepOutput::new("result".to_string()))
-            })),
+            action: StepAction::Custom(Arc::new(|_ctx| Ok(StepOutput::new("result".to_string())))),
             guard_out: Guard::NonEmptyOutput,
             verdict: Verdict::Automated(Guard::NonEmptyOutput),
             tools: ToolSet::None,
@@ -471,9 +451,7 @@ async fn test_single_step_pipeline() {
         description: "Test agent".to_string(),
         pipeline,
         tools: ToolSet::None,
-        skills: SkillSet {
-            skills: vec![],
-        },
+        skills: SkillSet { skills: vec![] },
         policy: AgentPolicy::default(),
         scorers: vec![],
     };
@@ -518,9 +496,7 @@ async fn test_pipeline_with_json_input() {
         description: "Test agent".to_string(),
         pipeline,
         tools: ToolSet::None,
-        skills: SkillSet {
-            skills: vec![],
-        },
+        skills: SkillSet { skills: vec![] },
         policy: AgentPolicy::default(),
         scorers: vec![],
     };
@@ -554,9 +530,9 @@ async fn test_pipeline_preserves_step_output() {
                 output_schema: None,
                 dependencies: vec![],
                 parallel: false,
-            input_processors: vec![],
-            output_processors: vec![],
-        },
+                input_processors: vec![],
+                output_processors: vec![],
+            },
             AgentStep {
                 name: "consume".to_string(),
                 guard_in: Guard::StepPassed("produce".to_string()),
@@ -576,9 +552,9 @@ async fn test_pipeline_preserves_step_output() {
                 output_schema: None,
                 dependencies: vec![],
                 parallel: false,
-            input_processors: vec![],
-            output_processors: vec![],
-        },
+                input_processors: vec![],
+                output_processors: vec![],
+            },
         ],
         on_failure: FailureMode::Abort,
         max_retries: 0,
@@ -589,9 +565,7 @@ async fn test_pipeline_preserves_step_output() {
         description: "Test agent".to_string(),
         pipeline,
         tools: ToolSet::None,
-        skills: SkillSet {
-            skills: vec![],
-        },
+        skills: SkillSet { skills: vec![] },
         policy: AgentPolicy::default(),
         scorers: vec![],
     };
@@ -608,8 +582,6 @@ async fn test_pipeline_preserves_step_output() {
         .raw
         .contains("specific_value"));
 }
-
-
 
 // ============================================================================
 // NEW PHASE A-F INTEGRATION TESTS
@@ -644,9 +616,7 @@ async fn test_memory_agent_pipeline_runs_with_custom_action() {
         description: "Test agent for custom action".to_string(),
         pipeline,
         tools: ToolSet::None,
-        skills: SkillSet {
-            skills: vec![],
-        },
+        skills: SkillSet { skills: vec![] },
         policy: AgentPolicy::default(),
         scorers: vec![],
     };
@@ -659,23 +629,30 @@ async fn test_memory_agent_pipeline_runs_with_custom_action() {
 
     assert!(result.success);
     assert_eq!(result.steps_passed.len(), 1);
-    assert!(result.step_results["custom_step"].output.raw.contains("custom response"));
+    assert!(result.step_results["custom_step"]
+        .output
+        .raw
+        .contains("custom response"));
 }
 
 #[test]
 fn test_eval_pipeline_structure_has_rubric_loop() {
     let pipeline = build_eval_pipeline();
-    
+
     // Verify the pipeline structure and action type
     assert_eq!(pipeline.name, "eval-pipeline");
     assert_eq!(pipeline.steps.len(), 1);
-    
+
     let step = &pipeline.steps[0];
     assert_eq!(step.name, "evaluate_with_rubric");
-    
+
     // Verify it has RubricLoop action
     match &step.action {
-        StepAction::RubricLoop { rubric, max_iterations, .. } => {
+        StepAction::RubricLoop {
+            rubric,
+            max_iterations,
+            ..
+        } => {
             assert_eq!(rubric.len(), 2);
             assert_eq!(*max_iterations, 3);
         }
@@ -714,9 +691,7 @@ async fn test_multi_step_pipeline_with_memory_store() {
         description: "Test agent with memory store".to_string(),
         pipeline,
         tools: ToolSet::None,
-        skills: SkillSet {
-            skills: vec![],
-        },
+        skills: SkillSet { skills: vec![] },
         policy: AgentPolicy::default(),
         scorers: vec![],
     };

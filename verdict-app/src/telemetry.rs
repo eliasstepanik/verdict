@@ -3,7 +3,7 @@
 //! Converts audit logs to OpenTelemetry spans and exports them.
 
 use verdict::audit::AuditLog;
-use verdict_telemetry::{audit_log_to_spans, StdoutExporter, OtelExporter};
+use verdict_telemetry::{audit_log_to_spans, OtelExporter, StdoutExporter};
 
 /// Export audit log as OpenTelemetry spans via stdout
 pub async fn export_telemetry(audit_log: &AuditLog) {

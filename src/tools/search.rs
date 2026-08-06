@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::tools::tool::{Tool, ToolOutput, ToolError, ToolSource, ToolContext};
+use crate::tools::tool::{Tool, ToolContext, ToolError, ToolOutput, ToolSource};
 
 /// Search files by glob pattern
 pub struct SearchFilesTool;
@@ -43,44 +43,42 @@ impl Tool for SearchFilesTool {
         ToolSource::Builtin
     }
 
+    async fn call(&self, args: Value, ctx: ToolContext) -> Result<ToolOutput, ToolError> {
+        let pattern = args
+            .get("pattern")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| ToolError::SchemaValidationFailed {
+                reason: "missing 'pattern' field".to_string(),
+            })?
+            .to_string();
 
-     async fn call(&self, args: Value, ctx: ToolContext) -> Result<ToolOutput, ToolError> {
-         let pattern = args
-             .get("pattern")
-             .and_then(|v| v.as_str())
-             .ok_or_else(|| ToolError::SchemaValidationFailed {
-                 reason: "missing 'pattern' field".to_string(),
-             })?
-             .to_string();
+        let root_str = args
+            .get("root")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| ToolError::SchemaValidationFailed {
+                reason: "missing 'root' field".to_string(),
+            })?
+            .to_string();
 
-         let root_str = args
-             .get("root")
-             .and_then(|v| v.as_str())
-             .ok_or_else(|| ToolError::SchemaValidationFailed {
-                 reason: "missing 'root' field".to_string(),
-             })?
-             .to_string();
+        let workspace_root = ctx.filesystem_policy.workspace_root.clone();
 
-         let workspace_root = ctx.filesystem_policy.workspace_root.clone();
+        // Wrap sync filesystem work in spawn_blocking to avoid blocking the tokio worker thread
+        let result = tokio::task::spawn_blocking(move || {
+            let search_root = workspace_root.join(root_str);
+            let mut matches = Vec::new();
+            search_files_iterative(&search_root, &pattern, &mut matches);
+            matches
+        })
+        .await
+        .map_err(|e| ToolError::ExecutionFailed {
+            reason: format!("task panicked: {}", e),
+        })?;
 
-         // Wrap sync filesystem work in spawn_blocking to avoid blocking the tokio worker thread
-         let result = tokio::task::spawn_blocking(move || {
-             let search_root = workspace_root.join(root_str);
-             let mut matches = Vec::new();
-             search_files_iterative(&search_root, &pattern, &mut matches);
-             matches
-         })
-         .await
-         .map_err(|e| ToolError::ExecutionFailed {
-             reason: format!("task panicked: {}", e),
-         })?;
-
-         Ok(ToolOutput::json(json!({
-             "matches": result,
-             "count": result.len()
-         })))
-     }
-
+        Ok(ToolOutput::json(json!({
+            "matches": result,
+            "count": result.len()
+        })))
+    }
 }
 
 fn search_files_iterative(path: &Path, pattern: &str, matches: &mut Vec<String>) {
@@ -95,10 +93,7 @@ fn search_files_iterative(path: &Path, pattern: &str, matches: &mut Vec<String>)
             for entry in entries {
                 if let Ok(entry) = entry {
                     let entry_path = entry.path();
-                    let file_name = entry
-                        .file_name()
-                        .to_string_lossy()
-                        .to_string();
+                    let file_name = entry.file_name().to_string_lossy().to_string();
 
                     if file_name.contains(pattern) {
                         matches.push(entry_path.to_string_lossy().to_string());
@@ -151,57 +146,55 @@ impl Tool for GrepTool {
         ToolSource::Builtin
     }
 
+    async fn call(&self, args: Value, ctx: ToolContext) -> Result<ToolOutput, ToolError> {
+        let pattern = args
+            .get("pattern")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| ToolError::SchemaValidationFailed {
+                reason: "missing 'pattern' field".to_string(),
+            })?
+            .to_string();
 
-     async fn call(&self, args: Value, ctx: ToolContext) -> Result<ToolOutput, ToolError> {
-         let pattern = args
-             .get("pattern")
-             .and_then(|v| v.as_str())
-             .ok_or_else(|| ToolError::SchemaValidationFailed {
-                 reason: "missing 'pattern' field".to_string(),
-             })?
-             .to_string();
+        let path_str = args
+            .get("path")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| ToolError::SchemaValidationFailed {
+                reason: "missing 'path' field".to_string(),
+            })?
+            .to_string();
 
-         let path_str = args
-             .get("path")
-             .and_then(|v| v.as_str())
-             .ok_or_else(|| ToolError::SchemaValidationFailed {
-                 reason: "missing 'path' field".to_string(),
-             })?
-             .to_string();
+        let recursive = args
+            .get("recursive")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
 
-         let recursive = args
-             .get("recursive")
-             .and_then(|v| v.as_bool())
-             .unwrap_or(true);
+        let workspace_root = ctx.filesystem_policy.workspace_root.clone();
 
-         let workspace_root = ctx.filesystem_policy.workspace_root.clone();
+        // Wrap sync filesystem work in spawn_blocking to avoid blocking the tokio worker thread
+        let result = tokio::task::spawn_blocking(move || {
+            let search_path = workspace_root.join(path_str);
+            let mut matches = Vec::new();
 
-         // Wrap sync filesystem work in spawn_blocking to avoid blocking the tokio worker thread
-         let result = tokio::task::spawn_blocking(move || {
-             let search_path = workspace_root.join(path_str);
-             let mut matches = Vec::new();
+            if search_path.is_file() {
+                grep_file_sync(&search_path, &pattern, 1, &mut matches);
+            } else if search_path.is_dir() && recursive {
+                grep_directory_recursive_sync(&search_path, &pattern, &mut matches);
+            } else if search_path.is_dir() {
+                grep_directory_sync(&search_path, &pattern, &mut matches);
+            }
 
-             if search_path.is_file() {
-                 grep_file_sync(&search_path, &pattern, 1, &mut matches);
-             } else if search_path.is_dir() && recursive {
-                 grep_directory_recursive_sync(&search_path, &pattern, &mut matches);
-             } else if search_path.is_dir() {
-                 grep_directory_sync(&search_path, &pattern, &mut matches);
-             }
+            matches
+        })
+        .await
+        .map_err(|e| ToolError::ExecutionFailed {
+            reason: format!("task panicked: {}", e),
+        })?;
 
-             matches
-         })
-         .await
-         .map_err(|e| ToolError::ExecutionFailed {
-             reason: format!("task panicked: {}", e),
-         })?;
-
-         Ok(ToolOutput::json(json!({
-             "matches": result,
-             "count": result.len()
-         })))
-     }
-
+        Ok(ToolOutput::json(json!({
+            "matches": result,
+            "count": result.len()
+        })))
+    }
 }
 
 fn grep_file_sync(path: &Path, pattern: &str, line_offset: usize, matches: &mut Vec<Value>) {

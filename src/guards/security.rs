@@ -1,6 +1,6 @@
-use crate::context::StepContext;
-use crate::agent::NetworkPolicy;
 use super::GuardError;
+use crate::agent::NetworkPolicy;
+use crate::context::StepContext;
 
 pub fn check_no_secrets_in_output(
     _guard: &super::Guard,
@@ -41,13 +41,7 @@ pub fn check_no_dangerous_shell_commands(
 ) -> Result<(), GuardError> {
     if let Some(output) = &ctx.output {
         let text = &output.raw.to_lowercase();
-        let dangerous = vec![
-            "rm -rf",
-            "dd if=",
-            "mkfs",
-            ":(){:|:&};:",
-            ":(){ :|:& };:",
-        ];
+        let dangerous = vec!["rm -rf", "dd if=", "mkfs", ":(){:|:&};:", ":(){ :|:& };:"];
         for pattern in dangerous {
             if text.contains(pattern) {
                 return Err(GuardError::Failed {
@@ -117,10 +111,7 @@ pub fn check_no_permission_escalation(
     }
 }
 
-pub fn check_no_safety_bypass(
-    _guard: &super::Guard,
-    ctx: &StepContext,
-) -> Result<(), GuardError> {
+pub fn check_no_safety_bypass(_guard: &super::Guard, ctx: &StepContext) -> Result<(), GuardError> {
     if let Some(output) = &ctx.output {
         let text = &output.raw.to_lowercase();
         let patterns = vec!["ignore safety", "#[allow(unsafe)]", "unsafe {"];
@@ -138,10 +129,7 @@ pub fn check_no_safety_bypass(
     }
 }
 
-pub fn check_no_test_disabling(
-    _guard: &super::Guard,
-    ctx: &StepContext,
-) -> Result<(), GuardError> {
+pub fn check_no_test_disabling(_guard: &super::Guard, ctx: &StepContext) -> Result<(), GuardError> {
     if let Some(output) = &ctx.output {
         let text = &output.raw.to_lowercase();
         let patterns = vec!["#[ignore]", "#[skip]", "skip_test"];
@@ -159,10 +147,7 @@ pub fn check_no_test_disabling(
     }
 }
 
-pub fn check_no_guard_removal(
-    _guard: &super::Guard,
-    ctx: &StepContext,
-) -> Result<(), GuardError> {
+pub fn check_no_guard_removal(_guard: &super::Guard, ctx: &StepContext) -> Result<(), GuardError> {
     if let Some(output) = &ctx.output {
         let removes_guard = output.raw.lines().any(|line| {
             line.starts_with('-') && !line.starts_with("---") && line.contains("Guard::")

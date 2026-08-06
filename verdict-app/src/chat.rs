@@ -1,9 +1,9 @@
-use verdict::prelude::*;
-use crate::config::AppConfig;
 use crate::agent::{build_assistant_agent, build_echo_agent, build_improve_pipeline};
+use crate::config::AppConfig;
 use crate::telemetry;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use verdict::prelude::*;
 
 /// Run the interactive chat REPL
 pub async fn run(config: AppConfig, agent_name: String) {
@@ -30,27 +30,25 @@ async fn run_chat_with_llm(config: AppConfig, agent_name: String) {
     // Build registries
     let tool_registry = ToolRegistry::with_builtins();
     let skill_registry = SkillRegistry::with_builtins();
-    
+
     // Build agent + registry
     let agent = build_assistant_agent(&config, &agent_name);
     let mut agent_registry = AgentRegistry::new();
     agent_registry.register(agent);
-    
+
     // Register reflector agent for delegation support
     agent_registry.register(reflector_agent());
 
     // Create runner with all registries
-    let mut runner = PipelineRunner::with_registries(
-        Arc::new(tool_registry),
-        Arc::new(agent_registry),
-    );
+    let mut runner =
+        PipelineRunner::with_registries(Arc::new(tool_registry), Arc::new(agent_registry));
     runner = runner.with_llm_client(Arc::clone(&llm_client));
     runner.skill_registry = Arc::new(skill_registry.clone());
 
     let runner = Arc::new(Mutex::new(runner));
     let runner_for_improve = Arc::clone(&runner);
     let session_runner = SessionRunner::new(Arc::clone(&runner));
-    
+
     // Track active skill for the session
     let mut active_skill: Option<String> = None;
 
@@ -171,10 +169,12 @@ async fn run_chat_with_llm(config: AppConfig, agent_name: String) {
         let text = if let Some(skill_name) = active_skill.clone() {
             if let Some(skill) = skill_registry.get(&skill_name) {
                 active_skill = None; // consume — one turn only
-                // Delimiter keeps skill instructions visually separated from user request
+                                     // Delimiter keeps skill instructions visually separated from user request
                 format!(
                     "<skill name=\"{}\">\n{}\n</skill>\n\n{}",
-                    skill_name, skill.instructions.trim(), trimmed
+                    skill_name,
+                    skill.instructions.trim(),
+                    trimmed
                 )
             } else {
                 trimmed.clone()
@@ -202,18 +202,17 @@ async fn run_chat_with_llm(config: AppConfig, agent_name: String) {
                     &session_runner,
                     &session_id,
                     &llm_client,
-                    40,  // message count threshold (20 turns = 40 messages)
-                    5,   // keep last 5 user+assistant pairs (10 messages)
-                ).await;
+                    40, // message count threshold (20 turns = 40 messages)
+                    5,  // keep last 5 user+assistant pairs (10 messages)
+                )
+                .await;
             }
             Ok(TurnResult::Error(msg)) => {
                 println!();
                 println!("[error: {}]", msg);
                 println!();
             }
-            Ok(TurnResult::Cancelled {
-                partial_output, ..
-            }) => {
+            Ok(TurnResult::Cancelled { partial_output, .. }) => {
                 println!();
                 if partial_output.is_empty() {
                     println!("[cancelled]");
@@ -273,10 +272,14 @@ async fn maybe_compact_history(
         return;
     }
 
-    println!("\n[compaction] {} messages in history — summarizing {} old messages...",
-        total, to_summarize.len());
+    println!(
+        "\n[compaction] {} messages in history — summarizing {} old messages...",
+        total,
+        to_summarize.len()
+    );
 
-    let history_text: String = to_summarize.iter()
+    let history_text: String = to_summarize
+        .iter()
         .map(|m| format!("{:?}: {}", m.role, m.content))
         .collect::<Vec<_>>()
         .join("\n");
@@ -284,7 +287,8 @@ async fn maybe_compact_history(
     let req = LlmRequest {
         system: "You are a context summarizer. Produce a dense factual summary of this \
                  conversation excerpt. Preserve all key decisions, facts, code, and context \
-                 needed to continue the conversation. Be concise but complete.".to_string(),
+                 needed to continue the conversation. Be concise but complete."
+            .to_string(),
         user: history_text,
         model: String::new(), // use LlmClient default
         max_tokens: Some(512),
@@ -296,9 +300,15 @@ async fn maybe_compact_history(
 
     match llm_client.complete(req).await {
         Ok(resp) => {
-            match session_runner.compact_history(session_id, resp.content, keep_recent).await {
-                Ok(()) => println!("[compaction] ✓ {} messages condensed, {} recent messages kept\n",
-                    total - keep_recent * 2, keep_recent * 2),
+            match session_runner
+                .compact_history(session_id, resp.content, keep_recent)
+                .await
+            {
+                Ok(()) => println!(
+                    "[compaction] ✓ {} messages condensed, {} recent messages kept\n",
+                    total - keep_recent * 2,
+                    keep_recent * 2
+                ),
                 Err(e) => println!("[compaction] Failed to apply: {}\n", e),
             }
         }
@@ -343,7 +353,9 @@ async fn do_self_improve(
 
     let result = {
         let mut runner = runner_arc.lock().await;
-        runner.run(&improve_agent.pipeline, &improve_agent, input).await
+        runner
+            .run(&improve_agent.pipeline, &improve_agent, input)
+            .await
     };
 
     match result {

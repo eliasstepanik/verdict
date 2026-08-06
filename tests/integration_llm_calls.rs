@@ -10,14 +10,15 @@
 //! Run all: `cargo test --test integration_llm_calls`
 //! Run one: `cargo test --test integration_llm_calls test_llm_call_produces_nonempty_output`
 
+use serde_json::json;
 use std::sync::Arc;
 use verdict::prelude::*;
-use serde_json::json;
 
 // ─── constants ────────────────────────────────────────────────────────────────
 
 const PROXY_BASE_URL: &str = "http://192.168.178.166:4141/v1";
-const PROXY_API_KEY: &str = "sk-llmp-239b82f7192fd75bff9300d1391bacafe049144a19f84d6d26f9cbc5cfb944d9.opencode";
+const PROXY_API_KEY: &str =
+    "sk-llmp-239b82f7192fd75bff9300d1391bacafe049144a19f84d6d26f9cbc5cfb944d9.opencode";
 const PROXY_MODEL: &str = "claude-haiku-4-5-20251001";
 
 fn setup_env() {
@@ -40,7 +41,6 @@ fn simple_agent(pipeline: &Pipeline) -> Agent {
         skills: SkillSet::default(),
         policy: AgentPolicy::default(),
         scorers: Vec::new(),
-
     }
 }
 
@@ -78,13 +78,18 @@ async fn test_llm_call_produces_nonempty_output() {
     let agent = simple_agent(&pipeline);
     let mut runner = PipelineRunner::new().with_llm_client(llm_client());
 
-    let result = runner.run(&pipeline, &agent, json!({})).await
+    let result = runner
+        .run(&pipeline, &agent, json!({}))
+        .await
         .expect("LLM call should succeed with proxy");
 
     assert!(result.success);
     let output = &result.step_results["ask"].output.raw;
     assert!(!output.is_empty(), "LLM output must be non-empty");
-    assert!(output.len() > 5, "LLM output should be a real response, got: {output}");
+    assert!(
+        output.len() > 5,
+        "LLM output should be a real response, got: {output}"
+    );
 }
 
 // ─── Test 2: LlmCall without client fails with ActionFailed ──────────────────
@@ -161,7 +166,8 @@ async fn test_llm_call_template_substitution_resolves_prior_step_output() {
         guard_in: Guard::None,
         action: StepAction::LlmCall {
             system: "You are a helpful assistant. Reply with exactly one short sentence.".into(),
-            user: "The prior step computed: {compute}. Just say OK and repeat the value back.".into(),
+            user: "The prior step computed: {compute}. Just say OK and repeat the value back."
+                .into(),
             model: None,
             conversation_id: None,
             append_to_history: false,
@@ -186,7 +192,9 @@ async fn test_llm_call_template_substitution_resolves_prior_step_output() {
     let agent = simple_agent(&pipeline);
     let mut runner = PipelineRunner::new().with_llm_client(llm_client());
 
-    let result = runner.run(&pipeline, &agent, json!({})).await
+    let result = runner
+        .run(&pipeline, &agent, json!({}))
+        .await
         .expect("pipeline with template substitution should succeed");
 
     assert!(result.success);
@@ -256,7 +264,9 @@ async fn test_llm_multi_turn_conversation_history_appended() {
     let agent = simple_agent(&pipeline);
     let mut runner = PipelineRunner::new().with_llm_client(llm_client());
 
-    let result = runner.run(&pipeline, &agent, json!({})).await
+    let result = runner
+        .run(&pipeline, &agent, json!({}))
+        .await
         .expect("multi-turn pipeline should succeed");
 
     assert!(result.success);
@@ -305,7 +315,9 @@ async fn test_llm_judge_verdict_passes_when_pattern_present() {
     let agent = simple_agent(&pipeline);
     let mut runner = PipelineRunner::new().with_llm_client(llm_client());
 
-    let result = runner.run(&pipeline, &agent, json!({})).await
+    let result = runner
+        .run(&pipeline, &agent, json!({}))
+        .await
         .expect("LlmJudge on correct fact should pass");
 
     assert!(result.success);
@@ -366,9 +378,7 @@ async fn test_semantic_check_guard_passes_on_correct_output() {
         action: StepAction::Custom(Arc::new(|_| {
             Ok(StepOutput::new("The sum of 2 + 2 is 4.".into()))
         })),
-        guard_out: Guard::SemanticCheck(
-            "The output must state that 2 + 2 equals 4".into()
-        ),
+        guard_out: Guard::SemanticCheck("The output must state that 2 + 2 equals 4".into()),
         verdict: Verdict::None,
         tools: ToolSet::None,
         injection_protection: InjectionProtection::None,
@@ -388,7 +398,9 @@ async fn test_semantic_check_guard_passes_on_correct_output() {
     let agent = simple_agent(&pipeline);
     let mut runner = PipelineRunner::new().with_llm_client(llm_client());
 
-    let result = runner.run(&pipeline, &agent, json!({})).await
+    let result = runner
+        .run(&pipeline, &agent, json!({}))
+        .await
         .expect("SemanticCheck should pass when output satisfies the requirement");
 
     assert!(result.success);
@@ -403,10 +415,12 @@ async fn test_semantic_check_guard_fails_on_wrong_output() {
         name: "semantic_fail".into(),
         guard_in: Guard::None,
         action: StepAction::Custom(Arc::new(|_| {
-            Ok(StepOutput::new("The sky is green and grass is blue.".into()))
+            Ok(StepOutput::new(
+                "The sky is green and grass is blue.".into(),
+            ))
         })),
         guard_out: Guard::SemanticCheck(
-            "The output must correctly state natural colour facts (blue sky, green grass)".into()
+            "The output must correctly state natural colour facts (blue sky, green grass)".into(),
         ),
         verdict: Verdict::None,
         tools: ToolSet::None,
@@ -430,7 +444,13 @@ async fn test_semantic_check_guard_fails_on_wrong_output() {
     let err = runner.run(&pipeline, &agent, json!({})).await.unwrap_err();
 
     assert!(
-        matches!(err, PipelineError::GuardFailed { phase: GuardPhase::Out, .. }),
+        matches!(
+            err,
+            PipelineError::GuardFailed {
+                phase: GuardPhase::Out,
+                ..
+            }
+        ),
         "SemanticCheck should fail on incorrect output, got: {err:?}"
     );
 }

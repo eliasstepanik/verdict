@@ -3,10 +3,10 @@ use std::sync::Arc;
 use thiserror::Error;
 
 use crate::context::StepContext;
-use crate::guards::GuardError;
-use crate::verdict::VerdictError;
-use crate::pipeline::Pipeline;
 use crate::guards::Guard;
+use crate::guards::GuardError;
+use crate::pipeline::Pipeline;
+use crate::verdict::VerdictError;
 
 /// Specification for an LLM provider and model
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -43,22 +43,27 @@ pub struct DelegationPolicy {
     pub require_user_approval: bool,
     /// Memory isolation strategy for delegated agents — Phase D1
     pub memory_isolation: MemoryIsolation,
-    
+
     /// Hook called before delegation starts; can modify input or reject delegation
     #[serde(skip)]
-    pub on_delegation_start: Option<Arc<dyn Fn(&DelegationContext) -> DelegationDecision + Send + Sync>>,
-    
+    pub on_delegation_start:
+        Option<Arc<dyn Fn(&DelegationContext) -> DelegationDecision + Send + Sync>>,
+
     /// Hook called after delegation completes; can inject feedback or bail out
     #[serde(skip)]
-    pub on_delegation_complete: Option<Arc<dyn Fn(&DelegationResult) -> DelegationFeedback + Send + Sync>>,
-    
+    pub on_delegation_complete:
+        Option<Arc<dyn Fn(&DelegationResult) -> DelegationFeedback + Send + Sync>>,
+
     /// Hook called after each LoopUntil iteration completes
     #[serde(skip)]
-    pub on_iteration_complete: Option<Arc<dyn Fn(&IterationContext) -> IterationDecision + Send + Sync>>,
-    
+    pub on_iteration_complete:
+        Option<Arc<dyn Fn(&IterationContext) -> IterationDecision + Send + Sync>>,
+
     /// Optional message filter to transform conversation history before passing to child agent
     #[serde(skip)]
-    pub message_filter: Option<Arc<dyn Fn(&crate::llm::MessageHistory) -> crate::llm::MessageHistory + Send + Sync>>,
+    pub message_filter: Option<
+        Arc<dyn Fn(&crate::llm::MessageHistory) -> crate::llm::MessageHistory + Send + Sync>,
+    >,
 }
 
 impl Default for DelegationPolicy {
@@ -89,10 +94,22 @@ impl std::fmt::Debug for DelegationPolicy {
             .field("inherit_budget", &self.inherit_budget)
             .field("require_user_approval", &self.require_user_approval)
             .field("memory_isolation", &self.memory_isolation)
-            .field("on_delegation_start", &self.on_delegation_start.as_ref().map(|_| "<function>"))
-            .field("on_delegation_complete", &self.on_delegation_complete.as_ref().map(|_| "<function>"))
-            .field("on_iteration_complete", &self.on_iteration_complete.as_ref().map(|_| "<function>"))
-            .field("message_filter", &self.message_filter.as_ref().map(|_| "<function>"))
+            .field(
+                "on_delegation_start",
+                &self.on_delegation_start.as_ref().map(|_| "<function>"),
+            )
+            .field(
+                "on_delegation_complete",
+                &self.on_delegation_complete.as_ref().map(|_| "<function>"),
+            )
+            .field(
+                "on_iteration_complete",
+                &self.on_iteration_complete.as_ref().map(|_| "<function>"),
+            )
+            .field(
+                "message_filter",
+                &self.message_filter.as_ref().map(|_| "<function>"),
+            )
             .finish()
     }
 }
@@ -155,8 +172,6 @@ pub enum IterationFailureMode {
     Abort,
 }
 
-
-
 /// Error from remote agent execution
 #[derive(Error, Debug)]
 pub enum RemoteAgentError {
@@ -196,10 +211,7 @@ pub struct StepOutput {
 
 impl StepOutput {
     pub fn new(raw: String) -> Self {
-        Self {
-            raw,
-            parsed: None,
-        }
+        Self { raw, parsed: None }
     }
 
     pub fn with_parsed(raw: String, parsed: Value) -> Self {
@@ -225,10 +237,7 @@ pub enum StepAction {
     },
 
     /// Run a tool directly
-    ToolCall {
-        tool: String,
-        args: Value,
-    },
+    ToolCall { tool: String, args: Value },
 
     /// Delegate to a named agent
     DelegateAgent {
@@ -238,7 +247,6 @@ pub enum StepAction {
         delegation_policy: DelegationPolicy,
         /// If true, spawn child agent as fire-and-forget task (Phase D3)
         detached: bool,
-
     },
 
     /// Execute a sub-pipeline
@@ -308,20 +316,22 @@ pub enum StepAction {
     Sleep { duration_ms: u64 },
 
     /// Sleep until a specific timestamp (A3)
-    SleepUntil { timestamp: chrono::DateTime<chrono::Utc> },
+    SleepUntil {
+        timestamp: chrono::DateTime<chrono::Utc>,
+    },
 
     /// ForEach: iterate over array items with optional concurrency (A4)
     ForEach {
-        input_array_key: String,   // key into step_results for the array
-        body: Box<StepAction>,     // executed for each item
-        concurrency: usize,        // 1 = sequential, >1 = concurrent with semaphore
-        collect_results: bool,     // if true, output is JSON array of all results
+        input_array_key: String, // key into step_results for the array
+        body: Box<StepAction>,   // executed for each item
+        concurrency: usize,      // 1 = sequential, >1 = concurrent with semaphore
+        collect_results: bool,   // if true, output is JSON array of all results
     },
 
     /// Suspend pipeline execution and save state for later resume (Phase D4)
     Suspend {
         reason: String,
-        resume_schema: Option<Value>,  // JSON schema the resume_data must match
+        resume_schema: Option<Value>, // JSON schema the resume_data must match
         timeout_seconds: Option<u64>,
     },
 
@@ -330,9 +340,8 @@ pub enum StepAction {
         body: Box<StepAction>,
         rubric: Vec<crate::eval::RubricItem>,
         max_iterations: u32,
-        judge_model: Option<ProviderSpec>,  // None = use runner's default
+        judge_model: Option<ProviderSpec>, // None = use runner's default
     },
-
 }
 
 /// Stop condition for ToolUseLoop
@@ -341,7 +350,6 @@ pub enum StopCondition {
     /// Stop when LLM returns no tool calls (text-only response)
     TextOnly,
     /// Stop when output contains a substring pattern (case-sensitive; not a regex)
-
     Pattern(String),
     /// Always run to max_rounds
     MaxRounds,
@@ -367,8 +375,7 @@ impl std::fmt::Debug for StepAction {
                 } else {
                     user.clone()
                 };
-                f
-                    .debug_struct("LlmCall")
+                f.debug_struct("LlmCall")
                     .field("system", &sys_preview)
                     .field("user", &usr_preview)
                     .field("model", model)
@@ -391,10 +398,9 @@ impl std::fmt::Debug for StepAction {
                 .field("delegation_policy", delegation_policy)
                 .field("detached", detached)
                 .finish(),
-            StepAction::SubPipeline(pipeline) => f
-                .debug_tuple("SubPipeline")
-                .field(pipeline)
-                .finish(),
+            StepAction::SubPipeline(pipeline) => {
+                f.debug_tuple("SubPipeline").field(pipeline).finish()
+            }
             StepAction::LoopUntil {
                 body: _,
                 condition,
@@ -439,14 +445,20 @@ impl std::fmt::Debug for StepAction {
                 .field("agent_name", agent_name)
                 .field("payload", payload)
                 .finish(),
-            StepAction::LlmCallStreaming { system, user, model, conversation_id, append_to_history } => f
-                 .debug_struct("LlmCallStreaming")
-                 .field("system", system)
-                 .field("user", user)
-                 .field("model", model)
-                 .field("conversation_id", conversation_id)
-                 .field("append_to_history", append_to_history)
-                 .finish(),
+            StepAction::LlmCallStreaming {
+                system,
+                user,
+                model,
+                conversation_id,
+                append_to_history,
+            } => f
+                .debug_struct("LlmCallStreaming")
+                .field("system", system)
+                .field("user", user)
+                .field("model", model)
+                .field("conversation_id", conversation_id)
+                .field("append_to_history", append_to_history)
+                .finish(),
 
             StepAction::ToolUseLoop {
                 system,
@@ -516,10 +528,6 @@ impl std::fmt::Debug for StepAction {
                 .field("max_iterations", max_iterations)
                 .field("judge_model", judge_model)
                 .finish(),
-
-
-
-
         }
     }
 }
@@ -540,5 +548,4 @@ pub enum StepError {
     AwaitingApproval { prompt: &'static str },
     #[error("remote agent failed: {0}")]
     RemoteAgentFailed(#[from] RemoteAgentError),
-
 }

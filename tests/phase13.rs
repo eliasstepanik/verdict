@@ -3,9 +3,9 @@
 //! Tests long-lived conversation sessions with persistent state, multi-turn support,
 //! and session-scoped guards.
 
-use verdict::prelude::*;
 use std::sync::Arc;
 use tempfile::TempDir;
+use verdict::prelude::*;
 
 /// Test creating a new session
 #[tokio::test]
@@ -149,7 +149,10 @@ async fn test_session_persistence() {
                 .get_meta(&session_id)
                 .await
                 .expect("should get metadata");
-            assert_eq!(updated_meta.turn_count, 11, "should have 11 turns after resume");
+            assert_eq!(
+                updated_meta.turn_count, 11,
+                "should have 11 turns after resume"
+            );
         }
         _ => panic!("expected Completed turn result"),
     }
@@ -271,17 +274,14 @@ async fn test_conversation_history() {
 
 /// Create a simple echo agent for testing
 fn create_echo_agent() -> Agent {
-    use verdict::prelude::*;
     use std::sync::Arc;
+    use verdict::prelude::*;
 
     let echo_step = AgentStep {
         name: "echo".into(),
         guard_in: Guard::None,
         action: StepAction::Custom(Arc::new(|ctx| {
-            let input = ctx.input["task"]
-                .as_str()
-                .unwrap_or("(empty)")
-                .to_string();
+            let input = ctx.input["task"].as_str().unwrap_or("(empty)").to_string();
             let output = format!("Echo: {}", input);
             Ok(StepOutput::new(output))
         })),
@@ -292,9 +292,9 @@ fn create_echo_agent() -> Agent {
         output_schema: None,
         dependencies: vec![],
         parallel: false,
-            input_processors: vec![],
-            output_processors: vec![],
-        };
+        input_processors: vec![],
+        output_processors: vec![],
+    };
 
     Agent {
         name: "echo_agent".into(),
@@ -311,4 +311,3 @@ fn create_echo_agent() -> Agent {
         scorers: vec![],
     }
 }
-

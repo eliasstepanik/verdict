@@ -2,8 +2,8 @@
 //!
 //! Provides a cheap, cloneable token that signals cancellation to running operations.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use tokio::sync::Notify;
 
 /// A token that signals cancellation to running operations.

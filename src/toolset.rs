@@ -25,11 +25,9 @@ pub enum ToolSet {
     /// Explicit allowlist of tool names
     Allow(Vec<String>),
 
-
     /// Explicit denylist of tool names (everything except these).
     /// Note: `Deny(vec![])` denies no tools and is functionally equivalent to `Full` — all tools are allowed.
     Deny(Vec<String>),
-
 
     /// Inherit tools from a named skill
     FromSkill(String),
@@ -42,7 +40,6 @@ pub enum ToolSet {
 }
 
 impl ToolSet {
-
     /// Return the list of explicitly named tools, if this is an Allow set.
     /// Returns None for Full/ReadWrite/Deny/etc. (caller must enumerate registry instead).
     pub fn explicit_names(&self) -> Option<&[String]> {
@@ -52,9 +49,6 @@ impl ToolSet {
             _ => None,
         }
     }
-
-
-
 
     /// Check if a tool is allowed by this toolset.
     ///
@@ -82,9 +76,7 @@ impl ToolSet {
             ToolSet::Intersection(left, right) => {
                 left.contains(tool_name) && right.contains(tool_name)
             }
-            ToolSet::Union(left, right) => {
-                left.contains(tool_name) || right.contains(tool_name)
-            }
+            ToolSet::Union(left, right) => left.contains(tool_name) || right.contains(tool_name),
         }
     }
 }

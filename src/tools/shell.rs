@@ -5,10 +5,10 @@
 use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use tokio::process::Command;
 use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::process::Command;
 
-use crate::tools::tool::{Tool, ToolOutput, ToolError, ToolSource, ToolContext, ToolChunk};
+use crate::tools::tool::{Tool, ToolChunk, ToolContext, ToolError, ToolOutput, ToolSource};
 
 /// cargo check tool
 pub struct CargoCheckTool;
@@ -81,12 +81,13 @@ impl Tool for CargoCheckTool {
 
         if let Some(stdout) = child.stdout.take() {
             let mut lines = BufReader::new(stdout).lines();
-            while let Some(line) = lines
-                .next_line()
-                .await
-                .map_err(|e| ToolError::ExecutionFailed {
-                    reason: format!("failed to read stdout: {}", e),
-                })?
+            while let Some(line) =
+                lines
+                    .next_line()
+                    .await
+                    .map_err(|e| ToolError::ExecutionFailed {
+                        reason: format!("failed to read stdout: {}", e),
+                    })?
             {
                 chunks.push(ToolChunk {
                     delta: format!("{}\n", line),
@@ -95,10 +96,9 @@ impl Tool for CargoCheckTool {
             }
         }
 
-        let exit_status = child.wait().await
-            .map_err(|e| ToolError::ExecutionFailed {
-                reason: format!("failed to wait for process: {}", e),
-            })?;
+        let exit_status = child.wait().await.map_err(|e| ToolError::ExecutionFailed {
+            reason: format!("failed to wait for process: {}", e),
+        })?;
 
         if !exit_status.success() {
             let code = exit_status.code().unwrap_or(-1);
@@ -187,12 +187,13 @@ impl Tool for CargoTestTool {
 
         if let Some(stdout) = child.stdout.take() {
             let mut lines = BufReader::new(stdout).lines();
-            while let Some(line) = lines
-                .next_line()
-                .await
-                .map_err(|e| ToolError::ExecutionFailed {
-                    reason: format!("failed to read stdout: {}", e),
-                })?
+            while let Some(line) =
+                lines
+                    .next_line()
+                    .await
+                    .map_err(|e| ToolError::ExecutionFailed {
+                        reason: format!("failed to read stdout: {}", e),
+                    })?
             {
                 chunks.push(ToolChunk {
                     delta: format!("{}\n", line),
@@ -201,10 +202,9 @@ impl Tool for CargoTestTool {
             }
         }
 
-        let exit_status = child.wait().await
-            .map_err(|e| ToolError::ExecutionFailed {
-                reason: format!("failed to wait for process: {}", e),
-            })?;
+        let exit_status = child.wait().await.map_err(|e| ToolError::ExecutionFailed {
+            reason: format!("failed to wait for process: {}", e),
+        })?;
 
         if !exit_status.success() {
             let code = exit_status.code().unwrap_or(-1);
@@ -391,12 +391,13 @@ impl Tool for RunCommandTool {
 
         if let Some(stdout) = child.stdout.take() {
             let mut lines = BufReader::new(stdout).lines();
-            while let Some(line) = lines
-                .next_line()
-                .await
-                .map_err(|e| ToolError::ExecutionFailed {
-                    reason: format!("failed to read stdout: {}", e),
-                })?
+            while let Some(line) =
+                lines
+                    .next_line()
+                    .await
+                    .map_err(|e| ToolError::ExecutionFailed {
+                        reason: format!("failed to read stdout: {}", e),
+                    })?
             {
                 chunks.push(ToolChunk {
                     delta: format!("{}\n", line),
@@ -405,10 +406,9 @@ impl Tool for RunCommandTool {
             }
         }
 
-        let exit_status = child.wait().await
-            .map_err(|e| ToolError::ExecutionFailed {
-                reason: format!("failed to wait for process: {}", e),
-            })?;
+        let exit_status = child.wait().await.map_err(|e| ToolError::ExecutionFailed {
+            reason: format!("failed to wait for process: {}", e),
+        })?;
 
         if !exit_status.success() {
             let code = exit_status.code().unwrap_or(-1);
@@ -544,12 +544,13 @@ impl Tool for ShellRunTool {
 
         if let Some(stdout) = child.stdout.take() {
             let mut lines = BufReader::new(stdout).lines();
-            while let Some(line) = lines
-                .next_line()
-                .await
-                .map_err(|e| ToolError::ExecutionFailed {
-                    reason: format!("failed to read stdout: {}", e),
-                })?
+            while let Some(line) =
+                lines
+                    .next_line()
+                    .await
+                    .map_err(|e| ToolError::ExecutionFailed {
+                        reason: format!("failed to read stdout: {}", e),
+                    })?
             {
                 chunks.push(ToolChunk {
                     delta: format!("{}\n", line),
@@ -558,10 +559,9 @@ impl Tool for ShellRunTool {
             }
         }
 
-        let exit_status = child.wait().await
-            .map_err(|e| ToolError::ExecutionFailed {
-                reason: format!("failed to wait for process: {}", e),
-            })?;
+        let exit_status = child.wait().await.map_err(|e| ToolError::ExecutionFailed {
+            reason: format!("failed to wait for process: {}", e),
+        })?;
 
         if !exit_status.success() {
             let code = exit_status.code().unwrap_or(-1);
