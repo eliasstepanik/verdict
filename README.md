@@ -15,32 +15,32 @@ User Task Input
       │
       ▼
 ┌─────────────────────────────────────────────────────┐
-│                     Pipeline                         │
-│                                                      │
-│  Step 1: Generate Code                               │
+│                     Pipeline                        │
+│                                                     │
+│  Step 1: Generate Code                              │
 │  ┌──────────────────────────────────────────────┐   │
 │  │ guard_in:  Guard::None  ✓                    │   │
 │  │ action:    LlmCall { "write hello world" }   │   │
 │  │ guard_out: Guard::ValidRustSyntax            │   │
 │  │ verdict:   Automated(Guard::ValidRustSyntax) │   │
 │  └──────────────────────────────────────────────┘   │
-│         │ ✅ Guard passes → proceed                  │
-│         ▼                                            │
-│  Step 2: Run Tests (LoopUntil)                       │
+│         │ ✅ Guard passes → proceed                │
+│         ▼                                           │
+│  Step 2: Run Tests (LoopUntil)                      │
 │  ┌──────────────────────────────────────────────┐   │
 │  │ body:      ToolCall { "cargo test" }         │   │
 │  │ condition: Guard::TestsPass                  │   │
 │  │ max_iter:  10                                │   │
 │  │ on_fail:   DelegateAgent("debugger")         │   │
 │  └──────────────────────────────────────────────┘   │
-│         │ ✅ Tests pass → proceed                    │
-│         ▼                                            │
-│  Step 3: User Review                                 │
+│         │ ✅ Tests pass → proceed                   │
+│         ▼                                           │
+│  Step 3: User Review                                │
 │  ┌──────────────────────────────────────────────┐   │
 │  │ action:  UserInput { "Approve this diff?" }  │   │
 │  │ verdict: UserApproval                        │   │
 │  └──────────────────────────────────────────────┘   │
-│         │ ✅ Approved → pipeline succeeds             │
+│         │ ✅ Approved → pipeline succeeds           │
 └─────────────────────────────────────────────────────┘
       │
       ▼
