@@ -33,6 +33,9 @@ pub enum PipelineError {
         agent: String,
         reason: String,
     },
+
+    #[error("runtime setup failed: {0}")]
+    RuntimeSetupFailed(String),
 }
 
 /// State of a suspended pipeline (Phase D4)

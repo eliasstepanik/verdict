@@ -10,6 +10,69 @@ use tokio::process::Command;
 
 use crate::tools::tool::{Tool, ToolChunk, ToolContext, ToolError, ToolOutput, ToolSource};
 
+/// Validate shell command arguments for unsafe patterns.
+/// Does NOT prevent OS-level shell escapes (that requires containers/VMs).
+/// Guards against naive/accidental escapes via common patterns.
+/// Covers:
+/// - Literal top-level arguments (absolute paths, .., cd commands)
+/// - One level of -c wrapping (bash -c "...", sh -c "...", zsh -c "...")
+/// ponytail: Best-effort static validation without a full shell parser.
+/// NOT covered: nested -c, base64-encoded commands, variable expansion, eval, ...
+/// For adversarial LLM output, OS-level containment (bwrap, namespaces) is needed.
+fn validate_command_args_for_workspace_safety(args: &[String]) -> Result<(), ToolError> {
+    for (i, arg) in args.iter().enumerate() {
+        // Reject absolute paths (start with /)
+        if arg.starts_with('/') {
+            return Err(ToolError::ExecutionFailed {
+                reason: format!("shell command argument contains absolute path (workspace containment violation): '{}'", arg),
+            });
+        }
+        
+        // Reject .. path segments (parent directory traversal)
+        if arg.contains("..") {
+            return Err(ToolError::ExecutionFailed {
+                reason: format!("shell command argument contains '..' path segment (workspace containment violation): '{}'", arg),
+            });
+        }
+        
+        // Reject cd commands (only when it's the first arg, or explicit -c "cd ...")
+        if arg == "cd" || arg.starts_with("cd ") || arg.contains("; cd ") || arg.contains("&& cd ") {
+            return Err(ToolError::ExecutionFailed {
+                reason: format!("shell command changes directory outside workspace: '{}'", arg),
+            });
+        }
+        
+        // Scan -c argument (bash -c, sh -c, zsh -c patterns)
+        // If current arg is exactly "-c" and next arg exists, treat the next arg as a command string
+        if arg == "-c" && i + 1 < args.len() {
+            let shell_cmd = &args[i + 1];
+            
+            // Scan for absolute paths in the shell command string
+            // Detect patterns like: > /path, >> /path, >& /path, etc.
+            if shell_cmd.contains(">") && (shell_cmd.contains(">/") || shell_cmd.contains("> /") || shell_cmd.contains(">>/") || shell_cmd.contains(">> /")) {
+                return Err(ToolError::ExecutionFailed {
+                    reason: format!("shell -c command contains absolute path redirect (workspace containment violation): '{}'", shell_cmd),
+                });
+            }
+            
+            // Scan for .. in the shell command string
+            if shell_cmd.contains("..") {
+                return Err(ToolError::ExecutionFailed {
+                    reason: format!("shell -c command contains '..' path segment (workspace containment violation): '{}'", shell_cmd),
+                });
+            }
+            
+            // Scan for cd commands in the shell command string
+            if shell_cmd.contains("cd ") || shell_cmd.contains(";cd") || shell_cmd.contains("&&cd") || shell_cmd.contains("|cd") {
+                return Err(ToolError::ExecutionFailed {
+                    reason: format!("shell -c command changes directory outside workspace: '{}'", shell_cmd),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
 /// cargo check tool
 pub struct CargoCheckTool;
 
@@ -326,6 +389,9 @@ impl Tool for RunCommandTool {
             })
             .unwrap_or_default();
 
+        // Validate command arguments for workspace containment
+        validate_command_args_for_workspace_safety(&cmd_args)?;
+
         let workspace_root = &ctx.filesystem_policy.workspace_root;
 
         let mut cmd = Command::new(command);
@@ -372,6 +438,9 @@ impl Tool for RunCommandTool {
                     .collect()
             })
             .unwrap_or_default();
+
+        // Validate command arguments for workspace containment
+        validate_command_args_for_workspace_safety(&cmd_args)?;
 
         let workspace_root = &ctx.filesystem_policy.workspace_root;
 
@@ -479,6 +548,9 @@ impl Tool for ShellRunTool {
             })
             .unwrap_or_default();
 
+        // Validate command arguments for workspace containment
+        validate_command_args_for_workspace_safety(&cmd_args)?;
+
         let workspace_root = &ctx.filesystem_policy.workspace_root;
 
         let mut cmd = Command::new(command);
@@ -525,6 +597,9 @@ impl Tool for ShellRunTool {
                     .collect()
             })
             .unwrap_or_default();
+
+        // Validate command arguments for workspace containment
+        validate_command_args_for_workspace_safety(&cmd_args)?;
 
         let workspace_root = &ctx.filesystem_policy.workspace_root;
 

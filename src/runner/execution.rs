@@ -15,6 +15,7 @@ use futures::StreamExt;
 use serde_json::Value;
 use std::collections::VecDeque;
 use std::sync::Arc;
+use tempfile;
 
 /// Resolve template placeholders in a prompt string.
 ///
@@ -1657,6 +1658,34 @@ impl PipelineRunner {
             ctx.delegation_depth = depth;
             ctx.parent_agent = Some(parent);
         }
+
+        // Set up workspace isolation (TempDir guard held for entire run)
+        let _temp_workspace = match &agent.policy.filesystem_policy.workspace_isolation {
+            crate::agent::WorkspaceIsolation::None => None,
+            crate::agent::WorkspaceIsolation::TempDir => {
+                let temp_dir = tempfile::TempDir::new()
+                    .map_err(|e| PipelineError::RuntimeSetupFailed(
+                        format!("Failed to create temp workspace: {}", e)
+                    ))?;
+                let temp_path = temp_dir.path().to_path_buf();
+                ctx.filesystem_policy.workspace_root = temp_path;
+                Some(temp_dir)
+            }
+            crate::agent::WorkspaceIsolation::Sandboxed(path) => {
+                if !path.exists() {
+                    return Err(PipelineError::RuntimeSetupFailed(
+                        format!("Sandboxed workspace path does not exist: {}", path.display())
+                    ));
+                }
+                if !path.is_dir() {
+                    return Err(PipelineError::RuntimeSetupFailed(
+                        format!("Sandboxed workspace path is not a directory: {}", path.display())
+                    ));
+                }
+                ctx.filesystem_policy.workspace_root = path.clone();
+                None
+            }
+        };
 
         let mut steps_passed = Vec::new();
         #[allow(unused_mut)]
