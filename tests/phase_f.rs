@@ -33,30 +33,31 @@ fn test_toxicity_scorer_blocks_pattern() {
         blocked_patterns: vec!["toxin".into()],
     };
 
-    let result = PipelineResult {
-        pipeline_name: "test".into(),
-        steps_passed: vec!["step1".into()],
-        steps_failed: vec![],
-        step_results: {
-            let mut m = std::collections::HashMap::new();
-            m.insert(
-                "step1".into(),
-                StepResult {
-                    step_name: "step1".into(),
-                    output: StepOutput::new("This contains toxin".into()),
-                    verdict_passed: true,
-                    error: None,
-                },
-            );
-            m
-        },
-        audit_log: AuditLog::new(),
-        success: true,
-        total_cost_usd: 0.0,
-        total_tokens_used: 0,
-        log: vec![],
-        suspended: None,
-    };
+     let result = PipelineResult {
+         pipeline_name: "test".into(),
+         steps_passed: vec!["step1".into()],
+         steps_failed: vec![],
+         step_results: {
+             let mut m = std::collections::HashMap::new();
+             m.insert(
+                 "step1".into(),
+                 StepResult {
+                     step_name: "step1".into(),
+                     output: StepOutput::new("This contains toxin".into()),
+                     verdict_passed: true,
+                     error: None,
+                 },
+             );
+             m
+         },
+         audit_log: AuditLog::new(),
+         success: true,
+         total_cost_usd: 0.0,
+         total_tokens_used: 0,
+         log: vec![],
+         suspended: None,
+         budget: Default::default(),
+     };
 
     // Note: Would need async context for actual scorer call
     // For now we test the structure

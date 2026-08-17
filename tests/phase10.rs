@@ -143,6 +143,7 @@ async fn test_eval_custom_closure_pass() {
         total_tokens_used: 0,
         log: vec![],
         suspended: None,
+        budget: Default::default(),
     };
 
     // Evaluate
@@ -175,6 +176,7 @@ async fn test_eval_custom_closure_fail() {
         total_tokens_used: 0,
         log: vec![],
         suspended: None,
+        budget: Default::default(),
     };
 
     match &expected {

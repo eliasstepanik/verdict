@@ -1612,12 +1612,33 @@ impl PipelineRunner {
         delegation_depth: u32,
         parent_agent: String,
     ) -> Result<super::PipelineResult, PipelineError> {
-        // Run the pipeline with delegation context injected
+        self.run_with_delegation_depth_and_budget(
+            pipeline,
+            agent,
+            input,
+            delegation_depth,
+            parent_agent,
+            None,
+        )
+        .await
+    }
+
+    pub async fn run_with_delegation_depth_and_budget(
+        &mut self,
+        pipeline: &Pipeline,
+        agent: &Agent,
+        input: Value,
+        delegation_depth: u32,
+        parent_agent: String,
+        inherited_budget: Option<crate::context::BudgetState>,
+    ) -> Result<super::PipelineResult, PipelineError> {
+        // Run the pipeline with delegation context and optional inherited budget injected
         self.run_internal(
             pipeline,
             agent,
             input,
             Some((delegation_depth, parent_agent)),
+            inherited_budget,
         )
         .await
     }
@@ -1630,10 +1651,10 @@ impl PipelineRunner {
         agent: &Agent,
         input: Value,
     ) -> Result<super::PipelineResult, PipelineError> {
-        self.run_internal(pipeline, agent, input, None).await
+        self.run_internal(pipeline, agent, input, None, None).await
     }
 
-    /// Internal pipeline runner with optional delegation context
+    /// Internal pipeline runner with optional delegation context and inherited budget
     #[async_recursion(?Send)]
     async fn run_internal(
         &mut self,
@@ -1641,6 +1662,7 @@ impl PipelineRunner {
         agent: &Agent,
         input: Value,
         delegation_context: Option<(u32, String)>, // (delegation_depth, parent_agent)
+        inherited_budget: Option<crate::context::BudgetState>,
     ) -> Result<super::PipelineResult, PipelineError> {
         // Start pipeline
         self.audit_log.append(AuditEntry {
@@ -1668,6 +1690,11 @@ impl PipelineRunner {
         if let Some((depth, parent)) = delegation_context {
             ctx.delegation_depth = depth;
             ctx.parent_agent = Some(parent);
+        }
+
+        // Apply inherited budget if provided (for inherit_budget delegation policy)
+        if let Some(budget) = inherited_budget {
+            ctx.budget = budget;
         }
 
         // Set up workspace isolation (TempDir guard held for entire run)
@@ -2068,6 +2095,7 @@ impl PipelineRunner {
             total_tokens_used: 0, // Will be updated when LLM calls are tracked
             log: vec![],          // Will be populated when logging is wired
             suspended: None,
+            budget: ctx.budget.clone(),
         })
     }
 }

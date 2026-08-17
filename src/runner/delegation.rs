@@ -70,6 +70,44 @@ impl PipelineRunner {
             });
         }
 
+        // Step 2.5: Check require_output_schema
+        if delegation_policy.require_output_schema && expected_output_schema.is_none() {
+            self.audit_log.append(AuditEntry {
+                timestamp: Utc::now(),
+                pipeline_name: ctx.pipeline_name.clone(),
+                step_name: ctx.step_name.clone(),
+                event: AuditEvent::DelegationFailed {
+                    parent_agent: ctx.agent_name.clone(),
+                    child_agent: agent_name.to_string(),
+                    depth: ctx.delegation_depth,
+                    reason: "require_output_schema is true but no schema provided".into(),
+                },
+            });
+
+            return Err(StepError::ActionFailed {
+                reason: "Delegation requires an output schema but none was provided".into(),
+            });
+        }
+
+        // Step 2.6: Check require_user_approval
+        if delegation_policy.require_user_approval {
+            self.audit_log.append(AuditEntry {
+                timestamp: Utc::now(),
+                pipeline_name: ctx.pipeline_name.clone(),
+                step_name: ctx.step_name.clone(),
+                event: AuditEvent::DelegationFailed {
+                    parent_agent: ctx.agent_name.clone(),
+                    child_agent: agent_name.to_string(),
+                    depth: ctx.delegation_depth,
+                    reason: "Delegation requires user approval".into(),
+                },
+            });
+
+            return Err(StepError::ActionFailed {
+                reason: "Delegation requires user approval before proceeding".into(),
+            });
+        }
+
         // Step 3: Look up agent in registry
         let agent = self.agent_registry.get(agent_name).ok_or_else(|| {
             self.audit_log.append(AuditEntry {
@@ -122,13 +160,20 @@ impl PipelineRunner {
         };
 
         // Step 6: Run child agent pipeline with increased delegation depth
+        let inherited_budget = if delegation_policy.inherit_budget {
+            Some(ctx.budget.clone())
+        } else {
+            None
+        };
+
         let child_result = child_runner
-            .run_with_delegation_depth(
+            .run_with_delegation_depth_and_budget(
                 &agent.pipeline,
                 &agent,
                 delegate_input.clone(),
                 ctx.delegation_depth + 1,
                 ctx.agent_name.clone(),
+                inherited_budget,
             )
             .await;
 
@@ -138,6 +183,11 @@ impl PipelineRunner {
                 for (step_name, step_result) in &result.step_results {
                     let namespaced_key = format!("{}.{}", agent_name, step_name);
                     ctx.step_results.insert(namespaced_key, step_result.clone());
+                }
+
+                // Propagate child's budget back to parent if inherit_budget is true
+                if delegation_policy.inherit_budget {
+                    ctx.budget = result.budget.clone();
                 }
 
                 // Merge trace entries

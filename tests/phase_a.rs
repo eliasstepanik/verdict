@@ -137,6 +137,7 @@ fn test_a6_pipeline_result_cost_fields() {
         total_tokens_used: 456,
         log: vec![],
         suspended: None,
+        budget: Default::default(),
     };
 
     assert_eq!(result.total_cost_usd, 1.23);
@@ -263,6 +264,7 @@ async fn test_phase_a_integration() {
         total_tokens_used: 250,
         log: vec![],
         suspended: None,
+        budget: Default::default(),
     };
 
     assert!(result.success);

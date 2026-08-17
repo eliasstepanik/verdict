@@ -68,6 +68,8 @@ pub struct PipelineResult {
     pub log: Vec<LogEntry>,
     /// Suspended state, if pipeline was suspended (Phase D4)
     pub suspended: Option<SuspendedState>,
+    /// Final budget state after pipeline execution (Phase 4 — inherit_budget support)
+    pub budget: crate::context::BudgetState,
 }
 
 /// An event emitted to an output sink during pipeline execution
