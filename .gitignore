@@ -6,8 +6,4 @@ graphify-out/
 memory/
 tasks/
 .browser
-audit*
-*.bat
-*.sh
-*.diff
 .worktrees/
