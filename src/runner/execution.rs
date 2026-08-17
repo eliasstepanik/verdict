@@ -1686,93 +1686,17 @@ impl PipelineRunner {
                 }
                 i = j;
 
-                // Execute batch in parallel using spawn_blocking for each step
-                let mut handles = Vec::new();
-
-                for &sidx in &batch {
-                    let step = pipeline.steps[sidx].clone();
-                    let mut step_ctx = ctx.clone();
-                    step_ctx.step_name = step.name.clone();
-                    step_ctx.input = input.clone();
-                    step_ctx.allowed_tools = crate::toolset::ToolSet::Intersection(
-                        Box::new(agent.policy.allowed_tools.clone()),
-                        Box::new(step.tools.clone()),
-                    );
-
-                    // Clone the action needed for the task
-                    let action = step.action.clone();
-
-                    let handle = tokio::task::spawn_blocking(move || {
-                        // Run the action synchronously in a thread pool
-                        // For Custom closures (which are blocking), call directly
-                        match &action {
-                            crate::action::StepAction::Custom(f) => f(&step_ctx),
-                            _ => Err(crate::action::StepError::ActionFailed {
-                                reason: "Only Custom actions supported in parallel steps".into(),
-                            }),
-                        }
-                    });
-
-                    handles.push((step.name.clone(), step.clone(), handle));
-                }
-
-                // Collect results and process them sequentially
-                for (step_name, step_obj, handle) in handles {
-                    let action_result = handle.await.map_err(|e| PipelineError::StepFailed {
-                        step: step_name.clone(),
-                        error: crate::action::StepError::ActionFailed {
-                            reason: e.to_string(),
-                        },
-                    })?;
-
-                    match action_result {
-                        Ok(output) => {
-                            // Run guard_out and verdict for this parallel step
-                            ctx.step_name = step_name.clone();
-                            ctx.output = Some(output);
-
-                            // guard_out
-                            match GuardEngine::evaluate(&step_obj.guard_out, &ctx).await {
-                                Ok(()) => {}
-                                Err(e) => {
-                                    return Err(PipelineError::GuardFailed {
-                                        step: step_name.clone(),
-                                        phase: GuardPhase::Out,
-                                        error: e,
-                                    });
-                                }
-                            }
-
-                            // verdict
-                            match VerdictEngine::evaluate(&step_obj.verdict, &ctx).await {
-                                Ok(()) => {}
-                                Err(e) => {
-                                    return Err(PipelineError::VerdictFailed {
-                                        step: step_name.clone(),
-                                        error: e,
-                                    });
-                                }
-                            }
-
-                            // Record result
-                            let sr = StepResult {
-                                step_name: step_name.clone(),
-                                output: ctx
-                                    .output
-                                    .clone()
-                                    .unwrap_or_else(|| StepOutput::new(String::new())),
-                                verdict_passed: true,
-                                error: None,
-                            };
-                            ctx.step_results.insert(step_name.clone(), sr);
+                // Execute batch via the parallel batch executor. It reuses the
+                // step_exec phases, so all StepAction variants are supported and
+                // guard_in is evaluated for parallel steps.
+                match super::parallel::execute_parallel_batch(self, pipeline, &mut ctx, &batch).await {
+                    Ok(batch_results) => {
+                        for (step_name, _) in batch_results {
                             steps_passed.push(step_name);
                         }
-                        Err(e) => {
-                            return Err(PipelineError::StepFailed {
-                                step: step_name,
-                                error: e,
-                            });
-                        }
+                    }
+                    Err(e) => {
+                        return Err(e);
                     }
                 }
                 continue;
@@ -1792,17 +1716,14 @@ impl PipelineRunner {
             );
 
             // ===== Record StepStarted audit event =====
-            self.audit_log.append(AuditEntry {
-                timestamp: Utc::now(),
-                pipeline_name: pipeline.name.clone(),
-                step_name: step.name.clone(),
-                event: AuditEvent::StepStarted,
-            });
+            // Shared with the parallel path via step_exec, so both emit an
+            // identical event. Must be the first event recorded for this step
+            // (integration_observability::test_audit_log_event_ordering_within_step).
+            super::step_exec::emit_step_started(self, step, &ctx);
 
-            // Handle guard_in
+            // Handle guard_in failure based on FailureMode (before trying action)
             match GuardEngine::evaluate(&step.guard_in, &ctx).await {
                 Ok(()) => {
-                    // ===== Record GuardPassed(in) audit event =====
                     self.audit_log.append(AuditEntry {
                         timestamp: Utc::now(),
                         pipeline_name: pipeline.name.clone(),
@@ -1815,7 +1736,6 @@ impl PipelineRunner {
                 Err(e) => {
                     let guard_err: crate::guards::GuardError = e;
                     let err_str = format!("{guard_err}");
-                    // Record GuardFailed audit event
                     self.audit_log.append(AuditEntry {
                         timestamp: Utc::now(),
                         pipeline_name: pipeline.name.clone(),
@@ -1826,10 +1746,8 @@ impl PipelineRunner {
                         },
                     });
 
-                    // Handle guard_in failure based on FailureMode
                     match &pipeline.on_failure {
                         crate::pipeline::FailureMode::Skip => {
-                            // Skip this step, continue to next
                             steps_failed.push(step.name.clone());
                             let sr = StepResult {
                                 step_name: step.name.clone(),
@@ -1838,8 +1756,6 @@ impl PipelineRunner {
                                 error: Some(format!("guard_in failed: {err_str}")),
                             };
                             ctx.step_results.insert(step.name.clone(), sr);
-
-                            // Record StepFailed audit event
                             self.audit_log.append(AuditEntry {
                                 timestamp: Utc::now(),
                                 pipeline_name: pipeline.name.clone(),
@@ -1848,7 +1764,6 @@ impl PipelineRunner {
                                     error: format!("guard_in failed: {err_str}"),
                                 },
                             });
-
                             continue;
                         }
                         _ => {
@@ -1903,7 +1818,6 @@ impl PipelineRunner {
                             && matches!(&pipeline.on_failure, crate::pipeline::FailureMode::Retry)
                         {
                             retries_left -= 1;
-                            // Continue loop to retry
                         } else {
                             break;
                         }
@@ -1915,7 +1829,6 @@ impl PipelineRunner {
             if action_error.is_some() {
                 match &pipeline.on_failure {
                     crate::pipeline::FailureMode::Skip => {
-                        // Skip this step, continue to next
                         steps_failed.push(step.name.clone());
                         let sr = StepResult {
                             step_name: step.name.clone(),
@@ -1927,8 +1840,6 @@ impl PipelineRunner {
                             error: action_error.as_ref().map(|e| format!("{:?}", e)),
                         };
                         ctx.step_results.insert(step.name.clone(), sr);
-
-                        // Record StepFailed audit event
                         self.audit_log.append(AuditEntry {
                             timestamp: Utc::now(),
                             pipeline_name: pipeline.name.clone(),
@@ -1937,17 +1848,14 @@ impl PipelineRunner {
                                 error: format!("{:?}", action_error),
                             },
                         });
-
                         continue;
                     }
                     crate::pipeline::FailureMode::Retry => {
-                        // Max retries exceeded
                         return Err(PipelineError::MaxRetriesExceeded {
                             step: step.name.clone(),
                         });
                     }
                     crate::pipeline::FailureMode::Abort => {
-                        // Record StepFailed audit event before aborting
                         self.audit_log.append(AuditEntry {
                             timestamp: Utc::now(),
                             pipeline_name: pipeline.name.clone(),
@@ -1965,7 +1873,6 @@ impl PipelineRunner {
                         let original_error = action_error.take().unwrap();
                         let step_name_clone = step.name.clone();
 
-                        // Log fallback triggered
                         self.audit_log.append(AuditEntry {
                             timestamp: Utc::now(),
                             pipeline_name: pipeline.name.clone(),
@@ -1976,7 +1883,6 @@ impl PipelineRunner {
                             },
                         });
 
-                        // Run the fallback pipeline in a child runner
                         let mut fallback_runner = PipelineRunner {
                             audit_log: crate::audit::AuditLog::new(),
                             tool_registry: self.tool_registry.clone(),
@@ -2008,10 +1914,9 @@ impl PipelineRunner {
                 ctx.output.as_ref().map(|o| o.raw.len()).unwrap_or(0)
             );
 
-            // Handle guard_out (only if action succeeded)
+            // Handle guard_out
             match GuardEngine::evaluate(&step.guard_out, &ctx).await {
                 Ok(()) => {
-                    // ===== Record GuardPassed(out) audit event =====
                     self.audit_log.append(AuditEntry {
                         timestamp: Utc::now(),
                         pipeline_name: pipeline.name.clone(),
@@ -2023,7 +1928,6 @@ impl PipelineRunner {
                 }
                 Err(e) => {
                     let guard_err: crate::guards::GuardError = e;
-                    // Record GuardFailed audit event
                     self.audit_log.append(AuditEntry {
                         timestamp: Utc::now(),
                         pipeline_name: pipeline.name.clone(),
@@ -2044,7 +1948,6 @@ impl PipelineRunner {
             // Handle verdict
             match VerdictEngine::evaluate(&step.verdict, &ctx).await {
                 Ok(()) => {
-                    // ===== Record VerdictPassed audit event =====
                     self.audit_log.append(AuditEntry {
                         timestamp: Utc::now(),
                         pipeline_name: pipeline.name.clone(),
@@ -2062,7 +1965,6 @@ impl PipelineRunner {
                 }
             }
 
-            // ===== Record StepCompleted audit event =====
             self.audit_log.append(AuditEntry {
                 timestamp: Utc::now(),
                 pipeline_name: pipeline.name.clone(),
@@ -2072,7 +1974,6 @@ impl PipelineRunner {
                 },
             });
 
-            // Record step result
             let sr = StepResult {
                 step_name: step.name.clone(),
                 output: ctx

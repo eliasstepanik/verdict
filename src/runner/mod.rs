@@ -3,6 +3,8 @@ use std::sync::Arc;
 mod budget;
 mod delegation;
 mod execution;
+mod parallel;
+mod step_exec;
 mod types;
 
 pub use types::{
@@ -16,6 +18,10 @@ pub(crate) use budget::*;
 pub(crate) use delegation::*;
 #[allow(unused_imports)]
 pub(crate) use execution::*;
+#[allow(unused_imports)]
+pub(crate) use parallel::*;
+#[allow(unused_imports)]
+pub(crate) use step_exec::*;
 
 /// Executor for pipelines with guards, verdicts, and audit logging
 #[derive(Clone)]
