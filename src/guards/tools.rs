@@ -24,9 +24,9 @@ pub fn check_only_allowed_tools(
     _guard: &super::Guard,
     ctx: &StepContext,
 ) -> Result<(), GuardError> {
-    // Use the existing ToolSet::contains method to check each tool
+    // Use contains_with_skill_registry to support FromSkill tool variants
     for tool_name in &ctx.tools_used {
-        if !ctx.allowed_tools.contains(tool_name) {
+        if !ctx.allowed_tools.contains_with_skill_registry(tool_name, &ctx.skill_registry) {
             return Err(GuardError::Failed {
                 guard: "OnlyAllowedToolsUsed".to_string(),
                 reason: format!("tool '{}' is not in allowed tools", tool_name),

@@ -301,7 +301,7 @@ impl PipelineRunner {
             })?;
 
         // Step 2: Check tool is allowed for this step
-        if !ctx.allowed_tools.contains(tool_name) {
+        if !ctx.allowed_tools.contains_with_skill_registry(tool_name, &self.skill_registry) {
             return Err(StepError::ActionFailed {
                 reason: format!(
                     "tool '{}' not allowed in this step (allowed: {:?})",
