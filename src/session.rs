@@ -431,9 +431,11 @@ impl SessionRunner {
                 .ok_or_else(|| SessionError::AgentNotFound(agent_name.clone()))?
         };
 
-        // Pass user text directly as a string so {input} in pipeline templates
-        // resolves to the user's actual message — not a confusing JSON blob.
-        let pipeline_input = serde_json::Value::String(input.content.text.clone());
+        // Structured pipeline input: steps read `ctx.input["task"]`, while
+        // `{input}` in templates resolves via resolve_template's preferential
+        // extraction of the "task" field. A bare JSON string satisfies only the
+        // latter, leaving `ctx.input["task"]` null for every session turn.
+        let pipeline_input = serde_json::json!({ "task": input.content.text.clone() });
 
         // Record user message in history
         {

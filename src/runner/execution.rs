@@ -1948,12 +1948,6 @@ impl PipelineRunner {
                 }
             }
 
-            eprintln!(
-                "[guard-check] step={} output_raw_len={}",
-                step.name,
-                ctx.output.as_ref().map(|o| o.raw.len()).unwrap_or(0)
-            );
-
             // Handle guard_out
             match GuardEngine::evaluate(&step.guard_out, &ctx).await {
                 Ok(()) => {
