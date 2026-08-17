@@ -14,6 +14,7 @@ use crate::guards::GuardEngine;
 use crate::pipeline::AgentStep;
 use crate::verdict::VerdictEngine;
 use super::PipelineRunner;
+use super::injection_check;
 use crate::audit::{AuditEntry, AuditEvent};
 use chrono::Utc;
 
@@ -120,6 +121,8 @@ pub(crate) async fn run_action(
 /// Run the post-action phase for a step: guard_out, verdict, and `StepCompleted`.
 ///
 /// `output` is published to `ctx.output` first so guards and verdicts observe it.
+/// Injection protection check runs BEFORE guard_out to ensure a permissive guard_out
+/// cannot let injected/secret-leaking content slip through.
 pub(crate) async fn run_post_action(
     runner: &mut PipelineRunner,
     step: &AgentStep,
@@ -127,6 +130,9 @@ pub(crate) async fn run_post_action(
     output: StepOutput,
 ) -> Result<StepOutput, StepError> {
     ctx.output = Some(output.clone());
+
+    // ===== Check injection protection (before guard_out) =====
+    injection_check::check_injection_protection(runner, step, ctx, &output).await?;
 
     // ===== Evaluate guard_out =====
     match GuardEngine::evaluate(&step.guard_out, ctx).await {

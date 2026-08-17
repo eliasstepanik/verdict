@@ -7,7 +7,7 @@ use crate::toolset::ToolSet;
 use crate::verdict::Verdict;
 
 /// Injection protection strategy for a step
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum InjectionProtection {
     /// No protection (Phase 2+: would scan for injection patterns)
     None,
