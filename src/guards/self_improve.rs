@@ -106,9 +106,11 @@ pub fn check_evaluation_improves_or_equal(
         // 1. { "score": <number> } - direct score
         // 2. { "overall_score": <number> } - EvaluationSuiteResult shape
         // 3. { "evaluation_score": <number> } - AgentVersion shape
+        // 4. { "eval_score": <number> } - SelfUpdateResult shape
         json.get("score")
             .or_else(|| json.get("overall_score"))
             .or_else(|| json.get("evaluation_score"))
+            .or_else(|| json.get("eval_score"))
             .and_then(|v| v.as_f64())
     } else {
         None
@@ -117,7 +119,7 @@ pub fn check_evaluation_improves_or_equal(
     let Some(current_score_val) = current_eval_score else {
         return Err(GuardError::Failed {
             guard: "EvaluationImprovesOrEqual".into(),
-            reason: "Could not extract evaluation score from output (expected 'score', 'overall_score', or 'evaluation_score' field)".into(),
+            reason: "Could not extract evaluation score from output (expected 'score', 'overall_score', 'evaluation_score', or 'eval_score' field)".into(),
         });
     };
 
@@ -132,6 +134,7 @@ pub fn check_evaluation_improves_or_equal(
                     json.get("score")
                         .or_else(|| json.get("overall_score"))
                         .or_else(|| json.get("evaluation_score"))
+                        .or_else(|| json.get("eval_score"))
                         .and_then(|v| v.as_f64())
                 } else {
                     None

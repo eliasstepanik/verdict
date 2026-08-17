@@ -433,7 +433,7 @@ async fn test_guard_evaluation_improves_or_equal_passes_with_score() {
 }
 
 #[tokio::test]
-async fn test_guard_evaluation_improves_or_equal_passes_no_output() {
+async fn test_guard_evaluation_improves_or_equal_fails_no_output() {
     use verdict::guards::{Guard, GuardEngine};
 
     let ctx = StepContext::new(
@@ -444,8 +444,10 @@ async fn test_guard_evaluation_improves_or_equal_passes_no_output() {
         FilesystemPolicy::default(),
     );
 
+    // No output means no evaluation ran, so non-regression cannot be proven.
+    // The guard must fail closed rather than vacuously approve.
     let result = GuardEngine::evaluate(&Guard::EvaluationImprovesOrEqual, &ctx).await;
-    assert!(result.is_ok());
+    assert!(result.is_err());
 }
 
 #[tokio::test]
@@ -461,7 +463,8 @@ async fn test_guard_agent_version_created_passes_with_version() {
     );
 
     ctx.output = Some(StepOutput::new(
-        r#"{"version": "20240101120000", "agent_name": "test"}"#.to_string(),
+        r#"{"agent_name": "test", "version": "20240101120000", "created_at": "2024-01-01T12:00:00Z"}"#
+            .to_string(),
     ));
 
     let result = GuardEngine::evaluate(&Guard::AgentVersionCreated, &ctx).await;
@@ -469,7 +472,7 @@ async fn test_guard_agent_version_created_passes_with_version() {
 }
 
 #[tokio::test]
-async fn test_guard_agent_version_created_passes_no_output() {
+async fn test_guard_agent_version_created_fails_no_output() {
     use verdict::guards::{Guard, GuardEngine};
 
     let ctx = StepContext::new(
@@ -480,8 +483,10 @@ async fn test_guard_agent_version_created_passes_no_output() {
         FilesystemPolicy::default(),
     );
 
+    // No version evidence anywhere means no AgentVersion was created.
+    // The guard must fail closed rather than vacuously approve.
     let result = GuardEngine::evaluate(&Guard::AgentVersionCreated, &ctx).await;
-    assert!(result.is_ok());
+    assert!(result.is_err());
 }
 
 #[tokio::test]
