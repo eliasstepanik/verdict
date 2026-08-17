@@ -896,6 +896,9 @@ impl PipelineRunner {
                 // If assistant returns text: done.
                 let mut history = crate::llm::MessageHistory::new();
                 let mut final_text = String::new();
+                // True when the loop ended because the assistant produced a real text answer
+                // with no pending tool calls — i.e. the answer is already final.
+                let mut answered_with_text = false;
 
                 for round in 0..*max_rounds {
                     // On round 0: user message is the resolved prompt.
@@ -988,6 +991,11 @@ impl PipelineRunner {
                             history.push(crate::llm::ChatRole::User, user_msg);
                         }
                         history.push(crate::llm::ChatRole::Assistant, final_text.clone());
+                        // The assistant answered in prose with nothing left to execute:
+                        // this text IS the result, so no synthesis pass is needed.
+                        answered_with_text = !has_tool_calls
+                            && xml_tool_calls.is_empty()
+                            && !final_text.trim().is_empty();
                         break;
                     }
 
@@ -1169,7 +1177,10 @@ impl PipelineRunner {
                 // Always run synthesis when tools are available — the LLM may have responded
                 // with a text preamble on round 0 without using tools; synthesis gives it a
                 // chance to actually call tools and complete the task.
-                let needs_synthesis = !history.is_empty() && !tool_schemas.is_empty();
+                // ponytail: synthesis exists only to rescue an unfinished loop. If the model
+                // already delivered a final text answer, another LLM call would overwrite it.
+                let needs_synthesis =
+                    !history.is_empty() && !tool_schemas.is_empty() && !answered_with_text;
                 if needs_synthesis {
                     // Build tool list for XML instruction so model knows what tools are available
                     let tool_list = tool_schemas
