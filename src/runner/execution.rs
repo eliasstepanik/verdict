@@ -1,7 +1,7 @@
 use super::PipelineRunner;
 use super::{OutputEvent, PipelineError};
 use crate::action::{StepAction, StepError, StepOutput};
-use crate::agent::{Agent, AgentPolicy, RemoteAgentClient};
+use crate::agent::{Agent, RemoteAgentClient};
 use crate::audit::{AuditEntry, AuditEvent};
 use crate::context::{StepContext, StepResult};
 use crate::guards::{GuardEngine, GuardPhase};
@@ -720,6 +720,32 @@ impl PipelineRunner {
 
             // ========== SubPipeline ==========
             StepAction::SubPipeline(pipeline) => {
+                // A sub-pipeline is a delegation boundary and MUST inherit the parent's
+                // security context exactly like `delegation::execute_delegation` does.
+                //
+                // This handler previously built an `AgentPolicy::default()` and called
+                // the plain `run()` entry point, which silently reset:
+                //   * `filesystem_policy`  -> fresh `current_dir()` root, dropping
+                //     `WorkspaceIsolation::TempDir`/`Sandboxed` (writes escaped to the real repo)
+                //   * `network_policy`     -> `DenyAll` (fail-closed, but still divergent)
+                //   * `delegation_depth`   -> 0, letting a SubPipeline wrapper bypass
+                //     `max_delegation_depth` / `Guard::MaxDelegationDepth` entirely
+                //   * `budget`             -> fresh, resetting cost/call accounting
+                //
+                // Everything below derives from the parent context instead.
+                let child_depth = ctx.delegation_depth + 1;
+
+                // Enforce the parent's delegation depth cap on this boundary, mirroring
+                // the depth check `execute_delegation` performs before recursing.
+                if child_depth > ctx.agent_policy.max_delegation_depth {
+                    return Err(StepError::ActionFailed {
+                        reason: format!(
+                            "SubPipeline delegation depth {} exceeds max {}",
+                            child_depth, ctx.agent_policy.max_delegation_depth
+                        ),
+                    });
+                }
+
                 // Create a child runner with shared registries
                 let mut child_runner = PipelineRunner {
                     audit_log: crate::audit::AuditLog::new(),
@@ -735,13 +761,27 @@ impl PipelineRunner {
                     memory: self.memory.clone(),
                 };
 
-                // Get the current agent (from context, fallback to a basic one)
-                // FIX #3: Propagate narrowed tool scope from parent context into sub-agent's policy
-                // so that the effective tool scope for steps inside the sub-pipeline is correctly:
-                // parent_narrowed_scope ∩ step.tools (not default ∩ step.tools which would be too restrictive)
-                let mut policy = AgentPolicy::default();
+                // Derive the sub-agent's policy from the PARENT's actual policy so that
+                // cost/step/runtime caps, allowed agents and skills all carry over.
+                let mut policy = ctx.agent_policy.clone();
+
+                // Tool scope: the already-narrowed effective scope from the parent context
+                // (agent ∩ pipeline ∩ step ∩ skill), so inner steps intersect against the
+                // narrowed set rather than the agent-level default.
                 policy.allowed_tools = ctx.allowed_tools.clone();
-                
+
+                // Filesystem: inherit the parent's *resolved* policy. `ctx.filesystem_policy`
+                // already has `workspace_root` rewritten to the active TempDir/Sandboxed root
+                // by `run_internal`, so isolation is set to `None` here to keep the child
+                // pinned to that same sandbox instead of minting a second, unrelated temp dir
+                // (which would hide the parent's files from the sub-pipeline).
+                policy.filesystem_policy = ctx.filesystem_policy.clone();
+                policy.filesystem_policy.workspace_isolation =
+                    crate::agent::WorkspaceIsolation::None;
+
+                // Network: inherit the parent's actual policy, not a fresh DenyAll.
+                policy.network_policy = ctx.network_policy.clone();
+
                 let agent = crate::agent::Agent {
                     name: ctx.agent_name.clone(),
                     description: "Child pipeline agent".into(),
@@ -754,13 +794,30 @@ impl PipelineRunner {
                     scorers: Vec::new(),
                 };
 
-                // Run the child pipeline
+                // Run the child pipeline through the depth/budget-aware entry point —
+                // the same one `execute_delegation` uses.
                 let result = child_runner
-                    .run(pipeline, &agent, ctx.input.clone())
+                    .run_with_delegation_depth_and_budget(
+                        pipeline,
+                        &agent,
+                        ctx.input.clone(),
+                        child_depth,
+                        ctx.agent_name.clone(),
+                        Some(ctx.budget.clone()),
+                    )
                     .await
                     .map_err(|e| StepError::ActionFailed {
                         reason: format!("SubPipeline failed: {}", e),
                     })?;
+
+                // Propagate the child's budget back so cost/call accounting is continuous.
+                ctx.budget = result.budget.clone();
+
+                // Merge the child's audit entries into the parent log so the sub-pipeline
+                // is not invisible to auditing.
+                for entry in result.audit_log.entries() {
+                    self.audit_log.append(entry.clone());
+                }
 
                 // Get the LAST step's output deterministically by finding the last step in
                 // the pipeline and looking it up by name (not by HashMap iteration order).
@@ -1674,6 +1731,7 @@ impl PipelineRunner {
             agent.policy.filesystem_policy.clone(),
         );
         ctx.network_policy = agent.policy.network_policy.clone();
+        ctx.agent_policy = agent.policy.clone();
         ctx.agent_registry = self.agent_registry.clone();
         ctx.tool_registry = self.tool_registry.clone();
         ctx.skill_registry = self.skill_registry.clone();

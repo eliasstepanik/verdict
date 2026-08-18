@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::action::StepOutput;
-use crate::agent::{FilesystemPolicy, NetworkPolicy};
+use crate::agent::{AgentPolicy, FilesystemPolicy, NetworkPolicy};
 use crate::cancel::CancellationToken;
 use crate::llm::provider::MessageHistory;
 use crate::registry::{AgentRegistry, ToolRegistry};
@@ -128,6 +128,11 @@ pub struct SerializableStepContext {
 
     /// Network policy for restored context
     pub network_policy: NetworkPolicy,
+
+    /// Full agent policy for restored context — preserves workspace isolation,
+    /// network policy and budget caps across checkpoint/resume.
+    #[serde(default)]
+    pub agent_policy: AgentPolicy,
 
     /// Custom metadata for extensions
     pub metadata: Value,
@@ -277,6 +282,16 @@ pub struct StepContext {
     pub filesystem_policy: FilesystemPolicy,
     pub network_policy: NetworkPolicy,
 
+    /// Full policy of the agent currently executing this context.
+    ///
+    /// Carried so that nested execution paths (notably `StepAction::SubPipeline`)
+    /// can derive the child agent's policy by inheritance instead of
+    /// reconstructing an `AgentPolicy::default()`, which silently dropped
+    /// `filesystem_policy` (workspace isolation), `network_policy`, and the
+    /// cost/step/depth caps. See `runner::delegation::execute_delegation` for
+    /// the canonical inheritance pattern.
+    pub agent_policy: AgentPolicy,
+
     /// Optional LLM client for verdict evaluation (e.g., Verdict::LlmJudge)
     pub llm_client: Option<Arc<crate::llm::LlmClient>>,
 
@@ -332,6 +347,7 @@ impl StepContext {
             budget: BudgetState::default(),
             filesystem_policy,
             network_policy: NetworkPolicy::DenyAll,
+            agent_policy: AgentPolicy::default(),
             llm_client: None,
             conversation_history: MessageHistory::new(),
             tools_used: vec![],
@@ -368,6 +384,7 @@ impl StepContext {
             conversation_history: self.conversation_history.clone(),
             filesystem_policy: self.filesystem_policy.clone(),
             network_policy: self.network_policy.clone(),
+            agent_policy: self.agent_policy.clone(),
 
             metadata: Value::Object(serde_json::Map::new()),
             request_context: self.request_context.clone(),
@@ -409,6 +426,7 @@ impl StepContext {
             budget: serializable.budget,
             filesystem_policy: serializable.filesystem_policy,
             network_policy: serializable.network_policy,
+            agent_policy: serializable.agent_policy,
             llm_client: None,
             conversation_history: serializable.conversation_history,
             tools_used: vec![],

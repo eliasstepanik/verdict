@@ -53,6 +53,7 @@ fn make_test_context() -> StepContext {
         budget: crate::context::BudgetState::default(),
         filesystem_policy: crate::agent::FilesystemPolicy::default(),
         network_policy: crate::agent::NetworkPolicy::DenyAll,
+        agent_policy: crate::agent::AgentPolicy::default(),
         llm_client: None,
         conversation_history: crate::llm::provider::MessageHistory::new(),
         tools_used: vec![],
