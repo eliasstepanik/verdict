@@ -8,7 +8,6 @@ use crate::guards::{GuardEngine, GuardPhase};
 use crate::pipeline::Pipeline;
 use crate::skills::skill::SkillSet;
 use crate::tools::ToolContext;
-use crate::verdict::VerdictEngine;
 use async_recursion::async_recursion;
 use chrono::Utc;
 use futures::StreamExt;
@@ -1975,72 +1974,43 @@ impl PipelineRunner {
                 }
             }
 
-            // Handle guard_out
-            match GuardEngine::evaluate(&step.guard_out, &ctx).await {
-                Ok(()) => {
-                    self.audit_log.append(AuditEntry {
-                        timestamp: Utc::now(),
-                        pipeline_name: pipeline.name.clone(),
-                        step_name: step.name.clone(),
-                        event: AuditEvent::GuardPassed {
-                            guard: step.guard_out.name(),
-                        },
-                    });
-                }
-                Err(e) => {
-                    let guard_err: crate::guards::GuardError = e;
-                    self.audit_log.append(AuditEntry {
-                        timestamp: Utc::now(),
-                        pipeline_name: pipeline.name.clone(),
-                        step_name: step.name.clone(),
-                        event: AuditEvent::GuardFailed {
-                            guard: step.guard_out.name(),
-                            reason: format!("{guard_err}"),
-                        },
-                    });
+            // ===== Post-action phase (injection check, guard_out, output_schema,
+            // verdict, StepCompleted) =====
+            // Shared with the parallel path via step_exec::run_post_action so both
+            // paths enforce injection protection and output_schema identically.
+            // Previously duplicated inline here, which silently skipped both checks
+            // for the default (parallel: false) path.
+            let post_output = ctx
+                .output
+                .clone()
+                .unwrap_or_else(|| StepOutput::new(String::new()));
+            let post_output = match super::step_exec::run_post_action(self, step, &mut ctx, post_output).await
+            {
+                Ok(output) => output,
+                Err(super::step_exec::PostActionError::GuardOut(guard_err)) => {
                     return Err(PipelineError::GuardFailed {
                         step: step.name.clone(),
                         phase: GuardPhase::Out,
                         error: guard_err,
                     });
                 }
-            }
-
-            // Handle verdict
-            match VerdictEngine::evaluate(&step.verdict, &ctx).await {
-                Ok(()) => {
-                    self.audit_log.append(AuditEntry {
-                        timestamp: Utc::now(),
-                        pipeline_name: pipeline.name.clone(),
-                        step_name: step.name.clone(),
-                        event: AuditEvent::VerdictPassed {
-                            verdict: "verdict".into(),
-                        },
-                    });
-                }
-                Err(e) => {
+                Err(super::step_exec::PostActionError::Verdict(verdict_err)) => {
                     return Err(PipelineError::VerdictFailed {
                         step: step.name.clone(),
-                        error: e,
+                        error: verdict_err,
                     });
                 }
-            }
-
-            self.audit_log.append(AuditEntry {
-                timestamp: Utc::now(),
-                pipeline_name: pipeline.name.clone(),
-                step_name: step.name.clone(),
-                event: AuditEvent::StepCompleted {
-                    verdict_passed: true,
-                },
-            });
+                Err(super::step_exec::PostActionError::Step(step_err)) => {
+                    return Err(PipelineError::StepFailed {
+                        step: step.name.clone(),
+                        error: step_err,
+                    });
+                }
+            };
 
             let sr = StepResult {
                 step_name: step.name.clone(),
-                output: ctx
-                    .output
-                    .clone()
-                    .unwrap_or_else(|| StepOutput::new(String::new())),
+                output: post_output,
                 verdict_passed: true,
                 error: None,
             };

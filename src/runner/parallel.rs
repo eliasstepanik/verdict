@@ -139,7 +139,7 @@ pub(crate) async fn execute_parallel_batch(
             Err(e) => {
                 return Err(super::PipelineError::StepFailed {
                     step: step.name.clone(),
-                    error: e,
+                    error: e.into(),
                 });
             }
         }
