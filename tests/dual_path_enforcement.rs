@@ -191,3 +191,71 @@ async fn sequential_guard_out_failure_still_maps_to_guard_failed() {
         "expected GuardFailed(Out), got {err:?}"
     );
 }
+
+/// Agent-level tool policy must be enforced on BOTH paths.
+///
+/// Regression: the parallel batch executor intersected the *inherited context*
+/// tool scope (`StepContext::new`'s default `ToolSet::Full`) with the step
+/// scope instead of `agent.policy.allowed_tools`, so any `parallel: true` step
+/// ran with `Full ∩ step.tools` and the agent policy was silently bypassed.
+/// Denial parity: agent policy `None` + step `Full` must reject on both paths.
+async fn tool_call_under_policy(parallel: bool, agent_tools: ToolSet) -> Result<PipelineResult, PipelineError> {
+    let step = AgentStep {
+        name: "call".into(),
+        guard_in: Guard::None,
+        action: StepAction::ToolCall {
+            tool: "fs.list".into(),
+            args: json!({ "path": "." }),
+        },
+        guard_out: Guard::None,
+        verdict: Verdict::None,
+        tools: ToolSet::Full,
+        injection_protection: InjectionProtection::None,
+        output_schema: None,
+        dependencies: vec![],
+        parallel,
+        input_processors: vec![],
+        output_processors: vec![],
+    };
+    let pipeline = Pipeline {
+        name: "p".into(),
+        steps: vec![step],
+        on_failure: FailureMode::Abort,
+        max_retries: 0,
+    };
+    let mut policy = AgentPolicy::default();
+    policy.allowed_tools = agent_tools;
+    let agent = Agent {
+        name: "a".into(),
+        description: "a".into(),
+        pipeline: pipeline.clone(),
+        tools: ToolSet::None,
+        skills: SkillSet::default(),
+        policy,
+        scorers: vec![],
+    };
+    PipelineRunner::new().run(&pipeline, &agent, json!({})).await
+}
+
+#[tokio::test]
+async fn agent_policy_denial_enforced_on_both_paths() {
+    for parallel in [false, true] {
+        let r = tool_call_under_policy(parallel, ToolSet::None).await;
+        assert!(
+            r.is_err(),
+            "agent policy ToolSet::None must reject fs.list even though the step \
+             scope is Full (parallel={parallel}), got {r:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn agent_policy_allow_enforced_on_both_paths() {
+    for parallel in [false, true] {
+        let r = tool_call_under_policy(parallel, ToolSet::ReadOnly).await;
+        assert!(
+            r.expect("agent policy ReadOnly must permit fs.list").success,
+            "allowed tool must run (parallel={parallel})"
+        );
+    }
+}

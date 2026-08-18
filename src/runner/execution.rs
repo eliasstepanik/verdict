@@ -462,6 +462,36 @@ impl PipelineRunner {
             }
         }
     }
+
+    /// Execute an LLM-requested tool call from inside a `ToolUseLoop`.
+    ///
+    /// SECURITY: every LLM-driven tool dispatch MUST go through here. It delegates to
+    /// [`Self::execute_tool_call`], which enforces the step's `allowed_tools` scope and
+    /// records `tools_used` / `commands_executed` so the shell allow/denylist guards
+    /// (and the tool-call budget) actually see LLM-initiated calls. Calling
+    /// `tool_registry.get(..)` + `tool.call(..)` directly here bypasses all of that.
+    ///
+    /// Unlike a `ToolCall` step, a failure is not fatal to the loop: the error text is
+    /// returned so it can be fed back to the model as a tool result and retried.
+    async fn execute_llm_tool_call(&self, tool_name: &str, args: &Value, ctx: &mut StepContext) -> String {
+        match self.execute_tool_call(tool_name, args, ctx).await {
+            Ok(output) => {
+                let pe = output
+                    .raw
+                    .char_indices()
+                    .nth(80)
+                    .map(|(i, _)| i)
+                    .unwrap_or(output.raw.len());
+                eprintln!("[tool-ok] {}: {}", tool_name, &output.raw[..pe]);
+                output.raw
+            }
+            Err(e) => {
+                eprintln!("[tool-err] {}: {}", tool_name, e);
+                format!("Tool error: {}", e)
+            }
+        }
+    }
+
     /// Execute a single step action — Phase 3 onwards
     ///
     /// # Known Issue
@@ -732,11 +762,12 @@ impl PipelineRunner {
                         reason: format!("SubPipeline failed: {}", e),
                     })?;
 
-                // Get the last step's output
-                let output = result
-                    .step_results
-                    .values()
+                // Get the LAST step's output deterministically by finding the last step in
+                // the pipeline and looking it up by name (not by HashMap iteration order).
+                let output = pipeline
+                    .steps
                     .last()
+                    .and_then(|last_step| result.step_results.get(&last_step.name))
                     .map(|sr| sr.output.clone())
                     .unwrap_or_else(|| StepOutput::new(String::new()));
 
@@ -1139,50 +1170,9 @@ impl PipelineRunner {
                                 tc.name, registry_name, tc.arguments
                             );
 
-                            let tool_result =
-                                if let Some(tool) = self.tool_registry.get(&registry_name) {
-                                    match tool
-                                        .call(
-                                            tc.arguments.clone(),
-                                            ToolContext {
-                                                audit_log: Arc::new(std::sync::Mutex::new(
-                                                    self.audit_log.clone(),
-                                                )),
-                                                filesystem_policy: ctx.filesystem_policy.clone(),
-                                                network_policy: ctx.network_policy.clone(),
-                                                allowed_tools: ctx.allowed_tools.clone(),
-                                            },
-                                        )
-                                        .await
-                                    {
-                                        Ok(output) => {
-                                            let pe = output
-                                                .raw
-                                                .char_indices()
-                                                .nth(80)
-                                                .map(|(i, _)| i)
-                                                .unwrap_or(output.raw.len());
-                                            eprintln!(
-                                                "[tool-ok] {}: {}",
-                                                registry_name,
-                                                &output.raw[..pe]
-                                            );
-                                            output.raw
-                                        }
-                                        Err(e) => {
-                                            eprintln!("[tool-err] {}: {}", registry_name, e);
-                                            format!("Tool error: {}", e)
-                                        }
-                                    }
-                                } else {
-                                    eprintln!(
-                                    "[tool-notfound] '{}' (from llm: '{}'). available in map: {:?}",
-                                    registry_name,
-                                    tc.name,
-                                    tool_name_map.keys().collect::<Vec<_>>()
-                                );
-                                    format!("Tool '{}' not found", registry_name)
-                                };
+                            let tool_result = self
+                                .execute_llm_tool_call(&registry_name, &tc.arguments, ctx)
+                                .await;
 
                             history
                                 .messages
@@ -1221,39 +1211,8 @@ impl PipelineRunner {
 
                             eprintln!("[xml-tool-call] tool_name={} args={}", tool_name, args);
 
-                            let tool_result = if let Some(tool) = self.tool_registry.get(tool_name)
-                            {
-                                match tool
-                                    .call(
-                                        args.clone(),
-                                        ToolContext {
-                                            audit_log: Arc::new(std::sync::Mutex::new(
-                                                self.audit_log.clone(),
-                                            )),
-                                            filesystem_policy: ctx.filesystem_policy.clone(),
-                                            network_policy: ctx.network_policy.clone(),
-                                            allowed_tools: ctx.allowed_tools.clone(),
-                                        },
-                                    )
-                                    .await
-                                {
-                                    Ok(output) => {
-                                        eprintln!(
-                                            "[xml-tool-ok] {}: {}",
-                                            tool_name,
-                                            &output.raw[..output.raw.len().min(80)]
-                                        );
-                                        output.raw
-                                    }
-                                    Err(e) => {
-                                        eprintln!("[xml-tool-err] {}: {}", tool_name, e);
-                                        format!("Tool error: {}", e)
-                                    }
-                                }
-                            } else {
-                                eprintln!("[xml-tool-notfound] '{}'", tool_name);
-                                format!("Tool '{}' not found", tool_name)
-                            };
+                            let tool_result =
+                                self.execute_llm_tool_call(tool_name, args, ctx).await;
 
                             history
                                 .messages
@@ -1355,46 +1314,13 @@ impl PipelineRunner {
                                                 .get(&tc.name)
                                                 .cloned()
                                                 .unwrap_or_else(|| tc.name.clone());
-                                            let result = if let Some(tool) =
-                                                self.tool_registry.get(&rname)
-                                            {
-                                                match tool
-                                                    .call(
-                                                        tc.arguments.clone(),
-                                                        ToolContext {
-                                                            audit_log: Arc::new(
-                                                                std::sync::Mutex::new(
-                                                                    self.audit_log.clone(),
-                                                                ),
-                                                            ),
-                                                            filesystem_policy: ctx
-                                                                .filesystem_policy
-                                                                .clone(),
-                                                            network_policy: ctx
-                                                                .network_policy
-                                                                .clone(),
-                                                            allowed_tools: ctx
-                                                                .allowed_tools
-                                                                .clone(),
-                                                        },
-                                                    )
-                                                    .await
-                                                {
-                                                    Ok(o) => {
-                                                        eprintln!("[syn-tool-ok] {}", rname);
-                                                        o.raw
-                                                    }
-                                                    Err(e) => {
-                                                        eprintln!(
-                                                            "[syn-tool-err] {}: {}",
-                                                            rname, e
-                                                        );
-                                                        format!("Tool error: {}", e)
-                                                    }
-                                                }
-                                            } else {
-                                                format!("Tool '{}' not found", rname)
-                                            };
+                                            let result = self
+                                                .execute_llm_tool_call(
+                                                    &rname,
+                                                    &tc.arguments,
+                                                    ctx,
+                                                )
+                                                .await;
                                             tool_results.push(result.clone());
                                             history.messages.push(
                                                 crate::llm::ChatMessage::tool_result(cid, result),
@@ -1450,41 +1376,8 @@ impl PipelineRunner {
                                     for (i, (tname, targs)) in xml_calls.iter().enumerate() {
                                         let cid = format!("syn_xml_{}", i);
                                         eprintln!("[syn-xml-tool] {} args={}", tname, targs);
-                                        let result = if let Some(tool) =
-                                            self.tool_registry.get(tname)
-                                        {
-                                            match tool
-                                                .call(
-                                                    targs.clone(),
-                                                    ToolContext {
-                                                        audit_log: Arc::new(std::sync::Mutex::new(
-                                                            self.audit_log.clone(),
-                                                        )),
-                                                        filesystem_policy: ctx
-                                                            .filesystem_policy
-                                                            .clone(),
-                                                        network_policy: ctx.network_policy.clone(),
-                                                        allowed_tools: ctx.allowed_tools.clone(),
-                                                    },
-                                                )
-                                                .await
-                                            {
-                                                Ok(o) => {
-                                                    eprintln!(
-                                                        "[syn-xml-ok] {}: {}",
-                                                        tname,
-                                                        &o.raw[..o.raw.len().min(80)]
-                                                    );
-                                                    o.raw
-                                                }
-                                                Err(e) => {
-                                                    eprintln!("[syn-xml-err] {}: {}", tname, e);
-                                                    format!("Tool error: {}", e)
-                                                }
-                                            }
-                                        } else {
-                                            format!("Tool '{}' not found", tname)
-                                        };
+                                        let result =
+                                            self.execute_llm_tool_call(tname, targs, ctx).await;
                                         xml_tool_results.push(result.clone());
                                         history.messages.push(
                                             crate::llm::ChatMessage::tool_result(cid, result),
@@ -1857,7 +1750,15 @@ impl PipelineRunner {
                 // Execute batch via the parallel batch executor. It reuses the
                 // step_exec phases, so all StepAction variants are supported and
                 // guard_in is evaluated for parallel steps.
-                match super::parallel::execute_parallel_batch(self, pipeline, &mut ctx, &batch).await {
+                match super::parallel::execute_parallel_batch(
+                    self,
+                    pipeline,
+                    &mut ctx,
+                    &batch,
+                    &agent.policy.allowed_tools,
+                )
+                .await
+                {
                     Ok(batch_results) => {
                         for (step_name, _) in batch_results {
                             steps_passed.push(step_name);
@@ -1877,11 +1778,10 @@ impl PipelineRunner {
             ctx.step_name = step.name.clone();
             ctx.input = input.clone();
 
-            // Compute effective tool scope for this step
-            ctx.allowed_tools = crate::toolset::ToolSet::Intersection(
-                Box::new(agent.policy.allowed_tools.clone()),
-                Box::new(step.tools.clone()),
-            );
+            // Compute effective tool scope for this step.
+            // Shared with the parallel path via `step_exec::step_tool_scope`.
+            ctx.allowed_tools =
+                super::step_exec::step_tool_scope(&agent.policy.allowed_tools, step);
 
             // ===== Record StepStarted audit event =====
             // Shared with the parallel path via step_exec, so both emit an

@@ -330,3 +330,22 @@ mod tests {
         assert!(true, "output_schema: None preserves existing behavior");
     }
 }
+
+/// Compute a step's effective tool scope: agent policy ∩ step scope.
+///
+/// SINGLE SOURCE OF TRUTH. Both the sequential loop (`execution.rs`) and the
+/// parallel batch executor (`parallel.rs`) must call this and nothing else.
+/// Computing the intersection inline in each path let them diverge once
+/// already: the parallel path intersected the *inherited context* scope
+/// (`StepContext::new`'s default `ToolSet::Full`) instead of
+/// `agent.policy.allowed_tools`, silently bypassing agent-level policy for
+/// every `parallel: true` step.
+pub(crate) fn step_tool_scope(
+    agent_tools: &crate::toolset::ToolSet,
+    step: &AgentStep,
+) -> crate::toolset::ToolSet {
+    crate::toolset::ToolSet::Intersection(
+        Box::new(agent_tools.clone()),
+        Box::new(step.tools.clone()),
+    )
+}

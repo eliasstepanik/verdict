@@ -744,3 +744,388 @@ async fn test_tool_use_loop_tracks_cost() {
         result.total_cost_usd
     );
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+// SECURITY: LLM-driven tool calls inside a ToolUseLoop must go through the same
+// enforcement path as a plain ToolCall step (allowed_tools scope + tools_used /
+// commands_executed recording). These previously dispatched via
+// tool_registry.get() + tool.call() directly, bypassing both.
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+
+/// Differential test. The model asks for `fs.write` in both halves; only the step's
+/// `allowed_tools` scope differs.
+///   - in scope  -> the write really happens (proves dispatch is live, so the
+///                  out-of-scope half cannot pass for the wrong reason)
+///   - out of scope -> the write must NOT happen
+#[tokio::test]
+async fn test_tool_use_loop_rejects_tool_outside_step_scope() {
+    async fn run_with_scope(scope: Vec<String>, canary: &str) -> bool {
+        let canary_abs = std::env::current_dir().unwrap().join(canary);
+        let _ = std::fs::remove_file(&canary_abs);
+
+        let script = vec![
+            ScriptedResponse::tool_call(
+                "fs.write",
+                json!({ "path": canary, "content": "pwned" }),
+            ),
+            ScriptedResponse::text("Finished."),
+        ];
+        let llm_client = LlmClient::new(Arc::new(ScriptedMockLlmProvider::new(script)));
+
+        let mut step = tool_use_loop_step(
+            "scoped_loop",
+            "You are a file writer.",
+            "Do the task.",
+            // Advertised to the model in both halves; only the step scope below differs.
+            vec!["fs.list".to_string(), "fs.write".to_string()],
+            4,
+        );
+        step.tools = ToolSet::Allow(scope);
+
+        let pipeline = Pipeline {
+            name: "test_pipeline".into(),
+            steps: vec![step],
+            on_failure: FailureMode::Abort,
+            max_retries: 0,
+        };
+        let agent = make_agent(pipeline.clone(), ToolSet::Full);
+
+        let mut runner =
+            PipelineRunner::with_tool_registry(Arc::new(ToolRegistry::with_builtins()));
+        runner = runner.with_llm_client(Arc::new(llm_client));
+        let _ = runner.run(&pipeline, &agent, json!({})).await;
+
+        let created = canary_abs.exists();
+        let _ = std::fs::remove_file(&canary_abs);
+        created
+    }
+
+    let pid = std::process::id();
+
+    // Control: fs.write IS in scope -> the tool must actually run.
+    let in_scope = run_with_scope(
+        vec!["fs.list".to_string(), "fs.write".to_string()],
+        &format!("scope_canary_allowed_{}.txt", pid),
+    )
+    .await;
+    assert!(
+        in_scope,
+        "control half failed: fs.write was in scope but never executed — the test \
+         cannot prove anything about the out-of-scope half"
+    );
+
+    // Enforcement: fs.write is NOT in scope -> the tool must be rejected.
+    let out_of_scope = run_with_scope(
+        vec!["fs.list".to_string()],
+        &format!("scope_canary_denied_{}.txt", pid),
+    )
+    .await;
+    assert!(
+        !out_of_scope,
+        "fs.write was outside the step's allowed_tools scope but STILL EXECUTED \
+         (canary file was created) — the ToolUseLoop tool-dispatch path is bypassing \
+         the allowed_tools check"
+    );
+}
+
+/// An ALLOWED shell tool is invoked by the model with a denylisted command.
+/// `commands_executed` must be populated by the ToolUseLoop path so
+/// `Guard::ShellCommandDenylist` can actually see and block it.
+#[tokio::test]
+async fn test_tool_use_loop_shell_denylist_catches_llm_driven_command() {
+    let script = vec![
+        ScriptedResponse::tool_call(
+            "shell.run_command",
+            json!({ "command": "touch", "args": ["denylist_probe.txt"] }),
+        ),
+        ScriptedResponse::text("Done."),
+    ];
+
+    let mock_provider = ScriptedMockLlmProvider::new(script);
+    let llm_client = LlmClient::new(Arc::new(mock_provider));
+
+    let mut step = tool_use_loop_step(
+        "shell_loop",
+        "You are a shell operator.",
+        "Run the command.",
+        vec!["shell.run_command".to_string()],
+        4,
+    );
+    // The tool itself IS allowed; only the *command* is denied.
+    step.tools = ToolSet::Allow(vec!["shell.run_command".to_string()]);
+    step.guard_out = Guard::ShellCommandDenylist(vec!["touch".to_string()]);
+
+    let pipeline = Pipeline {
+        name: "test_pipeline".into(),
+        steps: vec![step],
+        on_failure: FailureMode::Abort,
+        max_retries: 0,
+    };
+
+    let agent = make_agent(pipeline.clone(), ToolSet::Full);
+
+    let mut runner = PipelineRunner::with_tool_registry(Arc::new(ToolRegistry::with_builtins()));
+    runner = runner.with_llm_client(Arc::new(llm_client));
+
+    let result = runner.run(&pipeline, &agent, json!({})).await;
+    let _ = std::fs::remove_file(std::env::current_dir().unwrap().join("denylist_probe.txt"));
+
+    match &result {
+        Err(PipelineError::GuardFailed { error, .. }) => {
+            let msg = format!("{:?}", error);
+            assert!(
+                msg.contains("ShellCommandDenylist"),
+                "blocked, but not by the denylist guard: {}",
+                msg
+            );
+        }
+        other => panic!(
+            "LLM-driven 'touch' was NOT caught by ShellCommandDenylist — \
+             commands_executed is not being populated by the ToolUseLoop path. result={:?}",
+            other
+        ),
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+// MUTATION TESTING: Dispatch Site 2 — XML tool calls in main loop (line 1215)
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+
+/// Test that XML-formatted tool calls in the main loop (not synthesis) are scoped correctly.
+/// The model returns `<invoke>...</invoke>` XML blocks instead of JSON tool_calls.
+/// This exercises the dispatch site at execution.rs:1215 in the XML tool-call path.
+#[tokio::test]
+async fn test_tool_use_loop_xml_main_loop_rejects_tool_outside_scope() {
+    async fn run_with_scope(scope: Vec<String>, canary: &str) -> bool {
+        let canary_abs = std::env::current_dir().unwrap().join(canary);
+        let _ = std::fs::remove_file(&canary_abs);
+
+        // Model returns XML-format tool call (not JSON), triggering the XML parse path at line 1215
+        let script = vec![
+            ScriptedResponse::text(
+                "<invoke name=\"fs.write\">\
+                 <parameter name=\"path\">CANARY_PATH</parameter>\
+                 <parameter name=\"content\">pwned</parameter>\
+                 </invoke>"
+                    .replace("CANARY_PATH", canary),
+            ),
+            ScriptedResponse::text("Finished."),
+        ];
+        let llm_client = LlmClient::new(Arc::new(ScriptedMockLlmProvider::new(script)));
+
+        let mut step = tool_use_loop_step(
+            "xml_loop",
+            "You are a file writer.",
+            "Do the task.",
+            vec!["fs.list".to_string(), "fs.write".to_string()],
+            4,
+        );
+        step.tools = ToolSet::Allow(scope);
+
+        let pipeline = Pipeline {
+            name: "test_pipeline".into(),
+            steps: vec![step],
+            on_failure: FailureMode::Abort,
+            max_retries: 0,
+        };
+        let agent = make_agent(pipeline.clone(), ToolSet::Full);
+
+        let mut runner =
+            PipelineRunner::with_tool_registry(Arc::new(ToolRegistry::with_builtins()));
+        runner = runner.with_llm_client(Arc::new(llm_client));
+        let _ = runner.run(&pipeline, &agent, json!({})).await;
+
+        let created = canary_abs.exists();
+        let _ = std::fs::remove_file(&canary_abs);
+        created
+    }
+
+    let pid = std::process::id();
+
+    // Control: fs.write IS in scope -> the tool must actually run.
+    let in_scope = run_with_scope(
+        vec!["fs.list".to_string(), "fs.write".to_string()],
+        &format!("xml_scope_allowed_{}.txt", pid),
+    )
+    .await;
+    assert!(
+        in_scope,
+        "control half failed: fs.write was in scope but never executed (XML path) — \
+         the test cannot prove anything about the out-of-scope half"
+    );
+
+    // Enforcement: fs.write is NOT in scope -> the tool must be rejected even in XML path.
+    let out_of_scope = run_with_scope(
+        vec!["fs.list".to_string()],
+        &format!("xml_scope_denied_{}.txt", pid),
+    )
+    .await;
+    assert!(
+        !out_of_scope,
+        "fs.write was outside step scope but STILL EXECUTED in XML path (line 1215) — \
+         dispatch does not route through execute_llm_tool_call"
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+// MUTATION TESTING: Dispatch Site 3 — JSON tool calls in synthesis (line 1318)
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+
+/// Test that JSON tool calls in the synthesis loop are scoped correctly.
+/// Synthesis is triggered when the main loop runs out of rounds without answering in text.
+/// The dispatch site is at execution.rs:1318.
+#[tokio::test]
+async fn test_tool_use_loop_synthesis_json_rejects_tool_outside_scope() {
+    async fn run_with_scope(scope: Vec<String>, canary: &str) -> bool {
+        let canary_abs = std::env::current_dir().unwrap().join(canary);
+        let _ = std::fs::remove_file(&canary_abs);
+
+        // Round 0: model returns tool call (fs.list), which is allowed, so it executes
+        // Main loop ends (max_rounds=1). answered_with_text=false, so synthesis runs.
+        // In synthesis, model returns JSON tool call (fs.write) to be executed.
+        let script = vec![
+            ScriptedResponse::tool_call("fs.list", json!({ "path": "." })),
+            // Synthesis calls LLM, which returns JSON tool call
+            ScriptedResponse::tool_call("fs.write", json!({ "path": canary, "content": "pwned" })),
+            ScriptedResponse::text("Done."),
+        ];
+        let llm_client = LlmClient::new(Arc::new(ScriptedMockLlmProvider::new(script)));
+
+        let mut step = tool_use_loop_step(
+            "syn_loop",
+            "Call a tool first, then write to a file.",
+            "Do it now.",
+            vec!["fs.list".to_string(), "fs.write".to_string()],
+            1, // max_rounds = 1, so main loop stops without text answer, triggering synthesis
+        );
+        step.tools = ToolSet::Allow(scope);
+
+        let pipeline = Pipeline {
+            name: "test_pipeline".into(),
+            steps: vec![step],
+            on_failure: FailureMode::Abort,
+            max_retries: 0,
+        };
+        let agent = make_agent(pipeline.clone(), ToolSet::Full);
+
+        let mut runner =
+            PipelineRunner::with_tool_registry(Arc::new(ToolRegistry::with_builtins()));
+        runner = runner.with_llm_client(Arc::new(llm_client));
+        let _ = runner.run(&pipeline, &agent, json!({})).await;
+
+        let created = canary_abs.exists();
+        let _ = std::fs::remove_file(&canary_abs);
+        created
+    }
+
+    let pid = std::process::id();
+
+    // Control: fs.write IS in scope -> synthesis should execute it.
+    let in_scope = run_with_scope(
+        vec!["fs.list".to_string(), "fs.write".to_string()],
+        &format!("syn_json_allowed_{}.txt", pid),
+    )
+    .await;
+    assert!(
+        in_scope,
+        "control half failed: fs.write was in scope but synthesis never executed it — \
+         the test cannot prove anything about the out-of-scope half"
+    );
+
+    // Enforcement: fs.write is NOT in scope -> synthesis must reject it.
+    let out_of_scope = run_with_scope(
+        vec!["fs.list".to_string()],
+        &format!("syn_json_denied_{}.txt", pid),
+    )
+    .await;
+    assert!(
+        !out_of_scope,
+        "fs.write was outside step scope but STILL EXECUTED in synthesis JSON path (line 1318) — \
+         dispatch does not route through execute_llm_tool_call"
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+// MUTATION TESTING: Dispatch Site 4 — XML tool calls in synthesis (line 1380)
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+
+/// Test that XML tool calls in the synthesis loop are scoped correctly.
+/// Similar to Site 3, but the model returns XML <invoke> blocks in synthesis instead of JSON.
+/// The dispatch site is at execution.rs:1380.
+#[tokio::test]
+async fn test_tool_use_loop_synthesis_xml_rejects_tool_outside_scope() {
+    async fn run_with_scope(scope: Vec<String>, canary: &str) -> bool {
+        let canary_abs = std::env::current_dir().unwrap().join(canary);
+        let _ = std::fs::remove_file(&canary_abs);
+
+        // Round 0: model calls fs.list (allowed in both scopes), no text answer
+        // Main loop ends (max_rounds=1). answered_with_text=false, so synthesis runs.
+        // Synthesis response with XML tool call (fs.write)
+        let script = vec![
+            ScriptedResponse::tool_call("fs.list", json!({ "path": "." })),
+            // Synthesis response with XML tool call
+            ScriptedResponse::text(
+                "I will write to the file now:\n\
+                 <invoke name=\"fs.write\">\
+                 <parameter name=\"path\">CANARY_PATH</parameter>\
+                 <parameter name=\"content\">pwned</parameter>\
+                 </invoke>"
+                    .replace("CANARY_PATH", canary),
+            ),
+            ScriptedResponse::text("All done."),
+        ];
+        let llm_client = LlmClient::new(Arc::new(ScriptedMockLlmProvider::new(script)));
+
+        let mut step = tool_use_loop_step(
+            "syn_xml_loop",
+            "Call a tool first, then write to a file.",
+            "Do it now.",
+            vec!["fs.list".to_string(), "fs.write".to_string()],
+            1, // max_rounds = 1, triggers synthesis
+        );
+        step.tools = ToolSet::Allow(scope);
+
+        let pipeline = Pipeline {
+            name: "test_pipeline".into(),
+            steps: vec![step],
+            on_failure: FailureMode::Abort,
+            max_retries: 0,
+        };
+        let agent = make_agent(pipeline.clone(), ToolSet::Full);
+
+        let mut runner =
+            PipelineRunner::with_tool_registry(Arc::new(ToolRegistry::with_builtins()));
+        runner = runner.with_llm_client(Arc::new(llm_client));
+        let _ = runner.run(&pipeline, &agent, json!({})).await;
+
+        let created = canary_abs.exists();
+        let _ = std::fs::remove_file(&canary_abs);
+        created
+    }
+
+    let pid = std::process::id();
+
+    // Control: fs.write IS in scope -> synthesis should execute it.
+    let in_scope = run_with_scope(
+        vec!["fs.list".to_string(), "fs.write".to_string()],
+        &format!("syn_xml_allowed_{}.txt", pid),
+    )
+    .await;
+    assert!(
+        in_scope,
+        "control half failed: fs.write was in scope but synthesis never executed it (XML) — \
+         the test cannot prove anything about the out-of-scope half"
+    );
+
+    // Enforcement: fs.write is NOT in scope -> synthesis must reject it.
+    let out_of_scope = run_with_scope(
+        vec!["fs.list".to_string()],
+        &format!("syn_xml_denied_{}.txt", pid),
+    )
+    .await;
+    assert!(
+        !out_of_scope,
+        "fs.write was outside step scope but STILL EXECUTED in synthesis XML path (line 1380) — \
+         dispatch does not route through execute_llm_tool_call"
+    );
+}

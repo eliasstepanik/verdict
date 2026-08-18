@@ -1350,3 +1350,311 @@ async fn test_inherit_budget_flag_false() {
         parent_result.budget.llm_calls_used
     );
 }
+
+/// Test: Delegation output schema validation uses LAST step deterministically.
+///
+/// Bug: HashMap::values().last() has non-deterministic order in Rust, so it
+/// could select an arbitrary step's output instead of the actual last step.
+/// This test ensures the fix uses the ordered pipeline.steps to find the
+/// last step deterministically.
+///
+/// Structure:
+/// - Delegated agent has 3 steps: "step1", "step2", "step3" (in that order).
+/// - step1 outputs invalid JSON for the schema (number instead of object).
+/// - step2 outputs valid JSON but does NOT match the expected schema.
+/// - step3 outputs valid JSON that DOES match the expected schema.
+/// - Only step3's output should be validated against expected_output_schema.
+/// - If the code randomly picked step1 or step2, validation would fail.
+/// - Run multiple times to ensure HashMap iteration variance doesn't cause flakiness.
+#[tokio::test]
+async fn test_delegation_last_step_schema_validation_deterministic() {
+    use std::sync::Arc;
+
+    // Define the expected schema: an object with "result" field (string).
+    let expected_schema = json!({
+        "type": "object",
+        "required": ["result"],
+        "properties": {
+            "result": { "type": "string" }
+        }
+    });
+
+    // Create a delegated agent with 3 steps. Only the last step's output matches the schema.
+    let delegated_agent = Agent {
+        name: "multi_step_agent".to_string(),
+        description: "Agent with multiple steps".to_string(),
+        pipeline: Pipeline {
+            name: "multi_step_pipeline".to_string(),
+            steps: vec![
+                // Step 1: Output invalid JSON (a number)
+                AgentStep {
+                    name: "step1".to_string(),
+                    guard_in: Guard::None,
+                    action: StepAction::Custom(Arc::new(|_ctx| {
+                        Ok(StepOutput::new("42".to_string()))
+                    })),
+                    guard_out: Guard::None,
+                    verdict: Verdict::Automated(Guard::None),
+                    tools: ToolSet::None,
+                    injection_protection: InjectionProtection::None,
+                    output_schema: None,
+                    dependencies: Vec::new(),
+                    parallel: false,
+                    input_processors: vec![],
+                    output_processors: vec![],
+                },
+                // Step 2: Output valid JSON but does NOT match expected schema.
+                // This is a valid object but missing "result" field.
+                AgentStep {
+                    name: "step2".to_string(),
+                    guard_in: Guard::None,
+                    action: StepAction::Custom(Arc::new(|_ctx| {
+                        Ok(StepOutput::new(
+                            json!({"other_field": "value"}).to_string()
+                        ))
+                    })),
+                    guard_out: Guard::None,
+                    verdict: Verdict::Automated(Guard::None),
+                    tools: ToolSet::None,
+                    injection_protection: InjectionProtection::None,
+                    output_schema: None,
+                    dependencies: Vec::new(),
+                    parallel: false,
+                    input_processors: vec![],
+                    output_processors: vec![],
+                },
+                // Step 3: Output valid JSON that DOES match the schema.
+                AgentStep {
+                    name: "step3".to_string(),
+                    guard_in: Guard::None,
+                    action: StepAction::Custom(Arc::new(|_ctx| {
+                        Ok(StepOutput::new(
+                            json!({"result": "success"}).to_string()
+                        ))
+                    })),
+                    guard_out: Guard::None,
+                    verdict: Verdict::Automated(Guard::None),
+                    tools: ToolSet::None,
+                    injection_protection: InjectionProtection::None,
+                    output_schema: None,
+                    dependencies: Vec::new(),
+                    parallel: false,
+                    input_processors: vec![],
+                    output_processors: vec![],
+                },
+            ],
+            on_failure: FailureMode::Abort,
+            max_retries: 0,
+        },
+        tools: ToolSet::None,
+        skills: SkillSet::default(),
+        policy: AgentPolicy::default(),
+        scorers: vec![],
+    };
+
+    // Create orchestrator agent that delegates to multi_step_agent with schema validation.
+    let orchestrator_agent = Agent {
+        name: "orchestrator".to_string(),
+        description: "Orchestrator".to_string(),
+        pipeline: Pipeline {
+            name: "orchestrator_pipeline".to_string(),
+            steps: vec![AgentStep {
+                name: "delegate_with_schema".to_string(),
+                guard_in: Guard::None,
+                action: StepAction::DelegateAgent {
+                    agent: "multi_step_agent".to_string(),
+                    input: json!({}),
+                    expected_output_schema: Some(expected_schema.clone()),
+                    delegation_policy: DelegationPolicy {
+                        max_depth: 3,
+                        allowed_agents: vec!["multi_step_agent".to_string()],
+                        require_output_schema: true,
+                        inherit_tool_scope: true,
+                        inherit_budget: true,
+                        require_user_approval: false,
+                        memory_isolation: MemoryIsolation::Isolated,
+                        on_delegation_start: None,
+                        on_delegation_complete: None,
+                        on_iteration_complete: None,
+                        message_filter: None,
+                    },
+                    detached: false,
+                },
+                guard_out: Guard::None,
+                verdict: Verdict::Automated(Guard::None),
+                tools: ToolSet::None,
+                injection_protection: InjectionProtection::None,
+                output_schema: None,
+                dependencies: Vec::new(),
+                parallel: false,
+                input_processors: vec![],
+                output_processors: vec![],
+            }],
+            on_failure: FailureMode::Abort,
+            max_retries: 0,
+        },
+        tools: ToolSet::None,
+        skills: SkillSet::default(),
+        policy: AgentPolicy::default(),
+        scorers: vec![],
+    };
+
+    // Set up agent registry with both agents.
+    let mut agent_registry = AgentRegistry::new();
+    agent_registry.register(delegated_agent);
+    agent_registry.register(orchestrator_agent.clone());
+    let arc_reg = Arc::new(agent_registry);
+
+    // Run multiple times to catch any flakiness from HashMap ordering variance.
+    // If the code uses HashMap::values().last(), it might randomly pick step1 or step2
+    // instead of step3, causing the test to fail on some runs.
+    for run in 0..5 {
+        let mut runner = PipelineRunner::with_agent_registry(arc_reg.clone());
+        let result = runner
+            .run(&orchestrator_agent.pipeline, &orchestrator_agent, json!({}))
+            .await;
+
+        assert!(
+            result.is_ok(),
+            "Run {}: Delegation with schema validation should succeed, but got error: {:?}",
+            run,
+            result.err()
+        );
+
+        let pipeline_result = result.unwrap();
+        // The orchestrator's only step should have succeeded because step3's output
+        // matches the schema.
+        assert!(
+            pipeline_result
+                .step_results
+                .get("delegate_with_schema")
+                .map(|sr| sr.verdict_passed)
+                .unwrap_or(false),
+            "Run {}: delegate_with_schema step should have passed (step3 output matches schema)",
+            run
+        );
+    }
+}
+
+/// Test: SubPipeline output schema validation uses LAST step deterministically.
+///
+/// Similar to delegation test but for SubPipeline action.
+#[tokio::test]
+async fn test_subpipeline_last_step_output_deterministic() {
+    use std::sync::Arc;
+
+    // Create a sub-pipeline with 3 steps, only last step outputs correct format.
+    let sub_pipeline = Pipeline {
+        name: "sub_pipeline".to_string(),
+        steps: vec![
+            AgentStep {
+                name: "sub_step1".to_string(),
+                guard_in: Guard::None,
+                action: StepAction::Custom(Arc::new(|_ctx| {
+                    Ok(StepOutput::new("intermediate1".to_string()))
+                })),
+                guard_out: Guard::None,
+                verdict: Verdict::Automated(Guard::None),
+                tools: ToolSet::None,
+                injection_protection: InjectionProtection::None,
+                output_schema: None,
+                dependencies: Vec::new(),
+                parallel: false,
+                input_processors: vec![],
+                output_processors: vec![],
+            },
+            AgentStep {
+                name: "sub_step2".to_string(),
+                guard_in: Guard::None,
+                action: StepAction::Custom(Arc::new(|_ctx| {
+                    Ok(StepOutput::new("intermediate2".to_string()))
+                })),
+                guard_out: Guard::None,
+                verdict: Verdict::Automated(Guard::None),
+                tools: ToolSet::None,
+                injection_protection: InjectionProtection::None,
+                output_schema: None,
+                dependencies: Vec::new(),
+                parallel: false,
+                input_processors: vec![],
+                output_processors: vec![],
+            },
+            AgentStep {
+                name: "sub_step3".to_string(),
+                guard_in: Guard::None,
+                action: StepAction::Custom(Arc::new(|_ctx| {
+                    Ok(StepOutput::new("final_output".to_string()))
+                })),
+                guard_out: Guard::None,
+                verdict: Verdict::Automated(Guard::None),
+                tools: ToolSet::None,
+                injection_protection: InjectionProtection::None,
+                output_schema: None,
+                dependencies: Vec::new(),
+                parallel: false,
+                input_processors: vec![],
+                output_processors: vec![],
+            },
+        ],
+        on_failure: FailureMode::Abort,
+        max_retries: 0,
+    };
+
+    // Create main pipeline that calls the SubPipeline.
+    let main_pipeline = Pipeline {
+        name: "main_pipeline".to_string(),
+        steps: vec![AgentStep {
+            name: "call_sub".to_string(),
+            guard_in: Guard::None,
+            action: StepAction::SubPipeline(Box::new(sub_pipeline)),
+            guard_out: Guard::None,
+            verdict: Verdict::Automated(Guard::None),
+            tools: ToolSet::None,
+            injection_protection: InjectionProtection::None,
+            output_schema: None,
+            dependencies: Vec::new(),
+            parallel: false,
+            input_processors: vec![],
+            output_processors: vec![],
+        }],
+        on_failure: FailureMode::Abort,
+        max_retries: 0,
+    };
+
+    let agent = Agent {
+        name: "test_agent".to_string(),
+        description: "Test agent".to_string(),
+        pipeline: main_pipeline,
+        tools: ToolSet::None,
+        skills: SkillSet::default(),
+        policy: AgentPolicy::default(),
+        scorers: vec![],
+    };
+
+    // Run multiple times to catch HashMap ordering flakiness.
+    for run in 0..5 {
+        let mut runner = PipelineRunner::new();
+        let result = runner.run(&agent.pipeline, &agent, json!({})).await;
+
+        assert!(
+            result.is_ok(),
+            "Run {}: SubPipeline should succeed, got: {:?}",
+            run,
+            result.err()
+        );
+
+        let pipeline_result = result.unwrap();
+        // The SubPipeline should return the output of sub_step3 (the last step), not step1 or step2.
+        let sub_pipeline_output = pipeline_result
+            .step_results
+            .get("call_sub")
+            .map(|sr| sr.output.raw.clone())
+            .unwrap_or_default();
+
+        assert_eq!(
+            sub_pipeline_output, "final_output",
+            "Run {}: SubPipeline should return output of last step (sub_step3='final_output'), got '{}'",
+            run, sub_pipeline_output
+        );
+    }
+}

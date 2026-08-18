@@ -212,14 +212,18 @@ impl PipelineRunner {
 
                 // Step 8: Validate output schema if specified
                 if let Some(schema) = expected_output_schema {
-                    let last_output = result
-                        .step_results
-                        .values()
+                    // Get the LAST step's output deterministically by finding the last step in
+                    // the pipeline and looking it up by name (not by HashMap iteration order).
+                    let last_step_result = agent
+                        .pipeline
+                        .steps
                         .last()
-                        .map(|sr| &sr.output.raw)
+                        .and_then(|last_step| result.step_results.get(&last_step.name))
                         .ok_or_else(|| StepError::ActionFailed {
                             reason: "Delegated agent produced no output".into(),
                         })?;
+
+                    let last_output = &last_step_result.output.raw;
 
                     if let Ok(parsed) = serde_json::from_str::<Value>(last_output) {
                         match jsonschema::JSONSchema::compile(schema) {
@@ -260,10 +264,13 @@ impl PipelineRunner {
                     },
                 });
 
-                let agent_output = result
-                    .step_results
-                    .values()
+                // Get the LAST step's output deterministically by finding the last step in
+                // the pipeline and looking it up by name (not by HashMap iteration order).
+                let agent_output = agent
+                    .pipeline
+                    .steps
                     .last()
+                    .and_then(|last_step| result.step_results.get(&last_step.name))
                     .map(|sr| sr.output.clone())
                     .unwrap_or_else(|| StepOutput::new(String::new()));
 

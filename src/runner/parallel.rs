@@ -1,4 +1,6 @@
-use super::step_exec::{emit_step_started, run_action, run_guard_in, run_post_action};
+use super::step_exec::{
+    emit_step_started, run_action, run_guard_in, run_post_action, step_tool_scope,
+};
 use super::PipelineRunner;
 use crate::action::{StepAction, StepError};
 use crate::context::StepContext;
@@ -29,6 +31,7 @@ use crate::pipeline::Pipeline;
 /// - `pipeline`: the pipeline being executed (for step lookup)
 /// - `ctx`: mutable context (merged with batch results post-execution)
 /// - `batch`: step indices to execute as one parallel batch
+/// - `agent_tools`: the agent policy's tool scope, intersected with each step's scope
 ///
 /// # Returns
 /// Ok(Vec of (step_name, StepResult)) if all steps succeed, Err(PipelineError) on first failure.
@@ -37,6 +40,7 @@ pub(crate) async fn execute_parallel_batch(
     pipeline: &Pipeline,
     ctx: &mut StepContext,
     batch: &[usize],
+    agent_tools: &crate::toolset::ToolSet,
 ) -> Result<Vec<(String, crate::context::StepResult)>, super::PipelineError> {
     // Phase 1: build each step's isolated context and evaluate guard_in.
     // guard_in runs before any action is dispatched, so a failing guard blocks
@@ -48,10 +52,10 @@ pub(crate) async fn execute_parallel_batch(
         let mut step_ctx = ctx.clone();
         step_ctx.step_name = step.name.clone();
         step_ctx.input = ctx.input.clone();
-        step_ctx.allowed_tools = crate::toolset::ToolSet::Intersection(
-            Box::new(step_ctx.allowed_tools.clone()),
-            Box::new(step.tools.clone()),
-        );
+        // Effective tool scope = agent policy ∩ step scope, via the same helper
+        // the sequential path uses. Intersecting the inherited context scope
+        // here instead would bypass agent-level policy (see `step_tool_scope`).
+        step_ctx.allowed_tools = step_tool_scope(agent_tools, &step);
 
         emit_step_started(runner, &step, &step_ctx);
         if let Err(e) = run_guard_in(runner, &step, &step_ctx).await {
