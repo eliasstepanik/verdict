@@ -104,6 +104,11 @@ impl ToolRegistry {
         Ok(())
     }
 
+    /// Register an external command tool
+    pub fn register_external_command(&mut self, tool: crate::tools::ExternalCommandTool) {
+        self.tools.insert(tool.name().to_string(), Arc::new(tool));
+    }
+
     /// Create a registry with all built-in tools
     pub fn with_builtins() -> Self {
         let mut registry = Self::new();
