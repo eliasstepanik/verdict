@@ -207,18 +207,29 @@ pub struct StepOutput {
     pub raw: String,
     /// Parsed structured output (if applicable)
     pub parsed: Option<Value>,
+    /// Skill evaluation result (if applicable)
+    pub eval_result: Option<String>,
 }
 
 impl StepOutput {
     pub fn new(raw: String) -> Self {
-        Self { raw, parsed: None }
+        Self {
+            raw,
+            parsed: None,
+            eval_result: None,
+        }
     }
 
     pub fn with_parsed(raw: String, parsed: Value) -> Self {
         Self {
             raw,
             parsed: Some(parsed),
+            eval_result: None,
         }
+    }
+
+    pub fn set_eval_result(&mut self, eval_result: String) {
+        self.eval_result = Some(eval_result);
     }
 }
 

@@ -833,12 +833,14 @@ impl PipelineRunner {
                         if self.llm_client.is_none() {
                             Ok(StepOutput::new(skill_def.instructions.clone()))
                         } else {
-                            // FIX #2: Inject skill instructions as system prompt only.
-                            // Do NOT include literal "{system}" or "{user}" placeholders —
-                            // the template engine only substitutes {input} and {step_name},
-                            // so these would leak into the LLM call as garbage text.
+                            // Inject skill instructions and few-shot examples into the system prompt
+                            let system_prompt = self.build_skill_system_prompt(
+                                &skill_def.instructions,
+                                &skill_def.examples,
+                            );
+
                             let llm_call = StepAction::LlmCall {
-                                system: skill_def.instructions.clone(),
+                                system: system_prompt,
                                 user: String::new(),
                                 model: None,
                                 conversation_id: None,
@@ -860,8 +862,14 @@ impl PipelineRunner {
                             if self.llm_client.is_none() {
                                 Ok(StepOutput::new(skill_def.instructions.clone()))
                             } else {
+                                // Inject skill instructions and few-shot examples
+                                let system_prompt = self.build_skill_system_prompt(
+                                    &skill_def.instructions,
+                                    &skill_def.examples,
+                                );
+
                                 let llm_call = StepAction::LlmCall {
-                                    system: skill_def.instructions.clone(),
+                                    system: system_prompt,
                                     user: String::new(),
                                     model: None,
                                     conversation_id: None,
@@ -875,7 +883,18 @@ impl PipelineRunner {
 
                 // Restore original tool scope after skill execution
                 ctx.allowed_tools = saved_tools;
-                result
+
+                // FEATURE: Run skill evaluation if present and step succeeded
+                let mut final_result = result?;
+                if let Some(skill_eval) = &skill_def.eval {
+                    let eval_output =
+                        self.run_skill_eval(skill_eval, &final_result, &skill_def.name)
+                            .await;
+                    // Attach eval result to output metadata (informational, non-blocking)
+                    final_result.set_eval_result(eval_output);
+                }
+
+                Ok(final_result)
             }
 
             // ========== Branch ==========
@@ -2148,8 +2167,86 @@ impl PipelineRunner {
             total_tokens_used: 0, // Will be updated when LLM calls are tracked
             log: vec![],          // Will be populated when logging is wired
             suspended: None,
-            budget: ctx.budget.clone(),
+             budget: ctx.budget.clone(),
         })
+    }
+
+    /// Build a system prompt by combining skill instructions with few-shot examples.
+    ///
+    /// Format: instructions, then for each example (if any):
+    /// ```text
+    /// Example N:
+    /// Input: <example.input>
+    /// Expected Output: <example.expected_output>
+    /// Description: <example.description>
+    /// ```
+    fn build_skill_system_prompt(
+        &self,
+        instructions: &str,
+        examples: &[crate::skills::SkillExample],
+    ) -> String {
+        if examples.is_empty() {
+            return instructions.to_string();
+        }
+
+        let mut prompt = instructions.to_string();
+        prompt.push_str("\n\n");
+
+        for (idx, example) in examples.iter().enumerate() {
+            let example_num = idx + 1;
+            prompt.push_str(&format!("Example {}:\n", example_num));
+            prompt.push_str(&format!("Input: {}\n", example.input));
+            prompt.push_str(&format!(
+                "Expected Output: {}\n",
+                example.expected_output
+            ));
+            prompt.push_str(&format!("Description: {}\n", example.description));
+            if idx < examples.len() - 1 {
+                prompt.push_str("\n");
+            }
+        }
+
+        prompt
+    }
+
+    /// Run skill evaluation and return a formatted eval result string.
+    ///
+    /// Evaluation is informational (non-blocking) — results are attached to output
+    /// for audit/visibility purposes but do not gate step success.
+    async fn run_skill_eval(
+        &self,
+        skill_eval: &crate::skills::SkillEval,
+        output: &StepOutput,
+        skill_name: &str,
+    ) -> String {
+        // Simple evaluation: check if all criteria are mentioned in the output
+        // More sophisticated evaluation (with scoring, LLM checks, etc.) can be added later
+        let output_text = &output.raw;
+        let mut met_criteria = 0;
+
+        for criterion in &skill_eval.criteria {
+            if output_text.contains(criterion) {
+                met_criteria += 1;
+            }
+        }
+
+        let criteria_count = skill_eval.criteria.len();
+        let score = if criteria_count == 0 {
+            1.0
+        } else {
+            met_criteria as f64 / criteria_count as f64
+        };
+
+        let threshold_check = if score < skill_eval.min_score {
+            format!(" [BELOW threshold]")
+        } else {
+            String::new()
+        };
+
+        format!(
+            "SkillEval[{}]: {}/{} criteria met (score: {:.2}, min: {:.2}){}",
+            skill_name, met_criteria, criteria_count, score, skill_eval.min_score, threshold_check
+        )
     }
 }
 

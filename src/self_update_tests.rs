@@ -423,6 +423,7 @@ mod cycle_e2e {
                     Ok(StepOutput {
                         raw: raw.trim().to_string(),
                         parsed: None,
+                        eval_result: None,
                     })
                 })),
                 guard_in: Guard::None,

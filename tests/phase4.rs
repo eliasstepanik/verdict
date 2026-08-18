@@ -24,6 +24,7 @@ fn simple_agent(name: &str) -> Agent {
                     Ok(StepOutput {
                         raw: "delegated work complete".to_string(),
                         parsed: None,
+                        eval_result: None,
                     })
                 })),
                 guard_out: Guard::None,
@@ -804,6 +805,7 @@ async fn test_require_output_schema_enforced() {
                     Ok(StepOutput {
                         raw: r#"{"value": 42}"#.to_string(),
                         parsed: None,
+                        eval_result: None,
                     })
                 })),
                 guard_out: Guard::None,

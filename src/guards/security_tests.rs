@@ -21,6 +21,7 @@ fn make_context_with_output(raw: String) -> StepContext {
     ctx.output = Some(StepOutput {
         raw,
         parsed: None,
+        eval_result: None,
     });
     ctx
 }

@@ -11,16 +11,17 @@ use std::sync::{
 use verdict::prelude::*;
 
 /// Mock LLM provider for testing
+#[derive(Clone)]
 pub struct MockLlmProvider {
     pub expected_response: String,
-    pub captured_request: Mutex<Option<LlmRequest>>,
+    pub captured_request: Arc<Mutex<Option<LlmRequest>>>,
 }
 
 impl MockLlmProvider {
     pub fn new(response: impl Into<String>) -> Self {
         Self {
             expected_response: response.into(),
-            captured_request: Mutex::new(None),
+            captured_request: Arc::new(Mutex::new(None)),
         }
     }
 }
