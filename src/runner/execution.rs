@@ -706,6 +706,12 @@ impl PipelineRunner {
                 };
 
                 // Get the current agent (from context, fallback to a basic one)
+                // FIX #3: Propagate narrowed tool scope from parent context into sub-agent's policy
+                // so that the effective tool scope for steps inside the sub-pipeline is correctly:
+                // parent_narrowed_scope ∩ step.tools (not default ∩ step.tools which would be too restrictive)
+                let mut policy = AgentPolicy::default();
+                policy.allowed_tools = ctx.allowed_tools.clone();
+                
                 let agent = crate::agent::Agent {
                     name: ctx.agent_name.clone(),
                     description: "Child pipeline agent".into(),
@@ -714,7 +720,7 @@ impl PipelineRunner {
                     skills: SkillSet {
                         skills: ctx.active_skills.clone(),
                     },
-                    policy: AgentPolicy::default(),
+                    policy,
                     scorers: Vec::new(),
                 };
 
@@ -813,21 +819,27 @@ impl PipelineRunner {
                     )?;
                 }
 
-                match mode {
+                // FIX #1: Narrow allowed_tools by skill's allowed_tools
+                // Effective scope: agent ∩ pipeline ∩ step ∩ skill
+                let saved_tools = ctx.allowed_tools.clone();
+                ctx.allowed_tools = crate::toolset::ToolSet::Intersection(
+                    Box::new(ctx.allowed_tools.clone()),
+                    Box::new(skill_def.allowed_tools.clone()),
+                );
+
+                let result = match mode {
                     crate::action::SkillMode::PromptOnly => {
                         // If no LLM client, return the instructions directly
                         if self.llm_client.is_none() {
                             Ok(StepOutput::new(skill_def.instructions.clone()))
                         } else {
-                            // Inject skill instructions into the system prompt of an LlmCall
-                            let injected_system =
-                                format!("{}\n\n{}\n", skill_def.instructions, "{system}");
-                            let injected_user = "{user}".to_string();
-
-                            // We can't easily modify the action, so we'll build an LlmCall
+                            // FIX #2: Inject skill instructions as system prompt only.
+                            // Do NOT include literal "{system}" or "{user}" placeholders —
+                            // the template engine only substitutes {input} and {step_name},
+                            // so these would leak into the LLM call as garbage text.
                             let llm_call = StepAction::LlmCall {
-                                system: injected_system,
-                                user: injected_user,
+                                system: skill_def.instructions.clone(),
+                                user: String::new(),
                                 model: None,
                                 conversation_id: None,
                                 append_to_history: false,
@@ -859,7 +871,11 @@ impl PipelineRunner {
                             }
                         }
                     }
-                }
+                };
+
+                // Restore original tool scope after skill execution
+                ctx.allowed_tools = saved_tools;
+                result
             }
 
             // ========== Branch ==========
