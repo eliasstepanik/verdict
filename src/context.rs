@@ -286,6 +286,10 @@ pub struct StepContext {
     /// Tools that were actually called during this step execution
     pub tools_used: Vec<String>,
 
+    /// Shell commands that were actually executed (name and command string)
+    /// Populated for shell.* tools with their actual command argument
+    pub commands_executed: Vec<(String, String)>,
+
     /// Optional session context (set when running inside a SessionRunner) — Phase 13
     pub session_meta: Option<crate::session::SessionMeta>,
 
@@ -331,6 +335,7 @@ impl StepContext {
             llm_client: None,
             conversation_history: MessageHistory::new(),
             tools_used: vec![],
+            commands_executed: vec![],
             session_meta: None,
             cancellation_token: CancellationToken::new(),
             request_context: RequestContext::new(),
@@ -407,6 +412,7 @@ impl StepContext {
             llm_client: None,
             conversation_history: serializable.conversation_history,
             tools_used: vec![],
+            commands_executed: vec![],
             session_meta: None,
             cancellation_token: CancellationToken::new(),
             request_context: serializable.request_context,

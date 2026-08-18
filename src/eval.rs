@@ -197,6 +197,7 @@ impl EvaluationRunner {
                         llm_client: runner.llm_client.clone(),
                         conversation_history: Default::default(),
                         tools_used: vec![],
+                        commands_executed: vec![],
                         session_meta: None,
                         cancellation_token: crate::cancel::CancellationToken::new(),
                         request_context: crate::context::RequestContext::new(),

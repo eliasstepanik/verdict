@@ -55,6 +55,7 @@ fn make_test_context() -> StepContext {
         llm_client: None,
         conversation_history: crate::llm::provider::MessageHistory::new(),
         tools_used: vec![],
+        commands_executed: vec![],
         session_meta: None,
         cancellation_token: CancellationToken::new(),
         request_context: RequestContext::default(),

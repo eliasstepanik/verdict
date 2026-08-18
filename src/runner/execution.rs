@@ -216,6 +216,44 @@ fn parse_xml_tool_calls(text: &str) -> Vec<(String, serde_json::Value)> {
     result
 }
 
+/// Extract the actual shell command string from tool args.
+/// For shell.* tools, builds a command string that combines the command + args.
+/// For tools like shell.cargo_test, shell.cargo_check, returns just the command name.
+fn extract_shell_command_string(tool_name: &str, args: &Value) -> Result<String, String> {
+    match tool_name {
+        "shell.run" | "shell.run_command" => {
+            // Both shell.run and shell.run_command have {"command": "...", "args": ["...", ...]}
+            if let Some(cmd) = args.get("command").and_then(|v| v.as_str()) {
+                let cmd_args: Vec<String> = args
+                    .get("args")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                
+                if cmd_args.is_empty() {
+                    Ok(cmd.to_string())
+                } else {
+                    Ok(format!("{} {}", cmd, cmd_args.join(" ")))
+                }
+            } else {
+                Err("missing 'command' field".to_string())
+            }
+        }
+        "shell.cargo_test" => Ok("cargo test".to_string()),
+        "shell.cargo_check" => Ok("cargo check".to_string()),
+        "shell.cargo_build" => Ok("cargo build".to_string()),
+        _ => {
+            // For other shell.* tools, try to extract a reasonable command string
+            // Fall back to the tool name without "shell." prefix
+            Ok(tool_name.strip_prefix("shell.").unwrap_or(tool_name).to_string())
+        }
+    }
+}
+
 impl PipelineRunner {
     /// Topologically sort pipeline steps based on dependencies (Kahn's algorithm)
     /// Returns indices in execution order, or error if cycle is detected or dependency is missing.
@@ -311,6 +349,13 @@ impl PipelineRunner {
 
         // Step 2.5: Track this tool as being used
         ctx.tools_used.push(tool_name.to_string());
+
+        // Step 2.6: For shell tools, extract and record the actual command
+        if tool_name.starts_with("shell.") {
+            if let Ok(cmd_str) = extract_shell_command_string(tool_name, &args) {
+                ctx.commands_executed.push((tool_name.to_string(), cmd_str));
+            }
+        }
 
         // Step 3: Validate args against tool schema
         let schema = tool.schema();
@@ -2089,5 +2134,60 @@ impl PipelineRunner {
             suspended: None,
             budget: ctx.budget.clone(),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_shell_run_command() {
+        let args = serde_json::json!({
+            "command": "rm",
+            "args": ["-rf", "/tmp"]
+        });
+        let result = extract_shell_command_string("shell.run", &args);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "rm -rf /tmp");
+    }
+
+    #[test]
+    fn test_extract_shell_run_command_tool_run_command_variant() {
+        // Critical test: shell.run_command must extract the command the same way as shell.run
+        let args = serde_json::json!({
+            "command": "rm",
+            "args": ["-rf", "/tmp"]
+        });
+        let result = extract_shell_command_string("shell.run_command", &args);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "rm -rf /tmp");
+    }
+
+    #[test]
+    fn test_extract_shell_cargo_test() {
+        let args = serde_json::json!({});
+        let result = extract_shell_command_string("shell.cargo_test", &args);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "cargo test");
+    }
+
+    #[test]
+    fn test_extract_shell_unknown_fallback() {
+        let args = serde_json::json!({});
+        let result = extract_shell_command_string("shell.custom_tool", &args);
+        assert!(result.is_ok());
+        // Should strip the "shell." prefix
+        assert_eq!(result.unwrap(), "custom_tool");
+    }
+
+    #[test]
+    fn test_extract_shell_run_command_with_no_args() {
+        let args = serde_json::json!({
+            "command": "cargo"
+        });
+        let result = extract_shell_command_string("shell.run_command", &args);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "cargo");
     }
 }

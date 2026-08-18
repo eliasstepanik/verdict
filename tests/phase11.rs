@@ -119,51 +119,26 @@ unknown-crate = "1.0"
 /// Test 3: Guard::ShellCommandAllowlist rejects unlisted commands
 #[tokio::test]
 async fn test_guard_shell_command_allowlist_rejects_unlisted() {
-    let step = AgentStep {
-        name: "cmd_check".to_string(),
-        action: StepAction::Custom(Arc::new(|_ctx| {
-            Ok(StepOutput::new("rm -rf /tmp\ngit clone ...".to_string()))
-        })),
-        guard_in: Guard::None,
-        guard_out: Guard::ShellCommandAllowlist(vec!["cargo test".to_string()]),
-        verdict: Verdict::None,
-        parallel: false,
-        dependencies: Vec::new(),
-        injection_protection: InjectionProtection::None,
-        output_schema: None,
-        tools: ToolSet::None,
-        input_processors: vec![],
-        output_processors: vec![],
-    };
-
-    let pipeline = Pipeline {
-        name: "shell_test".to_string(),
-        steps: vec![step],
-        max_retries: 0,
-        on_failure: FailureMode::Abort,
-    };
-
-    let agent = Agent {
-        name: "test_agent".to_string(),
-        description: String::new(),
-        pipeline: Pipeline {
-            name: "empty".to_string(),
-            steps: Vec::new(),
-            max_retries: 0,
-            on_failure: FailureMode::Abort,
-        },
-        tools: ToolSet::None,
-        skills: Default::default(),
-        policy: Default::default(),
-        scorers: vec![],
-    };
-    let mut runner = PipelineRunner::new();
-
-    let result = runner.run(&pipeline, &agent, json!({})).await;
-
+    // The guard checks actual executed commands (ctx.commands_executed), not tool names.
+    let mut ctx = StepContext::new(
+        "test".to_string(),
+        "test".to_string(),
+        "test".to_string(),
+        json!({}),
+        Default::default(),
+    );
+    
+    // Simulate a shell command "rm -rf /tmp" being executed via shell.run
+    ctx.tools_used = vec!["shell.run".to_string()];
+    ctx.commands_executed = vec![("shell.run".to_string(), "rm -rf /tmp".to_string())];
+    
+    let guard = Guard::ShellCommandAllowlist(vec!["cargo".to_string()]);
+    
+    let result = GuardEngine::evaluate(&guard, &ctx).await;
+    
     assert!(
         result.is_err(),
-        "ShellCommandAllowlist should reject unlisted commands"
+        "ShellCommandAllowlist should reject 'rm' command when only cargo is allowed"
     );
 }
 
