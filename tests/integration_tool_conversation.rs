@@ -674,3 +674,73 @@ async fn test_delegation_with_scripted_child_agent() {
 
     assert!(result.success);
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+// Test: ToolUseLoop cost tracking verification
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+
+#[tokio::test]
+async fn test_tool_use_loop_tracks_cost() {
+    // This test verifies that ToolUseLoop main loop calls record_llm_cost
+    let script = vec![
+        // First round: tool call with usage
+        ScriptedResponse::with_usage(
+            "fs.list",
+            json!({ "path": "." }),
+            100,  // prompt_tokens
+            50,   // completion_tokens
+        ),
+        // Second round: final text (stops) with usage
+        ScriptedResponse::with_usage(
+            "Done listing files",
+            json!({}),
+            50,   // prompt_tokens
+            25,   // completion_tokens
+        ),
+    ];
+
+    let mock_provider = ScriptedMockLlmProvider::new(script);
+    let llm_client = LlmClient::new(Arc::new(mock_provider));
+    let tool_registry = ToolRegistry::with_builtins();
+
+    let step = tool_use_loop_step(
+        "track_cost",
+        "You are a file explorer.",
+        "List the files.",
+        vec!["fs.list".to_string()],
+        4,
+    );
+
+    let pipeline = Pipeline {
+        name: "test_pipeline".into(),
+        steps: vec![step],
+        on_failure: FailureMode::Abort,
+        max_retries: 0,
+    };
+
+    let agent = make_agent(pipeline.clone(), ToolSet::Full);
+
+    let mut runner = PipelineRunner::with_tool_registry(Arc::new(tool_registry));
+    runner = runner.with_llm_client(Arc::new(llm_client));
+
+    let result = runner.run(&pipeline, &agent, json!({})).await.unwrap();
+
+    assert!(result.success, "Pipeline should succeed");
+    
+    // Verify cost was tracked: 2 LLM calls, each with usage
+    // Round 1: 100 prompt + 50 completion
+    //   Cost = 100 * 0.000005 + 50 * 0.000015 = 0.0005 + 0.00075 = 0.00125
+    // Round 2: 50 prompt + 25 completion  
+    //   Cost = 50 * 0.000005 + 25 * 0.000015 = 0.00025 + 0.000375 = 0.000625
+    // Total expected: ≈ 0.00188
+    assert!(
+        result.total_cost_usd > 0.0,
+        "Total cost should have been tracked for ToolUseLoop: got {}",
+        result.total_cost_usd
+    );
+    assert!(
+        result.total_cost_usd > 0.001,
+        "Cost tracking should record at least 0.001 USD for 2 LLM calls with usage, got {}",
+        result.total_cost_usd
+    );
+}

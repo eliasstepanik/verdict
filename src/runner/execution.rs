@@ -393,7 +393,7 @@ impl PipelineRunner {
                 // Step 9: Validate output schema (stub — pass through)
 
                 // Wire budget tracking for tool calls
-                ctx.budget.tool_calls_used += 1;
+                self.record_tool_call_cost(ctx);
 
                 Ok(StepOutput::new(full_output))
             }
@@ -501,6 +501,11 @@ impl PipelineRunner {
                 // Increment budget
                 ctx.budget.llm_calls_used += 1;
 
+                // Record cost if usage info is available
+                if let Some(usage) = &response.usage {
+                    self.record_llm_cost(usage, &response.model, ctx);
+                }
+
                 // Save to conversation history if requested
                 if *append_to_history {
                     if let Some(conv_id) = conversation_id {
@@ -575,6 +580,11 @@ impl PipelineRunner {
 
                 // Increment budget
                 ctx.budget.llm_calls_used += 1;
+
+                // NOTE: LlmCallStreaming does not track cost (record_llm_cost requires usage stats
+                // from the API response, but streaming returns chunks without aggregated usage info).
+                // To instrument streaming cost, the LLM provider would need to return usage stats
+                // at stream end (not yet implemented in our LlmChunk structure).
 
                 // Save to conversation history if requested
                 if *append_to_history {
@@ -961,6 +971,12 @@ impl PipelineRunner {
                             })?;
 
                     ctx.budget.llm_calls_used += 1;
+
+                    // Record cost if usage info is available
+                    if let Some(usage) = &response.usage {
+                        self.record_llm_cost(usage, &response.model, ctx);
+                    }
+
                     final_text = response.content.clone();
                     let mut has_tool_calls = response
                         .tool_calls
@@ -1226,6 +1242,12 @@ impl PipelineRunner {
                         match llm_client.complete(synthesis_req).await {
                             Ok(syn_resp) => {
                                 ctx.budget.llm_calls_used += 1;
+
+                                // Record cost if usage info is available
+                                if let Some(usage) = &syn_resp.usage {
+                                    self.record_llm_cost(usage, &syn_resp.model, ctx);
+                                }
+
                                 let raw = syn_resp.content.clone();
 
                                 // Handle JSON tool calls in synthesis response
