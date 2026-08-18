@@ -77,9 +77,12 @@ impl Tool for McpToolAdapter {
         match client.call_tool(&self.tool_name, args).await {
             Ok(result) => Ok(ToolOutput::json(result)),
             Err(crate::mcp::client::McpError::NotRunning) => {
-                // Client has no live process or HTTP connection — return a pending stub
-                // so callers can detect the not-yet-connected state gracefully.
-                Ok(ToolOutput::text("pending".to_string()))
+                // MCP server is not connected: return an error, not a fake success.
+                // This prevents infrastructure failures from being silently accepted
+                // by Guards::NonEmptyOutput and downstream verdicts.
+                Err(ToolError::ExecutionFailed {
+                    reason: "MCP server not running: client has no live connection".to_string(),
+                })
             }
             Err(e) => Err(ToolError::ExecutionFailed {
                 reason: format!("MCP tool call failed: {}", e),
@@ -142,6 +145,64 @@ mod tests {
                 assert_eq!(tool_name, "original_name");
             }
             _ => panic!("Expected McpServer source"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_mcp_tool_adapter_disconnected_returns_error() {
+        use crate::agent::{FilesystemPolicy, NetworkPolicy};
+        use crate::audit::AuditLog;
+        use crate::toolset::ToolSet;
+        use std::sync::Mutex as StdMutex;
+
+        // Prove that calling an MCP tool on a disconnected client
+        // returns Err (not Ok("pending")) and prevents guards from being silently satisfied.
+        let client = McpClient::disconnected();
+
+        let adapter = McpToolAdapter::new(
+            "mcp.filesystem.read_file",
+            "Read a file",
+            json!({
+                "type": "object",
+                "required": ["path"],
+                "properties": {
+                    "path": { "type": "string" }
+                }
+            }),
+            "filesystem",
+            "read_file",
+            Arc::new(Mutex::new(client)),
+        );
+
+        let ctx = ToolContext {
+            filesystem_policy: FilesystemPolicy::default(),
+            network_policy: NetworkPolicy::DenyAll,
+            allowed_tools: ToolSet::ReadOnly,
+            audit_log: Arc::new(StdMutex::new(AuditLog::new())),
+        };
+
+        let args = json!({ "path": "/nonexistent" });
+
+        let result = adapter.call(args, ctx).await;
+
+        // CRITICAL: Must be Err, not Ok("pending")
+        assert!(
+            result.is_err(),
+            "MCP tool call on disconnected client must return Err, not a fake success"
+        );
+
+        // Verify the error message indicates NotRunning
+        if let Err(ToolError::ExecutionFailed { reason }) = result {
+            assert!(
+                reason.contains("not running") || reason.contains("no live connection"),
+                "Error message must indicate disconnected state: {}",
+                reason
+            );
+        } else {
+            panic!(
+                "Expected ExecutionFailed error for disconnected client, got: {:?}",
+                result
+            );
         }
     }
 }
