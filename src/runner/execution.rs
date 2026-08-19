@@ -15,6 +15,7 @@ use serde_json::Value;
 use std::collections::VecDeque;
 use std::sync::Arc;
 use tempfile;
+use tracing::{debug, error, trace, warn};
 
 /// Resolve template placeholders in a prompt string.
 ///
@@ -482,11 +483,11 @@ impl PipelineRunner {
                     .nth(80)
                     .map(|(i, _)| i)
                     .unwrap_or(output.raw.len());
-                eprintln!("[tool-ok] {}: {}", tool_name, &output.raw[..pe]);
+                trace!(tool_name = %tool_name, output_len = output.raw.len(), preview = %&output.raw[..pe], "tool execution succeeded");
                 output.raw
             }
             Err(e) => {
-                eprintln!("[tool-err] {}: {}", tool_name, e);
+                warn!(tool_name = %tool_name, error = %e, "tool execution failed");
                 format!("Tool error: {}", e)
             }
         }
@@ -1060,11 +1061,11 @@ impl PipelineRunner {
                 let resolved_system = resolve_template(system, ctx);
                 let resolved_user = resolve_template(user, ctx);
 
-                eprintln!(
-                    "[toolloop-init] system_len={} user_len={} user_preview={}",
-                    resolved_system.len(),
-                    resolved_user.len(),
-                    &resolved_user[..resolved_user.len().min(80)]
+                trace!(
+                    system_len = resolved_system.len(),
+                    user_len = resolved_user.len(),
+                    user_preview = %&resolved_user[..resolved_user.len().min(80)],
+                    "tool loop initialized"
                 );
 
                 // Conversation history accumulated across rounds.
@@ -1222,9 +1223,11 @@ impl PipelineRunner {
                                 .cloned()
                                 .unwrap_or_else(|| tc.name.clone());
 
-                            eprintln!(
-                                "[tool-call] llm_name={} registry_name={} args={}",
-                                tc.name, registry_name, tc.arguments
+                            trace!(
+                                llm_name = %tc.name,
+                                registry_name = %registry_name,
+                                args = %tc.arguments,
+                                "LLM tool call"
                             );
 
                             let tool_result = self
@@ -1266,7 +1269,7 @@ impl PipelineRunner {
                         for (i, (tool_name, args)) in xml_tool_calls.iter().enumerate() {
                             let call_id = format!("xml_call_{}", i);
 
-                            eprintln!("[xml-tool-call] tool_name={} args={}", tool_name, args);
+                            trace!(tool_name = %tool_name, args = %args, "XML tool call");
 
                             let tool_result =
                                 self.execute_llm_tool_call(tool_name, args, ctx).await;
@@ -1396,7 +1399,7 @@ impl PipelineRunner {
 
                                         // Exit early if tools keep failing
                                         if consecutive_tool_failures >= 2 {
-                                            eprintln!("[syn-abort] consecutive tool failures in JSON calls, aborting synthesis");
+                                            warn!("consecutive tool failures in JSON calls, aborting synthesis");
                                             final_text = "Error: The requested actions could not be completed (repeated tool failures).".to_string();
                                             break;
                                         }
@@ -1432,7 +1435,7 @@ impl PipelineRunner {
                                     let mut xml_tool_results = Vec::new();
                                     for (i, (tname, targs)) in xml_calls.iter().enumerate() {
                                         let cid = format!("syn_xml_{}", i);
-                                        eprintln!("[syn-xml-tool] {} args={}", tname, targs);
+                                        trace!(tool_name = %tname, args = %targs, "synthesis XML tool call");
                                         let result =
                                             self.execute_llm_tool_call(tname, targs, ctx).await;
                                         xml_tool_results.push(result.clone());
@@ -1453,7 +1456,7 @@ impl PipelineRunner {
 
                                     // Exit early if tools keep failing
                                     if consecutive_tool_failures >= 2 {
-                                        eprintln!("[syn-abort] consecutive tool failures in XML calls, aborting synthesis");
+                                        warn!("consecutive tool failures in XML calls, aborting synthesis");
                                         final_text = "Error: The requested actions could not be completed (repeated tool failures).".to_string();
                                         break;
                                     }
@@ -1467,7 +1470,7 @@ impl PipelineRunner {
                                                 final_text = last_msg.content.clone();
                                             }
                                         }
-                                        eprintln!("[syn-call-agent-done] exiting synthesis after call_agent success");
+                                        debug!("exiting synthesis after call_agent success");
                                         break;
                                     }
 
@@ -2152,7 +2155,7 @@ impl PipelineRunner {
             // Auto-save after each step
             if let Some(store) = &self.context_store {
                 if let Err(e) = store.save(&ctx).await {
-                    eprintln!("[verdict] warning: ContextStore::save failed: {e}");
+                    error!(error = %e, "ContextStore::save failed");
                 }
             }
 
