@@ -128,7 +128,12 @@ pub(crate) async fn execute_parallel_batch(
     for (i, (step, step_ctx)) in prepared.iter_mut().enumerate() {
         let action_result = outputs[i]
             .take()
-            .expect("every prepared step is assigned an action result");
+            .ok_or_else(|| super::PipelineError::StepFailed {
+                step: step.name.clone(),
+                error: StepError::ActionFailed {
+                    reason: "missing action result (internal: slot was None)".to_string(),
+                },
+            })?;
 
         let output = match action_result {
             Ok(output) => output,

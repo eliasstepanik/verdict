@@ -6,10 +6,14 @@ use std::sync::OnceLock;
 use super::Guard;
 use super::GuardError;
 
-static CL100K_BPE: OnceLock<tiktoken_rs::CoreBPE> = OnceLock::new();
+static CL100K_BPE: OnceLock<Result<tiktoken_rs::CoreBPE, String>> = OnceLock::new();
 
-fn get_cl100k_bpe() -> &'static tiktoken_rs::CoreBPE {
-    CL100K_BPE.get_or_init(|| tiktoken_rs::cl100k_base().expect("cl100k_base BPE failed to load"))
+fn get_cl100k_bpe() -> Result<&'static tiktoken_rs::CoreBPE, GuardError> {
+    let cached = CL100K_BPE.get_or_init(|| tiktoken_rs::cl100k_base().map_err(|e| e.to_string()));
+    cached.as_ref().map_err(|e| GuardError::Failed {
+        guard: "CL100K_BPE".to_string(),
+        reason: format!("failed to load CL100K BPE tokenizer: {}", e),
+    })
 }
 
 pub fn validate_json(_guard: &Guard, ctx: &StepContext) -> Result<(), GuardError> {
@@ -191,9 +195,8 @@ pub fn validate_max_tokens(
     max: usize,
 ) -> Result<(), GuardError> {
     if let Some(output) = &ctx.output {
-        let token_count = get_cl100k_bpe()
-            .encode_with_special_tokens(&output.raw)
-            .len();
+        let bpe = get_cl100k_bpe()?;
+        let token_count = bpe.encode_with_special_tokens(&output.raw).len();
         if token_count <= max {
             Ok(())
         } else {
@@ -292,5 +295,57 @@ pub fn validate_schema(
             guard: "MatchesSchema".to_string(),
             reason: "no output to validate".to_string(),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_get_cl100k_bpe_returns_result() {
+        // Test that get_cl100k_bpe now returns a Result instead of panicking
+        let result = get_cl100k_bpe();
+        assert!(
+            result.is_ok(),
+            "get_cl100k_bpe should return Ok on valid initialization: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_get_cl100k_bpe_is_cached() {
+        // Verify that OnceLock caches the result across calls
+        let result1 = get_cl100k_bpe();
+        let result2 = get_cl100k_bpe();
+
+        // Both should succeed
+        assert!(result1.is_ok());
+        assert!(result2.is_ok());
+
+        // Both should reference the exact same static instance
+        if let (Ok(bpe1), Ok(bpe2)) = (result1, result2) {
+            let ptr1 = bpe1 as *const tiktoken_rs::CoreBPE;
+            let ptr2 = bpe2 as *const tiktoken_rs::CoreBPE;
+            assert_eq!(ptr1, ptr2, "both calls should return the same cached instance");
+        }
+    }
+
+    #[test]
+    fn test_get_cl100k_bpe_error_is_guard_error() {
+        // Verify that the error type is GuardError::Failed (not a panic)
+        let result = get_cl100k_bpe();
+        if let Err(err) = result {
+            // Check that we get a GuardError (not a panic or other error)
+            match err {
+                GuardError::Failed { guard, .. } => {
+                    assert_eq!(guard, "CL100K_BPE");
+                    // In success path, this is not reached, but the type system ensures
+                    // we're returning GuardError, not panicking.
+                }
+                _ => panic!("unexpected GuardError variant"),
+            }
+        }
+        // On success, we just verify the type is correct
     }
 }
