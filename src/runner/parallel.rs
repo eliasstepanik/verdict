@@ -24,7 +24,9 @@ use crate::pipeline::Pipeline;
 /// current task while `Custom` blocking tasks run concurrently on their own threads.
 ///
 /// Each step gets an isolated context clone to prevent cross-step interference.
-/// Results merge into the primary context afterwards (last-writer-wins).
+/// Results merge into the primary context afterwards (last-writer-wins), along
+/// with each step's budget spend and tool/shell-command records — see
+/// `merge_parallel_step_deltas`.
 ///
 /// # Arguments
 /// - `runner`: mutable pipeline runner (for audit log and action execution)
@@ -42,6 +44,17 @@ pub(crate) async fn execute_parallel_batch(
     batch: &[usize],
     agent_tools: &crate::toolset::ToolSet,
 ) -> Result<Vec<(String, crate::context::StepResult)>, super::PipelineError> {
+    // Baseline snapshot: every per-step context below is cloned from `ctx`
+    // *before* any step mutates it, so all clones share these starting values.
+    // Each step's contribution is therefore (its final state - this baseline).
+    let baseline = BatchBaseline {
+        spent_usd: ctx.budget.spent_usd,
+        llm_calls_used: ctx.budget.llm_calls_used,
+        tool_calls_used: ctx.budget.tool_calls_used,
+        tools_used_len: ctx.tools_used.len(),
+        commands_executed_len: ctx.commands_executed.len(),
+    };
+
     // Phase 1: build each step's isolated context and evaluate guard_in.
     // guard_in runs before any action is dispatched, so a failing guard blocks
     // its step's action from ever starting.
@@ -106,7 +119,12 @@ pub(crate) async fn execute_parallel_batch(
 
     // Phase 3: post-action (guard_out, verdict, StepCompleted) in batch order,
     // keeping audit events deterministic regardless of completion order.
+    // A failure is recorded rather than returned immediately: actions have
+    // already run by this point, so their budget spend and executed commands
+    // must still be merged back before the batch aborts. Returning early would
+    // discard exactly the evidence the guards exist to see.
     let mut batch_results = Vec::with_capacity(prepared.len());
+    let mut failure: Option<super::PipelineError> = None;
     for (i, (step, step_ctx)) in prepared.iter_mut().enumerate() {
         let action_result = outputs[i]
             .take()
@@ -123,10 +141,11 @@ pub(crate) async fn execute_parallel_batch(
                         error: format!("{:?}", e),
                     },
                 });
-                return Err(super::PipelineError::StepFailed {
+                failure = Some(super::PipelineError::StepFailed {
                     step: step.name.clone(),
                     error: e,
                 });
+                break;
             }
         };
 
@@ -141,10 +160,11 @@ pub(crate) async fn execute_parallel_batch(
                 batch_results.push((step.name.clone(), sr));
             }
             Err(e) => {
-                return Err(super::PipelineError::StepFailed {
+                failure = Some(super::PipelineError::StepFailed {
                     step: step.name.clone(),
                     error: e.into(),
                 });
+                break;
             }
         }
     }
@@ -155,5 +175,75 @@ pub(crate) async fn execute_parallel_batch(
             .insert(step_name.clone(), step_result.clone());
     }
 
-    Ok(batch_results)
+    // Merge per-step budget spend and tool/command records back into the parent.
+    merge_parallel_step_deltas(ctx, &baseline, prepared.iter().map(|(_, c)| c));
+
+    match failure {
+        Some(e) => Err(e),
+        None => Ok(batch_results),
+    }
+}
+
+/// The parent context's accounting state at the moment the batch began.
+struct BatchBaseline {
+    spent_usd: f64,
+    llm_calls_used: u32,
+    tool_calls_used: u32,
+    tools_used_len: usize,
+    commands_executed_len: usize,
+}
+
+/// Fold each parallel step's accounting delta back into the parent context.
+///
+/// Parallel steps run on isolated context clones so they cannot interfere with
+/// each other, but that isolation also means their spend and their tool/shell
+/// records die with the clone unless merged here. Without this, `MaxToolCalls`
+/// / `MaxCostUsd` see zero spend and `ShellCommandAllowlist` /
+/// `ShellCommandDenylist` see zero commands for anything a parallel step did.
+///
+/// Every clone starts from the same `baseline`, so a step's own contribution is
+/// its final value minus that baseline. Counters SUM across steps; the
+/// `tools_used` / `commands_executed` vectors CONCATENATE in batch order (not
+/// completion order) so the merged result is deterministic.
+///
+/// Counter deltas use `saturating_sub` and clamp cost at zero: a step context is
+/// only ever appended to, so a negative delta is impossible, and clamping keeps
+/// a future regression from silently *crediting* budget back.
+fn merge_parallel_step_deltas<'a>(
+    ctx: &mut StepContext,
+    baseline: &BatchBaseline,
+    step_ctxs: impl Iterator<Item = &'a StepContext>,
+) {
+    let mut spent_delta = 0.0_f64;
+    let mut llm_delta = 0_u32;
+    let mut tool_delta = 0_u32;
+
+    for step_ctx in step_ctxs {
+        spent_delta += (step_ctx.budget.spent_usd - baseline.spent_usd).max(0.0);
+        llm_delta += step_ctx
+            .budget
+            .llm_calls_used
+            .saturating_sub(baseline.llm_calls_used);
+        tool_delta += step_ctx
+            .budget
+            .tool_calls_used
+            .saturating_sub(baseline.tool_calls_used);
+
+        if let Some(added) = step_ctx.tools_used.get(baseline.tools_used_len..) {
+            ctx.tools_used.extend_from_slice(added);
+        }
+        if let Some(added) = step_ctx
+            .commands_executed
+            .get(baseline.commands_executed_len..)
+        {
+            ctx.commands_executed.extend_from_slice(added);
+        }
+    }
+
+    ctx.budget.spent_usd += spent_delta;
+    ctx.budget.llm_calls_used += llm_delta;
+    ctx.budget.tool_calls_used += tool_delta;
+    if let Some(remaining) = ctx.budget.remaining_usd.as_mut() {
+        *remaining -= spent_delta;
+    }
 }
