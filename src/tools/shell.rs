@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 //! Built-in shell tools
 
 use async_trait::async_trait;

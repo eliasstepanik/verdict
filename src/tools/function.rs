@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 //! Function-based tools
 
 use async_trait::async_trait;

@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 //! Core Tool trait and types
 
 use async_trait::async_trait;
