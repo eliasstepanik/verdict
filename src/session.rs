@@ -458,13 +458,18 @@ impl SessionRunner {
 
         match result {
             Ok(pipeline_result) => {
-                // Extract output from last passing step
-                let output = pipeline_result
-                    .step_results
-                    .values()
-                    .filter(|r| r.verdict_passed)
-                    .last()
-                    .map(|r| r.output.raw.clone())
+                // Extract output from last passing step (deterministic: iterate pipeline's declared step order in reverse)
+                let output = pipeline
+                    .steps
+                    .iter()
+                    .rev()
+                    .find_map(|step| {
+                        pipeline_result
+                            .step_results
+                            .get(&step.name)
+                            .filter(|r| r.verdict_passed)
+                            .map(|r| r.output.raw.clone())
+                    })
                     .unwrap_or_default();
 
                 // Estimate token usage from step results

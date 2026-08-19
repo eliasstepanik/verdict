@@ -417,3 +417,121 @@ async fn test_conversation_history_accumulation() {
     assert_eq!(meta.turn_count, 3);
     assert!(meta.total_tokens.total_tokens > 0);
 }
+
+/// Test: Multi-step pipeline deterministically returns last step's output
+///
+/// This is a regression test for M-NEW-1 (HashMap iteration order non-determinism).
+/// Creates a 3-step pipeline where each step produces a uniquely identifiable marker.
+/// Verifies that the session runner ALWAYS returns the LAST step's output, never
+/// a non-deterministic selection from an earlier step.
+/// Run multiple times to catch non-deterministic failures.
+#[tokio::test]
+async fn test_session_multi_step_last_output_deterministic() {
+    // Create an agent with a multi-step pipeline
+    let step1 = AgentStep {
+        name: "step_1".into(),
+        guard_in: Guard::None,
+        action: StepAction::Custom(Arc::new(|_ctx| {
+            Ok(StepOutput::new("STEP_1_OUTPUT_MARKER_xyz123".to_string()))
+        })),
+        guard_out: Guard::NonEmptyOutput,
+        verdict: Verdict::Automated(Guard::NonEmptyOutput),
+        tools: ToolSet::None,
+        injection_protection: InjectionProtection::None,
+        output_schema: None,
+        dependencies: vec![],
+        parallel: false,
+        input_processors: vec![],
+        output_processors: vec![],
+    };
+
+    let step2 = AgentStep {
+        name: "step_2".into(),
+        guard_in: Guard::None,
+        action: StepAction::Custom(Arc::new(|_ctx| {
+            Ok(StepOutput::new("STEP_2_OUTPUT_MARKER_abc456".to_string()))
+        })),
+        guard_out: Guard::NonEmptyOutput,
+        verdict: Verdict::Automated(Guard::NonEmptyOutput),
+        tools: ToolSet::None,
+        injection_protection: InjectionProtection::None,
+        output_schema: None,
+        dependencies: vec![],
+        parallel: false,
+        input_processors: vec![],
+        output_processors: vec![],
+    };
+
+    let step3 = AgentStep {
+        name: "step_3".into(),
+        guard_in: Guard::None,
+        action: StepAction::Custom(Arc::new(|_ctx| {
+            // This is the expected output — it contains the FINAL marker
+            Ok(StepOutput::new("STEP_3_FINAL_OUTPUT_def789".to_string()))
+        })),
+        guard_out: Guard::NonEmptyOutput,
+        verdict: Verdict::Automated(Guard::NonEmptyOutput),
+        tools: ToolSet::None,
+        injection_protection: InjectionProtection::None,
+        output_schema: None,
+        dependencies: vec![],
+        parallel: false,
+        input_processors: vec![],
+        output_processors: vec![],
+    };
+
+    let multi_step_agent = Agent {
+        name: "multi_step".into(),
+        description: "Multi-step agent for determinism test".into(),
+        pipeline: Pipeline {
+            name: "multi_step_pipeline".into(),
+            steps: vec![step1, step2, step3],
+            on_failure: FailureMode::Abort,
+            max_retries: 0,
+        },
+        tools: ToolSet::None,
+        skills: SkillSet { skills: vec![] },
+        policy: AgentPolicy::default(),
+        scorers: vec![],
+    };
+
+    let sr = create_session_runner(vec![multi_step_agent]);
+
+    // Run the test multiple times to catch non-deterministic failures
+    for iteration in 0..10 {
+        let id = sr
+            .new_session("multi_step", SessionPolicy::default())
+            .await
+            .unwrap_or_else(|_| panic!("Iteration {}: should create session", iteration));
+
+        let turn = UserTurn::text("test");
+        let result = sr
+            .turn(&id, turn)
+            .await
+            .unwrap_or_else(|_| panic!("Iteration {}: should execute turn", iteration));
+
+        match result {
+            TurnResult::Completed { output, .. } => {
+                // The session should extract the LAST step's output
+                assert_eq!(
+                    output, "STEP_3_FINAL_OUTPUT_def789",
+                    "Iteration {}: session output must be from step_3 (the last step)",
+                    iteration
+                );
+
+                // Sanity check: ensure it's NOT from step 1 or 2
+                assert!(
+                    !output.contains("STEP_1_OUTPUT_MARKER"),
+                    "Iteration {}: output contains step_1 marker (non-determinism bug)",
+                    iteration
+                );
+                assert!(
+                    !output.contains("STEP_2_OUTPUT_MARKER"),
+                    "Iteration {}: output contains step_2 marker (non-determinism bug)",
+                    iteration
+                );
+            }
+            other => panic!("Iteration {}: unexpected result: {:?}", iteration, other),
+        }
+    }
+}
