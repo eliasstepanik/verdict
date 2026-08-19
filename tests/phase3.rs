@@ -242,9 +242,9 @@ async fn test_mcp_client_connect_config_only() {
     assert!(result.is_ok());
 }
 
-/// Test 13: McpToolAdapter call placeholder returns pending
+/// Test 13: McpToolAdapter call on disconnected client returns error
 #[tokio::test]
-async fn test_mcp_tool_adapter_call_returns_stub() {
+async fn test_mcp_tool_adapter_call_on_disconnected_client_returns_error() {
     let client = Arc::new(TokioMutex::new(
         create_dummy_mcp_client()
             .await
@@ -266,9 +266,11 @@ async fn test_mcp_tool_adapter_call_returns_stub() {
     };
 
     let result = adapter.call(json!({}), ctx).await;
-    assert!(result.is_ok());
-    let output = result.unwrap();
-    assert!(output.as_str().contains("pending"));
+    // CRITICAL: Must be Err when disconnected, not Ok("pending")
+    assert!(
+        result.is_err(),
+        "MCP tool call on disconnected client must return Err"
+    );
 }
 
 /// Test 14: Prelude exports MCP types

@@ -2,7 +2,7 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 mod commands;
-use commands::{audit, check, dev, new, run};
+use commands::{check, dev, new, run};
 
 #[derive(Parser)]
 #[command(name = "verdict")]
@@ -34,13 +34,6 @@ enum Commands {
         path: Option<PathBuf>,
     },
 
-    /// Run cargo audit
-    Audit {
-        /// Project directory
-        #[arg(short, long)]
-        path: Option<PathBuf>,
-    },
-
     /// Run a named agent
     Run {
         /// Agent name
@@ -65,9 +58,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Commands::Check { path } => {
             check::handle(path)?;
-        }
-        Commands::Audit { path } => {
-            audit::handle(path)?;
         }
         Commands::Run { agent, path } => {
             run::handle(&agent, path)?;

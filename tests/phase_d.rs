@@ -225,6 +225,7 @@ fn test_pipeline_result_suspended_field() {
         total_tokens_used: 0,
         log: vec![],
         suspended: None,
+        budget: Default::default(),
     };
 
     assert!(result.suspended.is_none());
@@ -329,6 +330,7 @@ async fn test_pipeline_result_with_suspended_state() {
         total_tokens_used: 100,
         log: vec![],
         suspended: Some(suspended),
+        budget: Default::default(),
     };
 
     assert!(result.suspended.is_some());

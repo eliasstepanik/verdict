@@ -23,16 +23,16 @@ pub fn check_no_secrets_in_output(
 
 pub fn check_no_secrets_in_diff(
     _guard: &super::Guard,
-    _ctx: &StepContext,
+    ctx: &StepContext,
 ) -> Result<(), GuardError> {
-    Ok(())
+    scan_output_for_secrets(ctx, "NoSecretsInDiff")
 }
 
 pub fn check_no_secret_exfiltration(
     _guard: &super::Guard,
-    _ctx: &StepContext,
+    ctx: &StepContext,
 ) -> Result<(), GuardError> {
-    Ok(())
+    scan_output_for_secrets(ctx, "NoSecretExfiltration")
 }
 
 pub fn check_no_dangerous_shell_commands(
@@ -167,3 +167,39 @@ pub fn check_no_guard_removal(_guard: &super::Guard, ctx: &StepContext) -> Resul
         })
     }
 }
+
+/// Shared private helper: scan output for secrets above blocking threshold.
+/// Fails if any secret at RiskLevel::High or RiskLevel::Critical is detected.
+fn scan_output_for_secrets(ctx: &StepContext, guard_name: &str) -> Result<(), GuardError> {
+    if let Some(output) = &ctx.output {
+        let matches = crate::injection::SecretScanner::scan(&output.raw);
+        
+        // Filter for high-risk secrets (High and Critical levels)
+        let blocking_matches: Vec<_> = matches
+            .iter()
+            .filter(|m| {
+                matches!(m.risk_level, Some(crate::injection::RiskLevel::High) | Some(crate::injection::RiskLevel::Critical))
+            })
+            .collect();
+        
+        if blocking_matches.is_empty() {
+            Ok(())
+        } else {
+            let details = blocking_matches
+                .iter()
+                .map(|m| format!("{} ({})", m.pattern_name, m.redacted))
+                .collect::<Vec<_>>()
+                .join(", ");
+            Err(GuardError::Failed {
+                guard: guard_name.to_string(),
+                reason: format!("detected {} high-risk secret(s): {}", blocking_matches.len(), details),
+            })
+        }
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+#[path = "security_tests.rs"]
+mod tests;

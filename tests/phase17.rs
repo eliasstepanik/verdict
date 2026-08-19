@@ -116,6 +116,7 @@ fn test_pipeline_result_cost_fields() {
         total_tokens_used: 1234,
         log: vec![],
         suspended: None,
+        budget: Default::default(),
     };
 
     assert_eq!(result.total_cost_usd, 0.42);

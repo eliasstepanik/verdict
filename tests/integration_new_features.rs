@@ -505,6 +505,7 @@ async fn test_toxicity_scorer_score_method_runs() {
         total_tokens_used: 0,
         log: vec![],
         suspended: None,
+        budget: Default::default(),
     };
 
     // Call score and verify it returns a result
@@ -545,6 +546,7 @@ async fn test_toxicity_scorer_passes_clean_output() {
         total_tokens_used: 0,
         log: vec![],
         suspended: None,
+        budget: Default::default(),
     };
 
     let score_result = scorer.score(&result).await;
@@ -579,6 +581,7 @@ async fn test_custom_scorer_runs_closure() {
         total_tokens_used: 0,
         log: vec![],
         suspended: None,
+        budget: Default::default(),
     };
 
     let score_result = scorer.score(&result).await;

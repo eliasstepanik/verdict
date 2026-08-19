@@ -11,16 +11,17 @@ use std::sync::{
 use verdict::prelude::*;
 
 /// Mock LLM provider for testing
+#[derive(Clone)]
 pub struct MockLlmProvider {
     pub expected_response: String,
-    pub captured_request: Mutex<Option<LlmRequest>>,
+    pub captured_request: Arc<Mutex<Option<LlmRequest>>>,
 }
 
 impl MockLlmProvider {
     pub fn new(response: impl Into<String>) -> Self {
         Self {
             expected_response: response.into(),
-            captured_request: Mutex::new(None),
+            captured_request: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -68,6 +69,7 @@ impl LlmProvider for MockLlmProvider {
 pub struct ScriptedResponse {
     pub content: String,
     pub tool_calls: Option<Vec<(String, serde_json::Value)>>, // (tool_name, args)
+    pub usage: Option<LlmUsage>,
 }
 
 impl ScriptedResponse {
@@ -76,6 +78,7 @@ impl ScriptedResponse {
         Self {
             content: content.into(),
             tool_calls: None,
+            usage: None,
         }
     }
 
@@ -84,6 +87,7 @@ impl ScriptedResponse {
         Self {
             content: String::new(),
             tool_calls: Some(vec![(tool_name.into(), args)]),
+            usage: None,
         }
     }
 
@@ -92,6 +96,34 @@ impl ScriptedResponse {
         Self {
             content: String::new(),
             tool_calls: Some(calls),
+            usage: None,
+        }
+    }
+
+    /// Create a response with usage info (for cost tracking tests)
+    pub fn with_usage(
+        content_or_tool: impl Into<String>,
+        args_or_empty: impl Into<serde_json::Value>,
+        prompt_tokens: u32,
+        completion_tokens: u32,
+    ) -> Self {
+        let content_str = content_or_tool.into();
+        let args_val = args_or_empty.into();
+        let (content, tool_calls) = if args_val.is_object() && !args_val.as_object().unwrap().is_empty() {
+            // It's a tool call
+            (String::new(), Some(vec![(content_str, args_val)]))
+        } else {
+            // It's text
+            (content_str, None)
+        };
+        
+        Self {
+            content,
+            tool_calls,
+            usage: Some(LlmUsage {
+                prompt_tokens,
+                completion_tokens,
+            }),
         }
     }
 }
@@ -151,7 +183,7 @@ impl LlmProvider for ScriptedMockLlmProvider {
         Ok(LlmResponse {
             content: r.content.clone(),
             model: "scripted-mock".into(),
-            usage: None,
+            usage: r.usage.clone(),
             tool_calls,
         })
     }

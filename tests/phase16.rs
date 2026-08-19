@@ -197,6 +197,7 @@ async fn test_guard_structured_output_present_with_output() {
     ctx.output = Some(StepOutput {
         raw: r#"{"status": "success"}"#.to_string(),
         parsed: Some(json!({"status": "success"})),
+        eval_result: None,
     });
 
     let guard = Guard::StructuredOutputPresent;
@@ -224,6 +225,7 @@ async fn test_guard_structured_output_missing() {
     ctx.output = Some(StepOutput {
         raw: "plain text output".to_string(),
         parsed: None,
+        eval_result: None,
     });
 
     let guard = Guard::StructuredOutputPresent;
@@ -301,6 +303,7 @@ async fn test_prompt_template_step_output() {
         output: StepOutput {
             raw: "test output".to_string(),
             parsed: None,
+            eval_result: None,
         },
         verdict_passed: true,
         error: None,

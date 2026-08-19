@@ -1,6 +1,7 @@
 //! Tool registry and implementations
 
 pub mod delegation;
+pub mod external_command;
 pub mod filesystem;
 pub mod function;
 pub mod http;
@@ -9,6 +10,7 @@ pub mod shell;
 pub mod tool;
 
 pub use delegation::{call_agent_tool, CallAgentTool, DelegationRequest};
+pub use external_command::ExternalCommandTool;
 pub use filesystem::{DeleteFileTool, ListDirTool, ReadFileTool, WriteFileTool};
 pub use function::FunctionTool;
 pub use http::HttpTool;

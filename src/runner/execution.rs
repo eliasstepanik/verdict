@@ -1,20 +1,20 @@
 use super::PipelineRunner;
 use super::{OutputEvent, PipelineError};
 use crate::action::{StepAction, StepError, StepOutput};
-use crate::agent::{Agent, AgentPolicy, RemoteAgentClient};
+use crate::agent::{Agent, RemoteAgentClient};
 use crate::audit::{AuditEntry, AuditEvent};
 use crate::context::{StepContext, StepResult};
 use crate::guards::{GuardEngine, GuardPhase};
 use crate::pipeline::Pipeline;
 use crate::skills::skill::SkillSet;
 use crate::tools::ToolContext;
-use crate::verdict::VerdictEngine;
 use async_recursion::async_recursion;
 use chrono::Utc;
 use futures::StreamExt;
 use serde_json::Value;
 use std::collections::VecDeque;
 use std::sync::Arc;
+use tempfile;
 
 /// Resolve template placeholders in a prompt string.
 ///
@@ -216,6 +216,44 @@ fn parse_xml_tool_calls(text: &str) -> Vec<(String, serde_json::Value)> {
     result
 }
 
+/// Extract the actual shell command string from tool args.
+/// For shell.* tools, builds a command string that combines the command + args.
+/// For tools like shell.cargo_test, shell.cargo_check, returns just the command name.
+fn extract_shell_command_string(tool_name: &str, args: &Value) -> Result<String, String> {
+    match tool_name {
+        "shell.run" | "shell.run_command" => {
+            // Both shell.run and shell.run_command have {"command": "...", "args": ["...", ...]}
+            if let Some(cmd) = args.get("command").and_then(|v| v.as_str()) {
+                let cmd_args: Vec<String> = args
+                    .get("args")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                
+                if cmd_args.is_empty() {
+                    Ok(cmd.to_string())
+                } else {
+                    Ok(format!("{} {}", cmd, cmd_args.join(" ")))
+                }
+            } else {
+                Err("missing 'command' field".to_string())
+            }
+        }
+        "shell.cargo_test" => Ok("cargo test".to_string()),
+        "shell.cargo_check" => Ok("cargo check".to_string()),
+        "shell.cargo_build" => Ok("cargo build".to_string()),
+        _ => {
+            // For other shell.* tools, try to extract a reasonable command string
+            // Fall back to the tool name without "shell." prefix
+            Ok(tool_name.strip_prefix("shell.").unwrap_or(tool_name).to_string())
+        }
+    }
+}
+
 impl PipelineRunner {
     /// Topologically sort pipeline steps based on dependencies (Kahn's algorithm)
     /// Returns indices in execution order, or error if cycle is detected or dependency is missing.
@@ -300,7 +338,7 @@ impl PipelineRunner {
             })?;
 
         // Step 2: Check tool is allowed for this step
-        if !ctx.allowed_tools.contains(tool_name) {
+        if !ctx.allowed_tools.contains_with_skill_registry(tool_name, &self.skill_registry) {
             return Err(StepError::ActionFailed {
                 reason: format!(
                     "tool '{}' not allowed in this step (allowed: {:?})",
@@ -311,6 +349,13 @@ impl PipelineRunner {
 
         // Step 2.5: Track this tool as being used
         ctx.tools_used.push(tool_name.to_string());
+
+        // Step 2.6: For shell tools, extract and record the actual command
+        if tool_name.starts_with("shell.") {
+            if let Ok(cmd_str) = extract_shell_command_string(tool_name, &args) {
+                ctx.commands_executed.push((tool_name.to_string(), cmd_str));
+            }
+        }
 
         // Step 3: Validate args against tool schema
         let schema = tool.schema();
@@ -393,7 +438,7 @@ impl PipelineRunner {
                 // Step 9: Validate output schema (stub — pass through)
 
                 // Wire budget tracking for tool calls
-                ctx.budget.tool_calls_used += 1;
+                self.record_tool_call_cost(ctx);
 
                 Ok(StepOutput::new(full_output))
             }
@@ -417,6 +462,36 @@ impl PipelineRunner {
             }
         }
     }
+
+    /// Execute an LLM-requested tool call from inside a `ToolUseLoop`.
+    ///
+    /// SECURITY: every LLM-driven tool dispatch MUST go through here. It delegates to
+    /// [`Self::execute_tool_call`], which enforces the step's `allowed_tools` scope and
+    /// records `tools_used` / `commands_executed` so the shell allow/denylist guards
+    /// (and the tool-call budget) actually see LLM-initiated calls. Calling
+    /// `tool_registry.get(..)` + `tool.call(..)` directly here bypasses all of that.
+    ///
+    /// Unlike a `ToolCall` step, a failure is not fatal to the loop: the error text is
+    /// returned so it can be fed back to the model as a tool result and retried.
+    async fn execute_llm_tool_call(&self, tool_name: &str, args: &Value, ctx: &mut StepContext) -> String {
+        match self.execute_tool_call(tool_name, args, ctx).await {
+            Ok(output) => {
+                let pe = output
+                    .raw
+                    .char_indices()
+                    .nth(80)
+                    .map(|(i, _)| i)
+                    .unwrap_or(output.raw.len());
+                eprintln!("[tool-ok] {}: {}", tool_name, &output.raw[..pe]);
+                output.raw
+            }
+            Err(e) => {
+                eprintln!("[tool-err] {}: {}", tool_name, e);
+                format!("Tool error: {}", e)
+            }
+        }
+    }
+
     /// Execute a single step action — Phase 3 onwards
     ///
     /// # Known Issue
@@ -501,6 +576,11 @@ impl PipelineRunner {
                 // Increment budget
                 ctx.budget.llm_calls_used += 1;
 
+                // Record cost if usage info is available
+                if let Some(usage) = &response.usage {
+                    self.record_llm_cost(usage, &response.model, ctx);
+                }
+
                 // Save to conversation history if requested
                 if *append_to_history {
                     if let Some(conv_id) = conversation_id {
@@ -576,6 +656,11 @@ impl PipelineRunner {
                 // Increment budget
                 ctx.budget.llm_calls_used += 1;
 
+                // NOTE: LlmCallStreaming does not track cost (record_llm_cost requires usage stats
+                // from the API response, but streaming returns chunks without aggregated usage info).
+                // To instrument streaming cost, the LLM provider would need to return usage stats
+                // at stream end (not yet implemented in our LlmChunk structure).
+
                 // Save to conversation history if requested
                 if *append_to_history {
                     if let Some(conv_id) = conversation_id {
@@ -635,6 +720,32 @@ impl PipelineRunner {
 
             // ========== SubPipeline ==========
             StepAction::SubPipeline(pipeline) => {
+                // A sub-pipeline is a delegation boundary and MUST inherit the parent's
+                // security context exactly like `delegation::execute_delegation` does.
+                //
+                // This handler previously built an `AgentPolicy::default()` and called
+                // the plain `run()` entry point, which silently reset:
+                //   * `filesystem_policy`  -> fresh `current_dir()` root, dropping
+                //     `WorkspaceIsolation::TempDir`/`Sandboxed` (writes escaped to the real repo)
+                //   * `network_policy`     -> `DenyAll` (fail-closed, but still divergent)
+                //   * `delegation_depth`   -> 0, letting a SubPipeline wrapper bypass
+                //     `max_delegation_depth` / `Guard::MaxDelegationDepth` entirely
+                //   * `budget`             -> fresh, resetting cost/call accounting
+                //
+                // Everything below derives from the parent context instead.
+                let child_depth = ctx.delegation_depth + 1;
+
+                // Enforce the parent's delegation depth cap on this boundary, mirroring
+                // the depth check `execute_delegation` performs before recursing.
+                if child_depth > ctx.agent_policy.max_delegation_depth {
+                    return Err(StepError::ActionFailed {
+                        reason: format!(
+                            "SubPipeline delegation depth {} exceeds max {}",
+                            child_depth, ctx.agent_policy.max_delegation_depth
+                        ),
+                    });
+                }
+
                 // Create a child runner with shared registries
                 let mut child_runner = PipelineRunner {
                     audit_log: crate::audit::AuditLog::new(),
@@ -650,7 +761,27 @@ impl PipelineRunner {
                     memory: self.memory.clone(),
                 };
 
-                // Get the current agent (from context, fallback to a basic one)
+                // Derive the sub-agent's policy from the PARENT's actual policy so that
+                // cost/step/runtime caps, allowed agents and skills all carry over.
+                let mut policy = ctx.agent_policy.clone();
+
+                // Tool scope: the already-narrowed effective scope from the parent context
+                // (agent ∩ pipeline ∩ step ∩ skill), so inner steps intersect against the
+                // narrowed set rather than the agent-level default.
+                policy.allowed_tools = ctx.allowed_tools.clone();
+
+                // Filesystem: inherit the parent's *resolved* policy. `ctx.filesystem_policy`
+                // already has `workspace_root` rewritten to the active TempDir/Sandboxed root
+                // by `run_internal`, so isolation is set to `None` here to keep the child
+                // pinned to that same sandbox instead of minting a second, unrelated temp dir
+                // (which would hide the parent's files from the sub-pipeline).
+                policy.filesystem_policy = ctx.filesystem_policy.clone();
+                policy.filesystem_policy.workspace_isolation =
+                    crate::agent::WorkspaceIsolation::None;
+
+                // Network: inherit the parent's actual policy, not a fresh DenyAll.
+                policy.network_policy = ctx.network_policy.clone();
+
                 let agent = crate::agent::Agent {
                     name: ctx.agent_name.clone(),
                     description: "Child pipeline agent".into(),
@@ -659,23 +790,41 @@ impl PipelineRunner {
                     skills: SkillSet {
                         skills: ctx.active_skills.clone(),
                     },
-                    policy: AgentPolicy::default(),
+                    policy,
                     scorers: Vec::new(),
                 };
 
-                // Run the child pipeline
+                // Run the child pipeline through the depth/budget-aware entry point —
+                // the same one `execute_delegation` uses.
                 let result = child_runner
-                    .run(pipeline, &agent, ctx.input.clone())
+                    .run_with_delegation_depth_and_budget(
+                        pipeline,
+                        &agent,
+                        ctx.input.clone(),
+                        child_depth,
+                        ctx.agent_name.clone(),
+                        Some(ctx.budget.clone()),
+                    )
                     .await
                     .map_err(|e| StepError::ActionFailed {
                         reason: format!("SubPipeline failed: {}", e),
                     })?;
 
-                // Get the last step's output
-                let output = result
-                    .step_results
-                    .values()
+                // Propagate the child's budget back so cost/call accounting is continuous.
+                ctx.budget = result.budget.clone();
+
+                // Merge the child's audit entries into the parent log so the sub-pipeline
+                // is not invisible to auditing.
+                for entry in result.audit_log.entries() {
+                    self.audit_log.append(entry.clone());
+                }
+
+                // Get the LAST step's output deterministically by finding the last step in
+                // the pipeline and looking it up by name (not by HashMap iteration order).
+                let output = pipeline
+                    .steps
                     .last()
+                    .and_then(|last_step| result.step_results.get(&last_step.name))
                     .map(|sr| sr.output.clone())
                     .unwrap_or_else(|| StepOutput::new(String::new()));
 
@@ -758,21 +907,29 @@ impl PipelineRunner {
                     )?;
                 }
 
-                match mode {
+                // FIX #1: Narrow allowed_tools by skill's allowed_tools
+                // Effective scope: agent ∩ pipeline ∩ step ∩ skill
+                let saved_tools = ctx.allowed_tools.clone();
+                ctx.allowed_tools = crate::toolset::ToolSet::Intersection(
+                    Box::new(ctx.allowed_tools.clone()),
+                    Box::new(skill_def.allowed_tools.clone()),
+                );
+
+                let result = match mode {
                     crate::action::SkillMode::PromptOnly => {
                         // If no LLM client, return the instructions directly
                         if self.llm_client.is_none() {
                             Ok(StepOutput::new(skill_def.instructions.clone()))
                         } else {
-                            // Inject skill instructions into the system prompt of an LlmCall
-                            let injected_system =
-                                format!("{}\n\n{}\n", skill_def.instructions, "{system}");
-                            let injected_user = "{user}".to_string();
+                            // Inject skill instructions and few-shot examples into the system prompt
+                            let system_prompt = self.build_skill_system_prompt(
+                                &skill_def.instructions,
+                                &skill_def.examples,
+                            );
 
-                            // We can't easily modify the action, so we'll build an LlmCall
                             let llm_call = StepAction::LlmCall {
-                                system: injected_system,
-                                user: injected_user,
+                                system: system_prompt,
+                                user: String::new(),
                                 model: None,
                                 conversation_id: None,
                                 append_to_history: false,
@@ -793,8 +950,14 @@ impl PipelineRunner {
                             if self.llm_client.is_none() {
                                 Ok(StepOutput::new(skill_def.instructions.clone()))
                             } else {
+                                // Inject skill instructions and few-shot examples
+                                let system_prompt = self.build_skill_system_prompt(
+                                    &skill_def.instructions,
+                                    &skill_def.examples,
+                                );
+
                                 let llm_call = StepAction::LlmCall {
-                                    system: skill_def.instructions.clone(),
+                                    system: system_prompt,
                                     user: String::new(),
                                     model: None,
                                     conversation_id: None,
@@ -804,7 +967,22 @@ impl PipelineRunner {
                             }
                         }
                     }
+                };
+
+                // Restore original tool scope after skill execution
+                ctx.allowed_tools = saved_tools;
+
+                // FEATURE: Run skill evaluation if present and step succeeded
+                let mut final_result = result?;
+                if let Some(skill_eval) = &skill_def.eval {
+                    let eval_output =
+                        self.run_skill_eval(skill_eval, &final_result, &skill_def.name)
+                            .await;
+                    // Attach eval result to output metadata (informational, non-blocking)
+                    final_result.set_eval_result(eval_output);
                 }
+
+                Ok(final_result)
             }
 
             // ========== Branch ==========
@@ -895,6 +1073,9 @@ impl PipelineRunner {
                 // If assistant returns text: done.
                 let mut history = crate::llm::MessageHistory::new();
                 let mut final_text = String::new();
+                // True when the loop ended because the assistant produced a real text answer
+                // with no pending tool calls — i.e. the answer is already final.
+                let mut answered_with_text = false;
 
                 for round in 0..*max_rounds {
                     // On round 0: user message is the resolved prompt.
@@ -958,6 +1139,12 @@ impl PipelineRunner {
                             })?;
 
                     ctx.budget.llm_calls_used += 1;
+
+                    // Record cost if usage info is available
+                    if let Some(usage) = &response.usage {
+                        self.record_llm_cost(usage, &response.model, ctx);
+                    }
+
                     final_text = response.content.clone();
                     let mut has_tool_calls = response
                         .tool_calls
@@ -987,6 +1174,11 @@ impl PipelineRunner {
                             history.push(crate::llm::ChatRole::User, user_msg);
                         }
                         history.push(crate::llm::ChatRole::Assistant, final_text.clone());
+                        // The assistant answered in prose with nothing left to execute:
+                        // this text IS the result, so no synthesis pass is needed.
+                        answered_with_text = !has_tool_calls
+                            && xml_tool_calls.is_empty()
+                            && !final_text.trim().is_empty();
                         break;
                     }
 
@@ -1035,50 +1227,9 @@ impl PipelineRunner {
                                 tc.name, registry_name, tc.arguments
                             );
 
-                            let tool_result =
-                                if let Some(tool) = self.tool_registry.get(&registry_name) {
-                                    match tool
-                                        .call(
-                                            tc.arguments.clone(),
-                                            ToolContext {
-                                                audit_log: Arc::new(std::sync::Mutex::new(
-                                                    self.audit_log.clone(),
-                                                )),
-                                                filesystem_policy: ctx.filesystem_policy.clone(),
-                                                network_policy: ctx.network_policy.clone(),
-                                                allowed_tools: ctx.allowed_tools.clone(),
-                                            },
-                                        )
-                                        .await
-                                    {
-                                        Ok(output) => {
-                                            let pe = output
-                                                .raw
-                                                .char_indices()
-                                                .nth(80)
-                                                .map(|(i, _)| i)
-                                                .unwrap_or(output.raw.len());
-                                            eprintln!(
-                                                "[tool-ok] {}: {}",
-                                                registry_name,
-                                                &output.raw[..pe]
-                                            );
-                                            output.raw
-                                        }
-                                        Err(e) => {
-                                            eprintln!("[tool-err] {}: {}", registry_name, e);
-                                            format!("Tool error: {}", e)
-                                        }
-                                    }
-                                } else {
-                                    eprintln!(
-                                    "[tool-notfound] '{}' (from llm: '{}'). available in map: {:?}",
-                                    registry_name,
-                                    tc.name,
-                                    tool_name_map.keys().collect::<Vec<_>>()
-                                );
-                                    format!("Tool '{}' not found", registry_name)
-                                };
+                            let tool_result = self
+                                .execute_llm_tool_call(&registry_name, &tc.arguments, ctx)
+                                .await;
 
                             history
                                 .messages
@@ -1117,39 +1268,8 @@ impl PipelineRunner {
 
                             eprintln!("[xml-tool-call] tool_name={} args={}", tool_name, args);
 
-                            let tool_result = if let Some(tool) = self.tool_registry.get(tool_name)
-                            {
-                                match tool
-                                    .call(
-                                        args.clone(),
-                                        ToolContext {
-                                            audit_log: Arc::new(std::sync::Mutex::new(
-                                                self.audit_log.clone(),
-                                            )),
-                                            filesystem_policy: ctx.filesystem_policy.clone(),
-                                            network_policy: ctx.network_policy.clone(),
-                                            allowed_tools: ctx.allowed_tools.clone(),
-                                        },
-                                    )
-                                    .await
-                                {
-                                    Ok(output) => {
-                                        eprintln!(
-                                            "[xml-tool-ok] {}: {}",
-                                            tool_name,
-                                            &output.raw[..output.raw.len().min(80)]
-                                        );
-                                        output.raw
-                                    }
-                                    Err(e) => {
-                                        eprintln!("[xml-tool-err] {}: {}", tool_name, e);
-                                        format!("Tool error: {}", e)
-                                    }
-                                }
-                            } else {
-                                eprintln!("[xml-tool-notfound] '{}'", tool_name);
-                                format!("Tool '{}' not found", tool_name)
-                            };
+                            let tool_result =
+                                self.execute_llm_tool_call(tool_name, args, ctx).await;
 
                             history
                                 .messages
@@ -1168,7 +1288,10 @@ impl PipelineRunner {
                 // Always run synthesis when tools are available — the LLM may have responded
                 // with a text preamble on round 0 without using tools; synthesis gives it a
                 // chance to actually call tools and complete the task.
-                let needs_synthesis = !history.is_empty() && !tool_schemas.is_empty();
+                // ponytail: synthesis exists only to rescue an unfinished loop. If the model
+                // already delivered a final text answer, another LLM call would overwrite it.
+                let needs_synthesis =
+                    !history.is_empty() && !tool_schemas.is_empty() && !answered_with_text;
                 if needs_synthesis {
                     // Build tool list for XML instruction so model knows what tools are available
                     let tool_list = tool_schemas
@@ -1215,6 +1338,12 @@ impl PipelineRunner {
                         match llm_client.complete(synthesis_req).await {
                             Ok(syn_resp) => {
                                 ctx.budget.llm_calls_used += 1;
+
+                                // Record cost if usage info is available
+                                if let Some(usage) = &syn_resp.usage {
+                                    self.record_llm_cost(usage, &syn_resp.model, ctx);
+                                }
+
                                 let raw = syn_resp.content.clone();
 
                                 // Handle JSON tool calls in synthesis response
@@ -1242,46 +1371,13 @@ impl PipelineRunner {
                                                 .get(&tc.name)
                                                 .cloned()
                                                 .unwrap_or_else(|| tc.name.clone());
-                                            let result = if let Some(tool) =
-                                                self.tool_registry.get(&rname)
-                                            {
-                                                match tool
-                                                    .call(
-                                                        tc.arguments.clone(),
-                                                        ToolContext {
-                                                            audit_log: Arc::new(
-                                                                std::sync::Mutex::new(
-                                                                    self.audit_log.clone(),
-                                                                ),
-                                                            ),
-                                                            filesystem_policy: ctx
-                                                                .filesystem_policy
-                                                                .clone(),
-                                                            network_policy: ctx
-                                                                .network_policy
-                                                                .clone(),
-                                                            allowed_tools: ctx
-                                                                .allowed_tools
-                                                                .clone(),
-                                                        },
-                                                    )
-                                                    .await
-                                                {
-                                                    Ok(o) => {
-                                                        eprintln!("[syn-tool-ok] {}", rname);
-                                                        o.raw
-                                                    }
-                                                    Err(e) => {
-                                                        eprintln!(
-                                                            "[syn-tool-err] {}: {}",
-                                                            rname, e
-                                                        );
-                                                        format!("Tool error: {}", e)
-                                                    }
-                                                }
-                                            } else {
-                                                format!("Tool '{}' not found", rname)
-                                            };
+                                            let result = self
+                                                .execute_llm_tool_call(
+                                                    &rname,
+                                                    &tc.arguments,
+                                                    ctx,
+                                                )
+                                                .await;
                                             tool_results.push(result.clone());
                                             history.messages.push(
                                                 crate::llm::ChatMessage::tool_result(cid, result),
@@ -1337,41 +1433,8 @@ impl PipelineRunner {
                                     for (i, (tname, targs)) in xml_calls.iter().enumerate() {
                                         let cid = format!("syn_xml_{}", i);
                                         eprintln!("[syn-xml-tool] {} args={}", tname, targs);
-                                        let result = if let Some(tool) =
-                                            self.tool_registry.get(tname)
-                                        {
-                                            match tool
-                                                .call(
-                                                    targs.clone(),
-                                                    ToolContext {
-                                                        audit_log: Arc::new(std::sync::Mutex::new(
-                                                            self.audit_log.clone(),
-                                                        )),
-                                                        filesystem_policy: ctx
-                                                            .filesystem_policy
-                                                            .clone(),
-                                                        network_policy: ctx.network_policy.clone(),
-                                                        allowed_tools: ctx.allowed_tools.clone(),
-                                                    },
-                                                )
-                                                .await
-                                            {
-                                                Ok(o) => {
-                                                    eprintln!(
-                                                        "[syn-xml-ok] {}: {}",
-                                                        tname,
-                                                        &o.raw[..o.raw.len().min(80)]
-                                                    );
-                                                    o.raw
-                                                }
-                                                Err(e) => {
-                                                    eprintln!("[syn-xml-err] {}: {}", tname, e);
-                                                    format!("Tool error: {}", e)
-                                                }
-                                            }
-                                        } else {
-                                            format!("Tool '{}' not found", tname)
-                                        };
+                                        let result =
+                                            self.execute_llm_tool_call(tname, targs, ctx).await;
                                         xml_tool_results.push(result.clone());
                                         history.messages.push(
                                             crate::llm::ChatMessage::tool_result(cid, result),
@@ -1600,12 +1663,33 @@ impl PipelineRunner {
         delegation_depth: u32,
         parent_agent: String,
     ) -> Result<super::PipelineResult, PipelineError> {
-        // Run the pipeline with delegation context injected
+        self.run_with_delegation_depth_and_budget(
+            pipeline,
+            agent,
+            input,
+            delegation_depth,
+            parent_agent,
+            None,
+        )
+        .await
+    }
+
+    pub async fn run_with_delegation_depth_and_budget(
+        &mut self,
+        pipeline: &Pipeline,
+        agent: &Agent,
+        input: Value,
+        delegation_depth: u32,
+        parent_agent: String,
+        inherited_budget: Option<crate::context::BudgetState>,
+    ) -> Result<super::PipelineResult, PipelineError> {
+        // Run the pipeline with delegation context and optional inherited budget injected
         self.run_internal(
             pipeline,
             agent,
             input,
             Some((delegation_depth, parent_agent)),
+            inherited_budget,
         )
         .await
     }
@@ -1618,10 +1702,10 @@ impl PipelineRunner {
         agent: &Agent,
         input: Value,
     ) -> Result<super::PipelineResult, PipelineError> {
-        self.run_internal(pipeline, agent, input, None).await
+        self.run_internal(pipeline, agent, input, None, None).await
     }
 
-    /// Internal pipeline runner with optional delegation context
+    /// Internal pipeline runner with optional delegation context and inherited budget
     #[async_recursion(?Send)]
     async fn run_internal(
         &mut self,
@@ -1629,6 +1713,7 @@ impl PipelineRunner {
         agent: &Agent,
         input: Value,
         delegation_context: Option<(u32, String)>, // (delegation_depth, parent_agent)
+        inherited_budget: Option<crate::context::BudgetState>,
     ) -> Result<super::PipelineResult, PipelineError> {
         // Start pipeline
         self.audit_log.append(AuditEntry {
@@ -1646,6 +1731,7 @@ impl PipelineRunner {
             agent.policy.filesystem_policy.clone(),
         );
         ctx.network_policy = agent.policy.network_policy.clone();
+        ctx.agent_policy = agent.policy.clone();
         ctx.agent_registry = self.agent_registry.clone();
         ctx.tool_registry = self.tool_registry.clone();
         ctx.skill_registry = self.skill_registry.clone();
@@ -1657,6 +1743,39 @@ impl PipelineRunner {
             ctx.delegation_depth = depth;
             ctx.parent_agent = Some(parent);
         }
+
+        // Apply inherited budget if provided (for inherit_budget delegation policy)
+        if let Some(budget) = inherited_budget {
+            ctx.budget = budget;
+        }
+
+        // Set up workspace isolation (TempDir guard held for entire run)
+        let _temp_workspace = match &agent.policy.filesystem_policy.workspace_isolation {
+            crate::agent::WorkspaceIsolation::None => None,
+            crate::agent::WorkspaceIsolation::TempDir => {
+                let temp_dir = tempfile::TempDir::new()
+                    .map_err(|e| PipelineError::RuntimeSetupFailed(
+                        format!("Failed to create temp workspace: {}", e)
+                    ))?;
+                let temp_path = temp_dir.path().to_path_buf();
+                ctx.filesystem_policy.workspace_root = temp_path;
+                Some(temp_dir)
+            }
+            crate::agent::WorkspaceIsolation::Sandboxed(path) => {
+                if !path.exists() {
+                    return Err(PipelineError::RuntimeSetupFailed(
+                        format!("Sandboxed workspace path does not exist: {}", path.display())
+                    ));
+                }
+                if !path.is_dir() {
+                    return Err(PipelineError::RuntimeSetupFailed(
+                        format!("Sandboxed workspace path is not a directory: {}", path.display())
+                    ));
+                }
+                ctx.filesystem_policy.workspace_root = path.clone();
+                None
+            }
+        };
 
         let mut steps_passed = Vec::new();
         #[allow(unused_mut)]
@@ -1686,93 +1805,25 @@ impl PipelineRunner {
                 }
                 i = j;
 
-                // Execute batch in parallel using spawn_blocking for each step
-                let mut handles = Vec::new();
-
-                for &sidx in &batch {
-                    let step = pipeline.steps[sidx].clone();
-                    let mut step_ctx = ctx.clone();
-                    step_ctx.step_name = step.name.clone();
-                    step_ctx.input = input.clone();
-                    step_ctx.allowed_tools = crate::toolset::ToolSet::Intersection(
-                        Box::new(agent.policy.allowed_tools.clone()),
-                        Box::new(step.tools.clone()),
-                    );
-
-                    // Clone the action needed for the task
-                    let action = step.action.clone();
-
-                    let handle = tokio::task::spawn_blocking(move || {
-                        // Run the action synchronously in a thread pool
-                        // For Custom closures (which are blocking), call directly
-                        match &action {
-                            crate::action::StepAction::Custom(f) => f(&step_ctx),
-                            _ => Err(crate::action::StepError::ActionFailed {
-                                reason: "Only Custom actions supported in parallel steps".into(),
-                            }),
-                        }
-                    });
-
-                    handles.push((step.name.clone(), step.clone(), handle));
-                }
-
-                // Collect results and process them sequentially
-                for (step_name, step_obj, handle) in handles {
-                    let action_result = handle.await.map_err(|e| PipelineError::StepFailed {
-                        step: step_name.clone(),
-                        error: crate::action::StepError::ActionFailed {
-                            reason: e.to_string(),
-                        },
-                    })?;
-
-                    match action_result {
-                        Ok(output) => {
-                            // Run guard_out and verdict for this parallel step
-                            ctx.step_name = step_name.clone();
-                            ctx.output = Some(output);
-
-                            // guard_out
-                            match GuardEngine::evaluate(&step_obj.guard_out, &ctx).await {
-                                Ok(()) => {}
-                                Err(e) => {
-                                    return Err(PipelineError::GuardFailed {
-                                        step: step_name.clone(),
-                                        phase: GuardPhase::Out,
-                                        error: e,
-                                    });
-                                }
-                            }
-
-                            // verdict
-                            match VerdictEngine::evaluate(&step_obj.verdict, &ctx).await {
-                                Ok(()) => {}
-                                Err(e) => {
-                                    return Err(PipelineError::VerdictFailed {
-                                        step: step_name.clone(),
-                                        error: e,
-                                    });
-                                }
-                            }
-
-                            // Record result
-                            let sr = StepResult {
-                                step_name: step_name.clone(),
-                                output: ctx
-                                    .output
-                                    .clone()
-                                    .unwrap_or_else(|| StepOutput::new(String::new())),
-                                verdict_passed: true,
-                                error: None,
-                            };
-                            ctx.step_results.insert(step_name.clone(), sr);
+                // Execute batch via the parallel batch executor. It reuses the
+                // step_exec phases, so all StepAction variants are supported and
+                // guard_in is evaluated for parallel steps.
+                match super::parallel::execute_parallel_batch(
+                    self,
+                    pipeline,
+                    &mut ctx,
+                    &batch,
+                    &agent.policy.allowed_tools,
+                )
+                .await
+                {
+                    Ok(batch_results) => {
+                        for (step_name, _) in batch_results {
                             steps_passed.push(step_name);
                         }
-                        Err(e) => {
-                            return Err(PipelineError::StepFailed {
-                                step: step_name,
-                                error: e,
-                            });
-                        }
+                    }
+                    Err(e) => {
+                        return Err(e);
                     }
                 }
                 continue;
@@ -1785,24 +1836,20 @@ impl PipelineRunner {
             ctx.step_name = step.name.clone();
             ctx.input = input.clone();
 
-            // Compute effective tool scope for this step
-            ctx.allowed_tools = crate::toolset::ToolSet::Intersection(
-                Box::new(agent.policy.allowed_tools.clone()),
-                Box::new(step.tools.clone()),
-            );
+            // Compute effective tool scope for this step.
+            // Shared with the parallel path via `step_exec::step_tool_scope`.
+            ctx.allowed_tools =
+                super::step_exec::step_tool_scope(&agent.policy.allowed_tools, step);
 
             // ===== Record StepStarted audit event =====
-            self.audit_log.append(AuditEntry {
-                timestamp: Utc::now(),
-                pipeline_name: pipeline.name.clone(),
-                step_name: step.name.clone(),
-                event: AuditEvent::StepStarted,
-            });
+            // Shared with the parallel path via step_exec, so both emit an
+            // identical event. Must be the first event recorded for this step
+            // (integration_observability::test_audit_log_event_ordering_within_step).
+            super::step_exec::emit_step_started(self, step, &ctx);
 
-            // Handle guard_in
+            // Handle guard_in failure based on FailureMode (before trying action)
             match GuardEngine::evaluate(&step.guard_in, &ctx).await {
                 Ok(()) => {
-                    // ===== Record GuardPassed(in) audit event =====
                     self.audit_log.append(AuditEntry {
                         timestamp: Utc::now(),
                         pipeline_name: pipeline.name.clone(),
@@ -1815,7 +1862,6 @@ impl PipelineRunner {
                 Err(e) => {
                     let guard_err: crate::guards::GuardError = e;
                     let err_str = format!("{guard_err}");
-                    // Record GuardFailed audit event
                     self.audit_log.append(AuditEntry {
                         timestamp: Utc::now(),
                         pipeline_name: pipeline.name.clone(),
@@ -1826,10 +1872,8 @@ impl PipelineRunner {
                         },
                     });
 
-                    // Handle guard_in failure based on FailureMode
                     match &pipeline.on_failure {
                         crate::pipeline::FailureMode::Skip => {
-                            // Skip this step, continue to next
                             steps_failed.push(step.name.clone());
                             let sr = StepResult {
                                 step_name: step.name.clone(),
@@ -1838,8 +1882,6 @@ impl PipelineRunner {
                                 error: Some(format!("guard_in failed: {err_str}")),
                             };
                             ctx.step_results.insert(step.name.clone(), sr);
-
-                            // Record StepFailed audit event
                             self.audit_log.append(AuditEntry {
                                 timestamp: Utc::now(),
                                 pipeline_name: pipeline.name.clone(),
@@ -1848,7 +1890,6 @@ impl PipelineRunner {
                                     error: format!("guard_in failed: {err_str}"),
                                 },
                             });
-
                             continue;
                         }
                         _ => {
@@ -1903,7 +1944,6 @@ impl PipelineRunner {
                             && matches!(&pipeline.on_failure, crate::pipeline::FailureMode::Retry)
                         {
                             retries_left -= 1;
-                            // Continue loop to retry
                         } else {
                             break;
                         }
@@ -1915,7 +1955,6 @@ impl PipelineRunner {
             if action_error.is_some() {
                 match &pipeline.on_failure {
                     crate::pipeline::FailureMode::Skip => {
-                        // Skip this step, continue to next
                         steps_failed.push(step.name.clone());
                         let sr = StepResult {
                             step_name: step.name.clone(),
@@ -1927,8 +1966,6 @@ impl PipelineRunner {
                             error: action_error.as_ref().map(|e| format!("{:?}", e)),
                         };
                         ctx.step_results.insert(step.name.clone(), sr);
-
-                        // Record StepFailed audit event
                         self.audit_log.append(AuditEntry {
                             timestamp: Utc::now(),
                             pipeline_name: pipeline.name.clone(),
@@ -1937,17 +1974,14 @@ impl PipelineRunner {
                                 error: format!("{:?}", action_error),
                             },
                         });
-
                         continue;
                     }
                     crate::pipeline::FailureMode::Retry => {
-                        // Max retries exceeded
                         return Err(PipelineError::MaxRetriesExceeded {
                             step: step.name.clone(),
                         });
                     }
                     crate::pipeline::FailureMode::Abort => {
-                        // Record StepFailed audit event before aborting
                         self.audit_log.append(AuditEntry {
                             timestamp: Utc::now(),
                             pipeline_name: pipeline.name.clone(),
@@ -1965,7 +1999,6 @@ impl PipelineRunner {
                         let original_error = action_error.take().unwrap();
                         let step_name_clone = step.name.clone();
 
-                        // Log fallback triggered
                         self.audit_log.append(AuditEntry {
                             timestamp: Utc::now(),
                             pipeline_name: pipeline.name.clone(),
@@ -1976,7 +2009,59 @@ impl PipelineRunner {
                             },
                         });
 
-                        // Run the fallback pipeline in a child runner
+                        // A fallback pipeline is a substitute execution for the step that
+                        // just failed, so it MUST run under the same security context.
+                        //
+                        // This handler previously built a fresh `PipelineRunner` and called
+                        // the plain `run()` entry point with the unmodified `agent`, which
+                        // silently reset:
+                        //   * `delegation_depth` -> 0, so a delegated child sitting at
+                        //     `max_delegation_depth` could launder unlimited further
+                        //     delegation through its fallback pipeline
+                        //   * `budget`           -> fresh, restarting cost/call accounting
+                        //   * `filesystem_policy` -> re-resolved from the agent policy, so a
+                        //     `WorkspaceIsolation::TempDir` agent minted a SECOND temp dir
+                        //     instead of staying pinned to the parent's active sandbox
+                        //
+                        // Depth semantics: unlike `StepAction::SubPipeline` (which is a real
+                        // nesting boundary and therefore uses `delegation_depth + 1`), a
+                        // fallback replaces the failed step *in place* — it is the same
+                        // logical step retried a different way, not a level deeper. So it
+                        // inherits `ctx.delegation_depth` UNCHANGED. Containment still holds:
+                        // any delegation or SubPipeline *inside* the fallback increments from
+                        // that inherited depth, so a fallback at the cap cannot descend.
+                        let fallback_depth = ctx.delegation_depth;
+
+                        // Derive the fallback agent's policy from the PARENT's actual policy
+                        // so cost/step/runtime caps, allowed agents, skills and tool scope all
+                        // carry over. Tool scope stays at the agent level (not the failed
+                        // step's narrowed scope) because each fallback step intersects the
+                        // agent policy with its own declared `tools` during `run_internal`.
+                        let mut fallback_policy = ctx.agent_policy.clone();
+
+                        // Filesystem: inherit the parent's *resolved* policy.
+                        // `ctx.filesystem_policy.workspace_root` already points at the active
+                        // TempDir/Sandboxed root, so isolation is set to `None` to keep the
+                        // fallback inside that same sandbox rather than creating a new one.
+                        fallback_policy.filesystem_policy = ctx.filesystem_policy.clone();
+                        fallback_policy.filesystem_policy.workspace_isolation =
+                            crate::agent::WorkspaceIsolation::None;
+
+                        // Network: inherit the parent's actual policy, not a fresh default.
+                        fallback_policy.network_policy = ctx.network_policy.clone();
+
+                        let fallback_agent = crate::agent::Agent {
+                            name: agent.name.clone(),
+                            description: agent.description.clone(),
+                            pipeline: fallback_pipeline.as_ref().clone(),
+                            tools: fallback_policy.allowed_tools.clone(),
+                            skills: SkillSet {
+                                skills: ctx.active_skills.clone(),
+                            },
+                            policy: fallback_policy,
+                            scorers: agent.scorers.clone(),
+                        };
+
                         let mut fallback_runner = PipelineRunner {
                             audit_log: crate::audit::AuditLog::new(),
                             tool_registry: self.tool_registry.clone(),
@@ -1991,94 +2076,73 @@ impl PipelineRunner {
                             memory: self.memory.clone(),
                         };
 
-                        return fallback_runner
-                            .run(fallback_pipeline, agent, input.clone())
-                            .await
-                            .map_err(|_| PipelineError::StepFailed {
+                        // Run through the depth/budget-aware entry point — the same one
+                        // `execute_delegation` and the SubPipeline handler use. The parent's
+                        // spent budget goes in; the fallback's final budget comes back out on
+                        // the returned `PipelineResult`, keeping accounting continuous.
+                        let fallback_result = fallback_runner
+                            .run_with_delegation_depth_and_budget(
+                                fallback_pipeline,
+                                &fallback_agent,
+                                input.clone(),
+                                fallback_depth,
+                                ctx.parent_agent.clone().unwrap_or_else(|| ctx.agent_name.clone()),
+                                Some(ctx.budget.clone()),
+                            )
+                            .await;
+
+                        return match fallback_result {
+                            Ok(result) => {
+                                // Budget continuity: the fallback's spend is the run's spend.
+                                ctx.budget = result.budget.clone();
+                                Ok(result)
+                            }
+                            Err(_) => Err(PipelineError::StepFailed {
                                 step: step_name_clone,
                                 error: original_error,
-                            });
+                            }),
+                        };
                     }
                 }
             }
 
-            eprintln!(
-                "[guard-check] step={} output_raw_len={}",
-                step.name,
-                ctx.output.as_ref().map(|o| o.raw.len()).unwrap_or(0)
-            );
-
-            // Handle guard_out (only if action succeeded)
-            match GuardEngine::evaluate(&step.guard_out, &ctx).await {
-                Ok(()) => {
-                    // ===== Record GuardPassed(out) audit event =====
-                    self.audit_log.append(AuditEntry {
-                        timestamp: Utc::now(),
-                        pipeline_name: pipeline.name.clone(),
-                        step_name: step.name.clone(),
-                        event: AuditEvent::GuardPassed {
-                            guard: step.guard_out.name(),
-                        },
-                    });
-                }
-                Err(e) => {
-                    let guard_err: crate::guards::GuardError = e;
-                    // Record GuardFailed audit event
-                    self.audit_log.append(AuditEntry {
-                        timestamp: Utc::now(),
-                        pipeline_name: pipeline.name.clone(),
-                        step_name: step.name.clone(),
-                        event: AuditEvent::GuardFailed {
-                            guard: step.guard_out.name(),
-                            reason: format!("{guard_err}"),
-                        },
-                    });
+            // ===== Post-action phase (injection check, guard_out, output_schema,
+            // verdict, StepCompleted) =====
+            // Shared with the parallel path via step_exec::run_post_action so both
+            // paths enforce injection protection and output_schema identically.
+            // Previously duplicated inline here, which silently skipped both checks
+            // for the default (parallel: false) path.
+            let post_output = ctx
+                .output
+                .clone()
+                .unwrap_or_else(|| StepOutput::new(String::new()));
+            let post_output = match super::step_exec::run_post_action(self, step, &mut ctx, post_output).await
+            {
+                Ok(output) => output,
+                Err(super::step_exec::PostActionError::GuardOut(guard_err)) => {
                     return Err(PipelineError::GuardFailed {
                         step: step.name.clone(),
                         phase: GuardPhase::Out,
                         error: guard_err,
                     });
                 }
-            }
-
-            // Handle verdict
-            match VerdictEngine::evaluate(&step.verdict, &ctx).await {
-                Ok(()) => {
-                    // ===== Record VerdictPassed audit event =====
-                    self.audit_log.append(AuditEntry {
-                        timestamp: Utc::now(),
-                        pipeline_name: pipeline.name.clone(),
-                        step_name: step.name.clone(),
-                        event: AuditEvent::VerdictPassed {
-                            verdict: "verdict".into(),
-                        },
-                    });
-                }
-                Err(e) => {
+                Err(super::step_exec::PostActionError::Verdict(verdict_err)) => {
                     return Err(PipelineError::VerdictFailed {
                         step: step.name.clone(),
-                        error: e,
+                        error: verdict_err,
                     });
                 }
-            }
+                Err(super::step_exec::PostActionError::Step(step_err)) => {
+                    return Err(PipelineError::StepFailed {
+                        step: step.name.clone(),
+                        error: step_err,
+                    });
+                }
+            };
 
-            // ===== Record StepCompleted audit event =====
-            self.audit_log.append(AuditEntry {
-                timestamp: Utc::now(),
-                pipeline_name: pipeline.name.clone(),
-                step_name: step.name.clone(),
-                event: AuditEvent::StepCompleted {
-                    verdict_passed: true,
-                },
-            });
-
-            // Record step result
             let sr = StepResult {
                 step_name: step.name.clone(),
-                output: ctx
-                    .output
-                    .clone()
-                    .unwrap_or_else(|| StepOutput::new(String::new())),
+                output: post_output,
                 verdict_passed: true,
                 error: None,
             };
@@ -2133,6 +2197,140 @@ impl PipelineRunner {
             total_tokens_used: 0, // Will be updated when LLM calls are tracked
             log: vec![],          // Will be populated when logging is wired
             suspended: None,
+             budget: ctx.budget.clone(),
         })
+    }
+
+    /// Build a system prompt by combining skill instructions with few-shot examples.
+    ///
+    /// Format: instructions, then for each example (if any):
+    /// ```text
+    /// Example N:
+    /// Input: <example.input>
+    /// Expected Output: <example.expected_output>
+    /// Description: <example.description>
+    /// ```
+    fn build_skill_system_prompt(
+        &self,
+        instructions: &str,
+        examples: &[crate::skills::SkillExample],
+    ) -> String {
+        if examples.is_empty() {
+            return instructions.to_string();
+        }
+
+        let mut prompt = instructions.to_string();
+        prompt.push_str("\n\n");
+
+        for (idx, example) in examples.iter().enumerate() {
+            let example_num = idx + 1;
+            prompt.push_str(&format!("Example {}:\n", example_num));
+            prompt.push_str(&format!("Input: {}\n", example.input));
+            prompt.push_str(&format!(
+                "Expected Output: {}\n",
+                example.expected_output
+            ));
+            prompt.push_str(&format!("Description: {}\n", example.description));
+            if idx < examples.len() - 1 {
+                prompt.push_str("\n");
+            }
+        }
+
+        prompt
+    }
+
+    /// Run skill evaluation and return a formatted eval result string.
+    ///
+    /// Evaluation is informational (non-blocking) — results are attached to output
+    /// for audit/visibility purposes but do not gate step success.
+    async fn run_skill_eval(
+        &self,
+        skill_eval: &crate::skills::SkillEval,
+        output: &StepOutput,
+        skill_name: &str,
+    ) -> String {
+        // Simple evaluation: check if all criteria are mentioned in the output
+        // More sophisticated evaluation (with scoring, LLM checks, etc.) can be added later
+        let output_text = &output.raw;
+        let mut met_criteria = 0;
+
+        for criterion in &skill_eval.criteria {
+            if output_text.contains(criterion) {
+                met_criteria += 1;
+            }
+        }
+
+        let criteria_count = skill_eval.criteria.len();
+        let score = if criteria_count == 0 {
+            1.0
+        } else {
+            met_criteria as f64 / criteria_count as f64
+        };
+
+        let threshold_check = if score < skill_eval.min_score {
+            format!(" [BELOW threshold]")
+        } else {
+            String::new()
+        };
+
+        format!(
+            "SkillEval[{}]: {}/{} criteria met (score: {:.2}, min: {:.2}){}",
+            skill_name, met_criteria, criteria_count, score, skill_eval.min_score, threshold_check
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_shell_run_command() {
+        let args = serde_json::json!({
+            "command": "rm",
+            "args": ["-rf", "/tmp"]
+        });
+        let result = extract_shell_command_string("shell.run", &args);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "rm -rf /tmp");
+    }
+
+    #[test]
+    fn test_extract_shell_run_command_tool_run_command_variant() {
+        // Critical test: shell.run_command must extract the command the same way as shell.run
+        let args = serde_json::json!({
+            "command": "rm",
+            "args": ["-rf", "/tmp"]
+        });
+        let result = extract_shell_command_string("shell.run_command", &args);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "rm -rf /tmp");
+    }
+
+    #[test]
+    fn test_extract_shell_cargo_test() {
+        let args = serde_json::json!({});
+        let result = extract_shell_command_string("shell.cargo_test", &args);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "cargo test");
+    }
+
+    #[test]
+    fn test_extract_shell_unknown_fallback() {
+        let args = serde_json::json!({});
+        let result = extract_shell_command_string("shell.custom_tool", &args);
+        assert!(result.is_ok());
+        // Should strip the "shell." prefix
+        assert_eq!(result.unwrap(), "custom_tool");
+    }
+
+    #[test]
+    fn test_extract_shell_run_command_with_no_args() {
+        let args = serde_json::json!({
+            "command": "cargo"
+        });
+        let result = extract_shell_command_string("shell.run_command", &args);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "cargo");
     }
 }

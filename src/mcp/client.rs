@@ -26,6 +26,10 @@ pub enum McpError {
     #[error("I/O error: {0}")]
     Io(String),
 
+    /// Handshake or I/O operation timed out
+    #[error("timeout: {0}")]
+    Timeout(String),
+
     /// Not implemented (URL-based servers in Phase 3)
     #[error("not implemented: {0}")]
     NotImplemented(String),
@@ -57,12 +61,15 @@ pub struct DiscoveredTool {
 }
 
 /// MCP client for communicating with MCP servers
+#[derive(Debug)]
 pub struct McpClient {
     config: McpServerConfig,
     process: Option<Child>,
     http_client: Option<ReqwestClient>,
     base_url: Option<String>,
     request_id: Arc<AtomicU64>,
+    /// Timeout in seconds for handshake and I/O operations (default: 30s)
+    timeout_secs: u64,
 }
 
 impl McpClient {
@@ -76,7 +83,14 @@ impl McpClient {
             http_client: None,
             base_url: None,
             request_id: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1)),
+            timeout_secs: 30,
         }
+    }
+
+    /// Set timeout in seconds for handshake and I/O operations
+    pub fn with_timeout(mut self, secs: u64) -> Self {
+        self.timeout_secs = secs;
+        self
     }
 
     /// Connect to an MCP server
@@ -97,6 +111,7 @@ impl McpClient {
                 http_client: Some(ReqwestClient::new()),
                 base_url: Some(url),
                 request_id: Arc::new(AtomicU64::new(1)),
+                timeout_secs: 30,
             };
             return Ok(client);
         }
@@ -136,6 +151,7 @@ impl McpClient {
             http_client: None,
             base_url: None,
             request_id: Arc::new(AtomicU64::new(1)),
+            timeout_secs: 30,
         };
 
         // Send initialize handshake for stdio-based servers
@@ -210,7 +226,7 @@ impl McpClient {
                     .map_err(|e| McpError::Io(e.to_string()))?;
             }
 
-            // Read initialize response from stdout
+            // Read initialize response from stdout with timeout
             let init_response: Value;
             {
                 let stdout = process
@@ -220,10 +236,13 @@ impl McpClient {
                 use tokio::io::{AsyncBufReadExt, BufReader};
                 let mut reader = BufReader::new(stdout);
                 let mut response_line = String::new();
-                reader
-                    .read_line(&mut response_line)
-                    .await
-                    .map_err(|e| McpError::Io(e.to_string()))?;
+                tokio::time::timeout(
+                    std::time::Duration::from_secs(self.timeout_secs),
+                    reader.read_line(&mut response_line),
+                )
+                .await
+                .map_err(|_| McpError::Timeout("initialize handshake read timed out".into()))?
+                .map_err(|e| McpError::Io(e.to_string()))?;
 
                 init_response = serde_json::from_str(response_line.trim()).map_err(|e| {
                     McpError::JsonRpc(format!("initialize response parse error: {}", e))
@@ -352,14 +371,17 @@ impl McpClient {
             .await
             .map_err(|e| McpError::Io(e.to_string()))?;
 
-        // Read response using BufReader
+        // Read response using BufReader with timeout
         use tokio::io::{AsyncBufReadExt, BufReader};
         let mut reader = BufReader::new(stdout);
         let mut response_line = String::new();
-        reader
-            .read_line(&mut response_line)
-            .await
-            .map_err(|e| McpError::Io(e.to_string()))?;
+        tokio::time::timeout(
+            std::time::Duration::from_secs(self.timeout_secs),
+            reader.read_line(&mut response_line),
+        )
+        .await
+        .map_err(|_| McpError::Timeout("discover tools read timed out".into()))?
+        .map_err(|e| McpError::Io(e.to_string()))?;
 
         // Parse JSON-RPC response
         let response: Value =
@@ -510,7 +532,7 @@ impl McpClient {
             .await
             .map_err(|e| McpError::Io(e.to_string()))?;
 
-        // Read response from child stdout
+        // Read response from child stdout with timeout
         let stdout = process
             .stdout
             .as_mut()
@@ -518,10 +540,13 @@ impl McpClient {
         use tokio::io::{AsyncBufReadExt, BufReader};
         let mut reader = BufReader::new(stdout);
         let mut response_line = String::new();
-        reader
-            .read_line(&mut response_line)
-            .await
-            .map_err(|e| McpError::Io(e.to_string()))?;
+        tokio::time::timeout(
+            std::time::Duration::from_secs(self.timeout_secs),
+            reader.read_line(&mut response_line),
+        )
+        .await
+        .map_err(|_| McpError::Timeout("tool call read timed out".into()))?
+        .map_err(|e| McpError::Io(e.to_string()))?;
 
         // Parse JSON-RPC response
         let response: Value =
@@ -605,5 +630,45 @@ mod tests {
         // Should fail because no process is running
         assert!(result.is_err());
         assert!(matches!(result, Err(McpError::NotRunning)));
+    }
+
+    /// Test that a non-responding process times out instead of hanging indefinitely
+    #[tokio::test]
+    async fn test_mcp_client_handshake_timeout() {
+        // Spawn 'sleep 100' as a non-responding server that will never emit
+        // a JSON-RPC initialize response on stdout
+        let config = McpServerConfig::new("sleep_server")
+            .with_command("sleep")
+            .with_args(vec!["100".to_string()]);
+
+        let start = std::time::Instant::now();
+        let result = McpClient::connect(config).await;
+        let elapsed = start.elapsed();
+
+        // Should timeout after ~30 seconds (our default)
+        assert!(result.is_err(), "Expected handshake to timeout");
+        if let Err(McpError::Timeout(msg)) = result {
+            assert!(msg.contains("timed out"), "Error message should mention timeout: {}", msg);
+        } else {
+            panic!("Expected McpError::Timeout, got: {:?}", result);
+        }
+
+        // Verify the operation completed quickly (within 40 seconds) instead of hanging forever.
+        // We allow some slack for system overhead, but definitely should not take minutes.
+        assert!(
+            elapsed.as_secs() < 40,
+            "Timeout took too long: {}s (expected ~30s)",
+            elapsed.as_secs()
+        );
+    }
+
+    /// Test that with_timeout() builder method works
+    #[test]
+    fn test_mcp_client_with_timeout() {
+        let client = McpClient::disconnected();
+        assert_eq!(client.timeout_secs, 30, "Default timeout should be 30s");
+
+        let client_custom = client.with_timeout(15);
+        assert_eq!(client_custom.timeout_secs, 15, "Custom timeout should be set");
     }
 }

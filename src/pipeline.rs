@@ -7,7 +7,7 @@ use crate::toolset::ToolSet;
 use crate::verdict::Verdict;
 
 /// Injection protection strategy for a step
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum InjectionProtection {
     /// No protection (Phase 2+: would scan for injection patterns)
     None,
@@ -158,6 +158,7 @@ impl Default for AgentStep {
                 Ok(StepOutput {
                     raw: String::new(),
                     parsed: None,
+                    eval_result: None,
                 })
             })),
             guard_out: Guard::None,
@@ -398,6 +399,7 @@ impl PipelineBuilder {
             Ok(crate::action::StepOutput {
                 raw: format!("slept for {}ms", duration_ms),
                 parsed: None,
+                eval_result: None,
             })
         }));
         let step = AgentStep {
@@ -426,6 +428,7 @@ impl PipelineBuilder {
             Ok(crate::action::StepOutput {
                 raw: "slept until timestamp".to_string(),
                 parsed: None,
+                eval_result: None,
             })
         }));
         let step = AgentStep {
