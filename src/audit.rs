@@ -1,6 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use tracing::error;
 
 /// Represents a node in the agent delegation call tree
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -768,7 +769,7 @@ impl MonitoringServer {
                     Json(json!({ "entries": entries }))
                 }
                 Err(e) => {
-                    eprintln!("ERROR: trace mutex poisoned: {}", e);
+                    error!(error = %e, "trace mutex poisoned");
                     Json(json!({ "error": "trace mutex poisoned", "entries": [] }))
                 }
             }

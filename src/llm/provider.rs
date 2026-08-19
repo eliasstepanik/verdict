@@ -6,6 +6,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::pin::Pin;
 use thiserror::Error;
+use tracing::{debug, trace};
 
 /// Role of a message in a conversation
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -429,17 +430,14 @@ impl LlmProvider for OpenAiCompatibleProvider {
         }
 
         // Debug: log whether tools are included in request
-        eprintln!(
-            "[llm-req] model={} tools_count={} tool_choice={}",
-            model,
-            body.get("tools")
-                .and_then(|t| t.as_array())
-                .map(|a| a.len())
-                .unwrap_or(0),
-            body.get("tool_choice")
-                .map(|v| v.to_string())
-                .unwrap_or_else(|| "none".into())
-        );
+        let tools_count = body.get("tools")
+            .and_then(|t| t.as_array())
+            .map(|a| a.len())
+            .unwrap_or(0);
+        let tool_choice = body.get("tool_choice")
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "none".into());
+        debug!(model = %model, tools_count = tools_count, tool_choice = %tool_choice, "LLM request");
 
         // Construct the URL — strip any trailing /v1 from base_url to avoid double-path
         let base = self.base_url.trim_end_matches('/').trim_end_matches("/v1");
@@ -491,18 +489,15 @@ impl LlmProvider for OpenAiCompatibleProvider {
             .await
             .map_err(|e| LlmError::InvalidResponse(e.to_string()))?;
 
-        // Debug: log first 300 chars of raw response to see if tool_calls are present
+        // Trace: log first 300 chars of raw response to see if tool_calls are present
         let preview_end = raw_body
             .char_indices()
             .nth(300)
             .map(|(i, _)| i)
             .unwrap_or(raw_body.len());
-        eprintln!(
-            "[llm-raw] status={} has_tool_calls={} body_preview={}",
-            status,
-            raw_body.contains("\"tool_calls\""),
-            &raw_body[..preview_end]
-        );
+        let preview = &raw_body[..preview_end];
+        let has_tool_calls = raw_body.contains("\"tool_calls\"");
+        trace!(status = %status, has_tool_calls = has_tool_calls, body_preview = %preview, "LLM raw response");
 
         // Deserialize the response
         let api_response: OpenAiResponse = serde_json::from_str(&raw_body).map_err(|e| {

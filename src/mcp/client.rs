@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use thiserror::Error;
 use tokio::io::AsyncWriteExt;
+use tracing::warn;
 
 use tokio::process::{Child, Command};
 
@@ -416,7 +417,7 @@ impl McpClient {
                 }
                 Err(e) => {
                     // Skip invalid tools with a log (in real implementation)
-                    eprintln!("Warning: skipping invalid tool definition: {}", e);
+                    warn!(error = %e, "skipping invalid tool definition");
                 }
             }
         }

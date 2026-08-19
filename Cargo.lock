@@ -2221,6 +2221,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "toml",
+ "tracing",
  "verdict",
  "verdict-memory",
  "verdict-telemetry",
