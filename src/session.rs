@@ -712,9 +712,8 @@ mod tests {
         // Verify the session history contains both messages
         let history = session_runner
             .get_history(&test_id)
-            .await;
-        assert!(history.is_ok(), "Failed to get history: {:?}", history);
-        let history = history.unwrap();
+            .await
+            .expect("Failed to get history");
 
         assert_eq!(history.messages.len(), 2);
         assert_eq!(history.messages[0].role, ConversationRole::User);
