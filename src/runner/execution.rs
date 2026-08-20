@@ -1,3 +1,19 @@
+// ponytail: this file exceeds the 300-line limit as a documented, user-approved exception.
+// Rationale: run_internal (the core sequential step-execution orchestration loop —
+// guard_in evaluation, action dispatch, retry logic, post-action processing, parallel
+// batch coordination) and the run()/run_with_delegation_depth*() entry-point wrappers
+// form a tightly-coupled orchestration core. Splitting this further was assessed by an
+// Oracle review (see notes/verdict-execution-rs-decomposition-plan-review.md) as carrying
+// disproportionate regression risk relative to benefit, given this file's role hosting
+// 3 recent mutation-tested security fixes (now distributed to tool_executor.rs,
+// step_executor.rs, fallback.rs after the Task 1-6 decomposition — see those files'
+// individual doc comments). Approved as an escalation-clause exception per AGENTS.md
+// 300-Line File Limit rule (tightly-coupled state machine). Original file: 2339 lines;
+// post-decomposition: 650 lines across execution.rs + 11 extracted modules
+// (tool_executor.rs, tool_executor_tests.rs, llm_synthesis.rs, tool_use_loop.rs,
+// tool_use_loop_synthesis.rs, tool_schemas.rs, step_executor.rs, step_executor_misc.rs,
+// use_skill.rs, fallback.rs, dag.rs).
+
 use super::PipelineRunner;
 use super::PipelineError;
 use crate::action::{StepAction, StepError, StepOutput};
@@ -9,7 +25,6 @@ use crate::pipeline::Pipeline;
 use async_recursion::async_recursion;
 use chrono::Utc;
 use serde_json::Value;
-use std::collections::VecDeque;
 use tempfile;
 use tracing::error;
 
@@ -19,73 +34,6 @@ use tracing::error;
 
 
 impl PipelineRunner {
-    /// Topologically sort pipeline steps based on dependencies (Kahn's algorithm)
-    /// Returns indices in execution order, or error if cycle is detected or dependency is missing.
-    pub fn topological_sort(&self, pipeline: &Pipeline) -> Result<Vec<usize>, PipelineError> {
-        let n = pipeline.steps.len();
-
-        // Build a map from step name to index
-        let name_to_idx: std::collections::HashMap<&str, usize> = pipeline
-            .steps
-            .iter()
-            .enumerate()
-            .map(|(i, s)| (s.name.as_str(), i))
-            .collect();
-
-        // Initialize in-degree and adjacency list
-        let mut in_degree = vec![0usize; n];
-        let mut adj: Vec<Vec<usize>> = vec![vec![]; n];
-
-        // Build dependency graph
-        for (i, step) in pipeline.steps.iter().enumerate() {
-            for dep_name in &step.dependencies {
-                match name_to_idx.get(dep_name.as_str()) {
-                    Some(&dep_idx) => {
-                        // Edge from dep_idx to i (i depends on dep_idx)
-                        adj[dep_idx].push(i);
-                        in_degree[i] += 1;
-                    }
-                    None => {
-                        return Err(PipelineError::StepFailed {
-                            step: step.name.clone(),
-                            error: StepError::ActionFailed {
-                                reason: format!("Unknown dependency: {}", dep_name),
-                            },
-                        });
-                    }
-                }
-            }
-        }
-
-        // Kahn's algorithm
-        let mut queue: VecDeque<usize> = (0..n).filter(|&i| in_degree[i] == 0).collect();
-        let mut order = Vec::new();
-
-        while let Some(idx) = queue.pop_front() {
-            order.push(idx);
-            for &next in &adj[idx] {
-                in_degree[next] -= 1;
-                if in_degree[next] == 0 {
-                    queue.push_back(next);
-                }
-            }
-        }
-
-        // Check for cycles
-        if order.len() != n {
-            return Err(PipelineError::StepFailed {
-                step: "DAG".into(),
-                error: StepError::ActionFailed {
-                    reason: "Cycle detected in step dependencies".into(),
-                },
-            });
-        }
-
-        Ok(order)
-    }
-
-
-
     /// Execute a single step action — Phase 3 onwards
     ///
     /// # Known Issue

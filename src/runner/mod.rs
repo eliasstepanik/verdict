@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 mod budget;
+mod dag;
 mod delegation;
 mod execution;
 mod fallback;
@@ -24,6 +25,8 @@ pub use types::{
 // These are re-exported for use within impl blocks on PipelineRunner
 #[allow(unused_imports)]
 pub(crate) use budget::*;
+#[allow(unused_imports)]
+pub(crate) use dag::*;
 #[allow(unused_imports)]
 pub(crate) use delegation::*;
 #[allow(unused_imports)]
