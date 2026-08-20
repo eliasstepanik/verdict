@@ -3,6 +3,7 @@ use std::sync::Arc;
 mod budget;
 mod delegation;
 mod execution;
+mod fallback;
 mod injection_check;
 mod llm_synthesis;
 mod parallel;
@@ -27,6 +28,8 @@ pub(crate) use budget::*;
 pub(crate) use delegation::*;
 #[allow(unused_imports)]
 pub(crate) use execution::*;
+#[allow(unused_imports)]
+pub(crate) use fallback::*;
 #[allow(unused_imports)]
 pub(crate) use injection_check::*;
 #[allow(unused_imports)]

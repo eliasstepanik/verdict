@@ -6,7 +6,6 @@ use crate::audit::{AuditEntry, AuditEvent};
 use crate::context::{StepContext, StepResult};
 use crate::guards::{GuardEngine, GuardPhase};
 use crate::pipeline::Pipeline;
-use crate::skills::skill::SkillSet;
 use async_recursion::async_recursion;
 use chrono::Utc;
 use serde_json::Value;
@@ -604,111 +603,15 @@ impl PipelineRunner {
                     }
                     crate::pipeline::FailureMode::Fallback(fallback_pipeline) => {
                         let original_error = action_error.take().unwrap();
-                        let step_name_clone = step.name.clone();
-
-                        self.audit_log.append(AuditEntry {
-                            timestamp: Utc::now(),
-                            pipeline_name: pipeline.name.clone(),
-                            step_name: step.name.clone(),
-                            event: AuditEvent::FallbackTriggered {
-                                step: step.name.clone(),
-                                reason: format!("{:?}", original_error),
-                            },
-                        });
-
-                        // A fallback pipeline is a substitute execution for the step that
-                        // just failed, so it MUST run under the same security context.
-                        //
-                        // This handler previously built a fresh `PipelineRunner` and called
-                        // the plain `run()` entry point with the unmodified `agent`, which
-                        // silently reset:
-                        //   * `delegation_depth` -> 0, so a delegated child sitting at
-                        //     `max_delegation_depth` could launder unlimited further
-                        //     delegation through its fallback pipeline
-                        //   * `budget`           -> fresh, restarting cost/call accounting
-                        //   * `filesystem_policy` -> re-resolved from the agent policy, so a
-                        //     `WorkspaceIsolation::TempDir` agent minted a SECOND temp dir
-                        //     instead of staying pinned to the parent's active sandbox
-                        //
-                        // Depth semantics: unlike `StepAction::SubPipeline` (which is a real
-                        // nesting boundary and therefore uses `delegation_depth + 1`), a
-                        // fallback replaces the failed step *in place* — it is the same
-                        // logical step retried a different way, not a level deeper. So it
-                        // inherits `ctx.delegation_depth` UNCHANGED. Containment still holds:
-                        // any delegation or SubPipeline *inside* the fallback increments from
-                        // that inherited depth, so a fallback at the cap cannot descend.
-                        let fallback_depth = ctx.delegation_depth;
-
-                        // Derive the fallback agent's policy from the PARENT's actual policy
-                        // so cost/step/runtime caps, allowed agents, skills and tool scope all
-                        // carry over. Tool scope stays at the agent level (not the failed
-                        // step's narrowed scope) because each fallback step intersects the
-                        // agent policy with its own declared `tools` during `run_internal`.
-                        let mut fallback_policy = ctx.agent_policy.clone();
-
-                        // Filesystem: inherit the parent's *resolved* policy.
-                        // `ctx.filesystem_policy.workspace_root` already points at the active
-                        // TempDir/Sandboxed root, so isolation is set to `None` to keep the
-                        // fallback inside that same sandbox rather than creating a new one.
-                        fallback_policy.filesystem_policy = ctx.filesystem_policy.clone();
-                        fallback_policy.filesystem_policy.workspace_isolation =
-                            crate::agent::WorkspaceIsolation::None;
-
-                        // Network: inherit the parent's actual policy, not a fresh default.
-                        fallback_policy.network_policy = ctx.network_policy.clone();
-
-                        let fallback_agent = crate::agent::Agent {
-                            name: agent.name.clone(),
-                            description: agent.description.clone(),
-                            pipeline: fallback_pipeline.as_ref().clone(),
-                            tools: fallback_policy.allowed_tools.clone(),
-                            skills: SkillSet {
-                                skills: ctx.active_skills.clone(),
-                            },
-                            policy: fallback_policy,
-                            scorers: agent.scorers.clone(),
-                        };
-
-                        let mut fallback_runner = PipelineRunner {
-                            audit_log: crate::audit::AuditLog::new(),
-                            tool_registry: self.tool_registry.clone(),
-                            agent_registry: self.agent_registry.clone(),
-                            skill_registry: self.skill_registry.clone(),
-                            llm_client: self.llm_client.clone(),
-                            output_sink: self.output_sink.clone(),
-                            conversation_registry: self.conversation_registry.clone(),
-                            context_store: self.context_store.clone(),
-                            plugin_registry: self.plugin_registry.clone(),
-                            auto_title_llm: self.auto_title_llm.clone(),
-                            memory: self.memory.clone(),
-                        };
-
-                        // Run through the depth/budget-aware entry point — the same one
-                        // `execute_delegation` and the SubPipeline handler use. The parent's
-                        // spent budget goes in; the fallback's final budget comes back out on
-                        // the returned `PipelineResult`, keeping accounting continuous.
-                        let fallback_result = fallback_runner
-                            .run_with_delegation_depth_and_budget(
-                                fallback_pipeline,
-                                &fallback_agent,
-                                input.clone(),
-                                fallback_depth,
-                                ctx.parent_agent.clone().unwrap_or_else(|| ctx.agent_name.clone()),
-                                Some(ctx.budget.clone()),
-                            )
-                            .await;
-
-                        return match fallback_result {
-                            Ok(result) => {
-                                // Budget continuity: the fallback's spend is the run's spend.
-                                ctx.budget = result.budget.clone();
-                                Ok(result)
-                            }
-                            Err(_) => Err(PipelineError::StepFailed {
-                                step: step_name_clone,
-                                error: original_error,
-                            }),
-                        };
+                        return self.handle_fallback(
+                            fallback_pipeline,
+                            original_error,
+                            step.name.clone(),
+                            agent,
+                            &mut ctx,
+                            input.clone(),
+                        )
+                        .await;
                     }
                 }
             }
