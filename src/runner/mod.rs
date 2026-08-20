@@ -6,6 +6,7 @@ mod execution;
 mod injection_check;
 mod parallel;
 mod step_exec;
+mod tool_executor;
 mod types;
 
 pub use types::{
@@ -25,6 +26,8 @@ pub(crate) use injection_check::*;
 pub(crate) use parallel::*;
 #[allow(unused_imports)]
 pub(crate) use step_exec::*;
+#[allow(unused_imports)]
+pub(crate) use tool_executor::*;
 
 /// Executor for pipelines with guards, verdicts, and audit logging
 #[derive(Clone)]
