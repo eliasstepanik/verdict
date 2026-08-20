@@ -18,7 +18,7 @@ impl PipelineRunner {
         ctx: &mut StepContext,
     ) -> Result<String, StepError> {
         use tracing::{debug, warn};
-        use super::llm_synthesis::{parse_xml_tool_calls, strip_xml_tool_calls};
+        use super::xml_tools::{parse_xml_tool_calls, strip_xml_tool_calls};
 
         let tool_list = tool_schemas
             .iter()

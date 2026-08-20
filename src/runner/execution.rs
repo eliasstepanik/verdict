@@ -9,7 +9,7 @@
 // step_executor.rs, fallback.rs after the Task 1-6 decomposition — see those files'
 // individual doc comments). Approved as an escalation-clause exception per AGENTS.md
 // 300-Line File Limit rule (tightly-coupled state machine). Original file: 2339 lines;
-// post-decomposition: 650 lines across execution.rs + 11 extracted modules
+// post-decomposition: 666 lines across execution.rs + 11 extracted modules
 // (tool_executor.rs, tool_executor_tests.rs, llm_synthesis.rs, tool_use_loop.rs,
 // tool_use_loop_synthesis.rs, tool_schemas.rs, step_executor.rs, step_executor_misc.rs,
 // use_skill.rs, fallback.rs, dag.rs).

@@ -37,7 +37,7 @@ impl PipelineRunner {
         ctx: &mut StepContext,
     ) -> Result<StepOutput, StepError> {
         use tracing::trace;
-        use super::llm_synthesis::{resolve_template, parse_xml_tool_calls};
+        use super::xml_tools::{resolve_template, parse_xml_tool_calls};
 
         let llm_client = self
             .llm_client

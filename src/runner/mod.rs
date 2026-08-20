@@ -17,6 +17,7 @@ mod tool_schemas;
 mod tool_use_loop;
 mod tool_use_loop_synthesis;
 mod types;
+mod xml_tools;
 
 pub use types::{
     LogEntry, LogLevel, OutputEvent, OutputSink, PipelineError, PipelineResult, SuspendedState,
@@ -55,6 +56,8 @@ pub(crate) use tool_schemas::*;
 pub(crate) use tool_use_loop::*;
 #[allow(unused_imports)]
 pub(crate) use tool_use_loop_synthesis::*;
+#[allow(unused_imports)]
+pub(crate) use xml_tools::*;
 
 /// Executor for pipelines with guards, verdicts, and audit logging
 #[derive(Clone)]
