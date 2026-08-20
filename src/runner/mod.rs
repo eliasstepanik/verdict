@@ -4,9 +4,14 @@ mod budget;
 mod delegation;
 mod execution;
 mod injection_check;
+mod llm_synthesis;
 mod parallel;
 mod step_exec;
+mod step_executor;
 mod tool_executor;
+mod tool_schemas;
+mod tool_use_loop;
+mod tool_use_loop_synthesis;
 mod types;
 
 pub use types::{
@@ -23,11 +28,21 @@ pub(crate) use execution::*;
 #[allow(unused_imports)]
 pub(crate) use injection_check::*;
 #[allow(unused_imports)]
+pub(crate) use llm_synthesis::*;
+#[allow(unused_imports)]
 pub(crate) use parallel::*;
 #[allow(unused_imports)]
 pub(crate) use step_exec::*;
 #[allow(unused_imports)]
+pub(crate) use step_executor::*;
+#[allow(unused_imports)]
 pub(crate) use tool_executor::*;
+#[allow(unused_imports)]
+pub(crate) use tool_schemas::*;
+#[allow(unused_imports)]
+pub(crate) use tool_use_loop::*;
+#[allow(unused_imports)]
+pub(crate) use tool_use_loop_synthesis::*;
 
 /// Executor for pipelines with guards, verdicts, and audit logging
 #[derive(Clone)]
