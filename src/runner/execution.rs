@@ -1,7 +1,7 @@
 use super::PipelineRunner;
 use super::PipelineError;
 use crate::action::{StepAction, StepError, StepOutput};
-use crate::agent::{Agent, RemoteAgentClient};
+use crate::agent::Agent;
 use crate::audit::{AuditEntry, AuditEvent};
 use crate::context::{StepContext, StepResult};
 use crate::guards::{GuardEngine, GuardPhase};
@@ -153,115 +153,7 @@ impl PipelineRunner {
 
             // ========== SubPipeline ==========
             StepAction::SubPipeline(pipeline) => {
-                // A sub-pipeline is a delegation boundary and MUST inherit the parent's
-                // security context exactly like `delegation::execute_delegation` does.
-                //
-                // This handler previously built an `AgentPolicy::default()` and called
-                // the plain `run()` entry point, which silently reset:
-                //   * `filesystem_policy`  -> fresh `current_dir()` root, dropping
-                //     `WorkspaceIsolation::TempDir`/`Sandboxed` (writes escaped to the real repo)
-                //   * `network_policy`     -> `DenyAll` (fail-closed, but still divergent)
-                //   * `delegation_depth`   -> 0, letting a SubPipeline wrapper bypass
-                //     `max_delegation_depth` / `Guard::MaxDelegationDepth` entirely
-                //   * `budget`             -> fresh, resetting cost/call accounting
-                //
-                // Everything below derives from the parent context instead.
-                let child_depth = ctx.delegation_depth + 1;
-
-                // Enforce the parent's delegation depth cap on this boundary, mirroring
-                // the depth check `execute_delegation` performs before recursing.
-                if child_depth > ctx.agent_policy.max_delegation_depth {
-                    return Err(StepError::ActionFailed {
-                        reason: format!(
-                            "SubPipeline delegation depth {} exceeds max {}",
-                            child_depth, ctx.agent_policy.max_delegation_depth
-                        ),
-                    });
-                }
-
-                // Create a child runner with shared registries
-                let mut child_runner = PipelineRunner {
-                    audit_log: crate::audit::AuditLog::new(),
-                    tool_registry: self.tool_registry.clone(),
-                    agent_registry: self.agent_registry.clone(),
-                    skill_registry: self.skill_registry.clone(),
-                    llm_client: self.llm_client.clone(),
-                    output_sink: self.output_sink.clone(),
-                    conversation_registry: self.conversation_registry.clone(),
-                    context_store: self.context_store.clone(),
-                    plugin_registry: self.plugin_registry.clone(),
-                    auto_title_llm: self.auto_title_llm.clone(),
-                    memory: self.memory.clone(),
-                };
-
-                // Derive the sub-agent's policy from the PARENT's actual policy so that
-                // cost/step/runtime caps, allowed agents and skills all carry over.
-                let mut policy = ctx.agent_policy.clone();
-
-                // Tool scope: the already-narrowed effective scope from the parent context
-                // (agent ∩ pipeline ∩ step ∩ skill), so inner steps intersect against the
-                // narrowed set rather than the agent-level default.
-                policy.allowed_tools = ctx.allowed_tools.clone();
-
-                // Filesystem: inherit the parent's *resolved* policy. `ctx.filesystem_policy`
-                // already has `workspace_root` rewritten to the active TempDir/Sandboxed root
-                // by `run_internal`, so isolation is set to `None` here to keep the child
-                // pinned to that same sandbox instead of minting a second, unrelated temp dir
-                // (which would hide the parent's files from the sub-pipeline).
-                policy.filesystem_policy = ctx.filesystem_policy.clone();
-                policy.filesystem_policy.workspace_isolation =
-                    crate::agent::WorkspaceIsolation::None;
-
-                // Network: inherit the parent's actual policy, not a fresh DenyAll.
-                policy.network_policy = ctx.network_policy.clone();
-
-                let agent = crate::agent::Agent {
-                    name: ctx.agent_name.clone(),
-                    description: "Child pipeline agent".into(),
-                    pipeline: pipeline.as_ref().clone(),
-                    tools: ctx.allowed_tools.clone(),
-                    skills: SkillSet {
-                        skills: ctx.active_skills.clone(),
-                    },
-                    policy,
-                    scorers: Vec::new(),
-                };
-
-                // Run the child pipeline through the depth/budget-aware entry point —
-                // the same one `execute_delegation` uses.
-                let result = child_runner
-                    .run_with_delegation_depth_and_budget(
-                        pipeline,
-                        &agent,
-                        ctx.input.clone(),
-                        child_depth,
-                        ctx.agent_name.clone(),
-                        Some(ctx.budget.clone()),
-                    )
-                    .await
-                    .map_err(|e| StepError::ActionFailed {
-                        reason: format!("SubPipeline failed: {}", e),
-                    })?;
-
-                // Propagate the child's budget back so cost/call accounting is continuous.
-                ctx.budget = result.budget.clone();
-
-                // Merge the child's audit entries into the parent log so the sub-pipeline
-                // is not invisible to auditing.
-                for entry in result.audit_log.entries() {
-                    self.audit_log.append(entry.clone());
-                }
-
-                // Get the LAST step's output deterministically by finding the last step in
-                // the pipeline and looking it up by name (not by HashMap iteration order).
-                let output = pipeline
-                    .steps
-                    .last()
-                    .and_then(|last_step| result.step_results.get(&last_step.name))
-                    .map(|sr| sr.output.clone())
-                    .unwrap_or_else(|| StepOutput::new(String::new()));
-
-                Ok(output)
+                self.handle_subpipeline(pipeline, ctx).await
             }
 
             // ========== LoopUntil ==========
@@ -271,51 +163,8 @@ impl PipelineRunner {
                 max_iterations,
                 on_iteration_failure,
             } => {
-                for iteration in 0u32..*max_iterations {
-                    // Execute the body
-                    let body_result = self.execute_action(body, ctx).await;
-
-                    match body_result {
-                        Ok(output) => {
-                            ctx.output = Some(output);
-                        }
-                        Err(e) => {
-                            match on_iteration_failure {
-                                crate::action::IterationFailureMode::Retry => {
-                                    // Continue to next iteration
-                                    continue;
-                                }
-                                crate::action::IterationFailureMode::Skip => {
-                                    // Skip to next iteration without error
-                                    continue;
-                                }
-                                crate::action::IterationFailureMode::Abort => {
-                                    // Fail the entire loop
-                                    return Err(e);
-                                }
-                            }
-                        }
-                    }
-
-                    // Check the condition guard
-                    match GuardEngine::evaluate(condition, ctx).await {
-                        Ok(()) => {
-                            // Condition passed, exit the loop
-                            break;
-                        }
-                        Err(_) => {
-                            // Condition failed, continue looping
-                            if iteration + 1 >= *max_iterations {
-                                break; // Max iterations reached — exit loop normally
-                            }
-                        }
-                    }
-                }
-
-                Ok(ctx
-                    .output
-                    .clone()
-                    .unwrap_or_else(|| StepOutput::new(String::new())))
+                self.handle_loop_until(body, condition, max_iterations, on_iteration_failure, ctx)
+                    .await
             }
 
             // ========== UseSkill ==========
@@ -324,98 +173,7 @@ impl PipelineRunner {
                 input: _input,
                 mode,
             } => {
-                let skill_def =
-                    self.skill_registry
-                        .get(skill)
-                        .ok_or_else(|| StepError::ActionFailed {
-                            reason: format!("Skill '{}' not found", skill),
-                        })?;
-
-                // Check required guards
-                for guard in &skill_def.required_guards {
-                    GuardEngine::evaluate(guard, ctx).await.map_err(
-                        |e: crate::guards::GuardError| StepError::ActionFailed {
-                            reason: format!("Skill required guard failed: {e}"),
-                        },
-                    )?;
-                }
-
-                // FIX #1: Narrow allowed_tools by skill's allowed_tools
-                // Effective scope: agent ∩ pipeline ∩ step ∩ skill
-                let saved_tools = ctx.allowed_tools.clone();
-                ctx.allowed_tools = crate::toolset::ToolSet::Intersection(
-                    Box::new(ctx.allowed_tools.clone()),
-                    Box::new(skill_def.allowed_tools.clone()),
-                );
-
-                let result = match mode {
-                    crate::action::SkillMode::PromptOnly => {
-                        // If no LLM client, return the instructions directly
-                        if self.llm_client.is_none() {
-                            Ok(StepOutput::new(skill_def.instructions.clone()))
-                        } else {
-                            // Inject skill instructions and few-shot examples into the system prompt
-                            let system_prompt = self.build_skill_system_prompt(
-                                &skill_def.instructions,
-                                &skill_def.examples,
-                            );
-
-                            let llm_call = StepAction::LlmCall {
-                                system: system_prompt,
-                                user: String::new(),
-                                model: None,
-                                conversation_id: None,
-                                append_to_history: false,
-                            };
-
-                            self.execute_action(&llm_call, ctx).await
-                        }
-                    }
-
-                    crate::action::SkillMode::Pipeline | crate::action::SkillMode::Auto => {
-                        if let Some(pipeline) = &skill_def.pipeline {
-                            // Run as a sub-pipeline
-                            let sub_action = StepAction::SubPipeline(Box::new(pipeline.clone()));
-                            self.execute_action(&sub_action, ctx).await
-                        } else {
-                            // Fall back to PromptOnly if no pipeline available (for both Pipeline and Auto modes)
-                            // If no LLM client, return the instructions directly (same as PromptOnly without LLM)
-                            if self.llm_client.is_none() {
-                                Ok(StepOutput::new(skill_def.instructions.clone()))
-                            } else {
-                                // Inject skill instructions and few-shot examples
-                                let system_prompt = self.build_skill_system_prompt(
-                                    &skill_def.instructions,
-                                    &skill_def.examples,
-                                );
-
-                                let llm_call = StepAction::LlmCall {
-                                    system: system_prompt,
-                                    user: String::new(),
-                                    model: None,
-                                    conversation_id: None,
-                                    append_to_history: false,
-                                };
-                                self.execute_action(&llm_call, ctx).await
-                            }
-                        }
-                    }
-                };
-
-                // Restore original tool scope after skill execution
-                ctx.allowed_tools = saved_tools;
-
-                // FEATURE: Run skill evaluation if present and step succeeded
-                let mut final_result = result?;
-                if let Some(skill_eval) = &skill_def.eval {
-                    let eval_output =
-                        self.run_skill_eval(skill_eval, &final_result, &skill_def.name)
-                            .await;
-                    // Attach eval result to output metadata (informational, non-blocking)
-                    final_result.set_eval_result(eval_output);
-                }
-
-                Ok(final_result)
+                self.handle_use_skill(skill, mode, ctx).await
             }
 
             // ========== Branch ==========
@@ -424,20 +182,7 @@ impl PipelineRunner {
                 if_true,
                 if_false,
             } => {
-                let output_str = ctx
-                    .output
-                    .as_ref()
-                    .map(|o| o.raw.clone())
-                    .unwrap_or_default();
-
-                if output_str.contains(condition) {
-                    self.execute_action(if_true, ctx).await
-                } else if let Some(false_action) = if_false {
-                    self.execute_action(false_action, ctx).await
-                } else {
-                    // No false branch, return empty output
-                    Ok(StepOutput::new(String::new()))
-                }
+                self.handle_branch(condition, if_true, if_false, ctx).await
             }
 
             // ========== RemoteAgent ==========
@@ -446,13 +191,7 @@ impl PipelineRunner {
                 agent_name,
                 payload,
             } => {
-                let client = RemoteAgentClient::new();
-                let result = client
-                    .execute(endpoint.as_str(), agent_name.as_str(), payload.clone())
-                    .await
-                    .map_err(|e| StepError::RemoteAgentFailed(e))?;
-
-                Ok(StepOutput::new(result.to_string()))
+                self.handle_remote_agent(endpoint, agent_name, payload, ctx).await
             }
 
             // ========== ToolUseLoop ==========
@@ -470,16 +209,7 @@ impl PipelineRunner {
 
             // ========== UserInput ==========
             StepAction::UserInput { prompt, schema: _ } => {
-                eprintln!("{} [y/N]: ", prompt);
-                let stdin = std::io::stdin();
-                let mut line = String::new();
-                stdin
-                    .read_line(&mut line)
-                    .map_err(|e| StepError::ActionFailed {
-                        reason: format!("Failed to read user input: {}", e),
-                    })?;
-
-                Ok(StepOutput::new(line.trim().to_string()))
+                self.handle_user_input(prompt, ctx).await
             }
 
             // ========== DelegateAgent ==========
@@ -493,19 +223,12 @@ impl PipelineRunner {
 
             // ========== Sleep ==========
             StepAction::Sleep { duration_ms } => {
-                tokio::time::sleep(std::time::Duration::from_millis(*duration_ms)).await;
-                Ok(StepOutput::new(format!("Slept for {}ms", duration_ms)))
+                self.handle_sleep(duration_ms, ctx).await
             }
 
             // ========== SleepUntil ==========
             StepAction::SleepUntil { timestamp } => {
-                let now = chrono::Utc::now();
-                if *timestamp > now {
-                    if let Ok(dur) = (*timestamp - now).to_std() {
-                        tokio::time::sleep(dur).await;
-                    }
-                }
-                Ok(StepOutput::new(format!("Slept until {}", timestamp)))
+                self.handle_sleep_until(timestamp, ctx).await
             }
 
             // ========== ForEach ==========
@@ -515,53 +238,8 @@ impl PipelineRunner {
                 concurrency,
                 collect_results,
             } => {
-                // Get items array from a prior step's output
-                let items: Vec<serde_json::Value> = ctx
-                    .step_results
-                    .get(input_array_key.as_str())
-                    .and_then(|r| r.output.parsed.as_ref())
-                    .and_then(|v| v.as_array())
-                    .cloned()
-                    .unwrap_or_default();
-
-                let mut results: Vec<StepOutput> = Vec::new();
-
-                if *concurrency <= 1 {
-                    // Sequential execution
-                    for item in &items {
-                        let output = StepOutput::with_parsed(item.to_string(), item.clone());
-                        results.push(output);
-                    }
-                } else {
-                    // Bounded parallel execution
-                    use futures::stream::{self, StreamExt};
-                    let outputs: Vec<StepOutput> = stream::iter(items.iter())
-                        .map(|item| async move {
-                            StepOutput::with_parsed(item.to_string(), item.clone())
-                        })
-                        .buffer_unordered(*concurrency)
-                        .collect()
-                        .await;
-                    results = outputs;
-                }
-
-                if *collect_results {
-                    let arr: Vec<serde_json::Value> = results
-                        .iter()
-                        .map(|r| {
-                            r.parsed
-                                .clone()
-                                .unwrap_or(serde_json::Value::String(r.raw.clone()))
-                        })
-                        .collect();
-                    let json = serde_json::Value::Array(arr);
-                    Ok(StepOutput::with_parsed(json.to_string(), json))
-                } else {
-                    Ok(results
-                        .into_iter()
-                        .last()
-                        .unwrap_or_else(|| StepOutput::new(String::new())))
-                }
+                self.handle_for_each(input_array_key, concurrency, collect_results, ctx)
+                    .await
             }
 
             // ========== Suspend ==========
@@ -570,24 +248,7 @@ impl PipelineRunner {
                 resume_schema,
                 timeout_seconds: _timeout,
             } => {
-                // Generate state token
-                let state_token = uuid::Uuid::new_v4().to_string();
-
-                // Save context via ContextStore if available
-                if let Some(store) = &self.context_store {
-                    let _ = store.save(ctx).await;
-                }
-
-                // Return suspended state in output
-                Ok(StepOutput::new(format!(
-                    "Suspended: {}. State token: {}. Resume schema: {}",
-                    reason,
-                    state_token,
-                    resume_schema
-                        .as_ref()
-                        .map(|s| s.to_string())
-                        .unwrap_or_else(|| "none".to_string())
-                )))
+                self.handle_suspend(reason, resume_schema, ctx).await
             }
 
             // All other variants (Custom cannot be handled here due to async_recursion

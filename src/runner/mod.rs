@@ -8,6 +8,8 @@ mod llm_synthesis;
 mod parallel;
 mod step_exec;
 mod step_executor;
+mod step_executor_misc;
+mod use_skill;
 mod tool_executor;
 mod tool_schemas;
 mod tool_use_loop;
@@ -35,6 +37,10 @@ pub(crate) use parallel::*;
 pub(crate) use step_exec::*;
 #[allow(unused_imports)]
 pub(crate) use step_executor::*;
+#[allow(unused_imports)]
+pub(crate) use step_executor_misc::*;
+#[allow(unused_imports)]
+pub(crate) use use_skill::*;
 #[allow(unused_imports)]
 pub(crate) use tool_executor::*;
 #[allow(unused_imports)]

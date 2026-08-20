@@ -1,83 +1,215 @@
-// Skill-related step execution: methods used exclusively by UseSkill action.
-// Extracted from execution.rs (Task 2).
+// Step action handlers: SubPipeline, LoopUntil, Branch, UseSkill.
+// UseSkill handler and helpers extracted to use_skill.rs for modularity.
 
-use crate::action::StepOutput;
 use crate::runner::PipelineRunner;
 
 impl PipelineRunner {
-    /// Build a system prompt by combining skill instructions with examples.
-    ///
-    /// If examples are provided, formats them as "Example N" sections with input/output/description.
-    /// Otherwise returns instructions as-is.
-    pub(crate) fn build_skill_system_prompt(
-        &self,
-        instructions: &str,
-        examples: &[crate::skills::SkillExample],
-    ) -> String {
-        if examples.is_empty() {
-            return instructions.to_string();
+    /// Handle SubPipeline action.
+    /// 
+    /// A sub-pipeline is a delegation boundary and MUST inherit the parent's security context
+    /// exactly like `delegation::execute_delegation` does. This handler implements the
+    /// C2/C3 security fixes: inherits parent's filesystem_policy/network_policy/delegation_depth
+    /// instead of resetting to fresh defaults (which previously allowed a sandboxed sub-pipeline
+    /// to write files to the real repo and bypass max_delegation_depth).
+    pub(crate) async fn handle_subpipeline(
+        &mut self,
+        pipeline: &std::boxed::Box<crate::pipeline::Pipeline>,
+        ctx: &mut crate::context::StepContext,
+    ) -> Result<crate::action::StepOutput, crate::action::StepError> {
+        use crate::skills::skill::SkillSet;
+
+        // A sub-pipeline is a delegation boundary and MUST inherit the parent's
+        // security context exactly like `delegation::execute_delegation` does.
+        //
+        // This handler previously built an `AgentPolicy::default()` and called
+        // the plain `run()` entry point, which silently reset:
+        //   * `filesystem_policy`  -> fresh `current_dir()` root, dropping
+        //     `WorkspaceIsolation::TempDir`/`Sandboxed` (writes escaped to the real repo)
+        //   * `network_policy`     -> `DenyAll` (fail-closed, but still divergent)
+        //   * `delegation_depth`   -> 0, letting a SubPipeline wrapper bypass
+        //     `max_delegation_depth` / `Guard::MaxDelegationDepth` entirely
+        //   * `budget`             -> fresh, resetting cost/call accounting
+        //
+        // Everything below derives from the parent context instead.
+        let child_depth = ctx.delegation_depth + 1;
+
+        // Enforce the parent's delegation depth cap on this boundary, mirroring
+        // the depth check `execute_delegation` performs before recursing.
+        if child_depth > ctx.agent_policy.max_delegation_depth {
+            return Err(crate::action::StepError::ActionFailed {
+                reason: format!(
+                    "SubPipeline delegation depth {} exceeds max {}",
+                    child_depth, ctx.agent_policy.max_delegation_depth
+                ),
+            });
         }
 
-        let mut prompt = instructions.to_string();
-        prompt.push_str("\n\n");
+        // Create a child runner with shared registries
+        let mut child_runner = crate::runner::PipelineRunner {
+            audit_log: crate::audit::AuditLog::new(),
+            tool_registry: self.tool_registry.clone(),
+            agent_registry: self.agent_registry.clone(),
+            skill_registry: self.skill_registry.clone(),
+            llm_client: self.llm_client.clone(),
+            output_sink: self.output_sink.clone(),
+            conversation_registry: self.conversation_registry.clone(),
+            context_store: self.context_store.clone(),
+            plugin_registry: self.plugin_registry.clone(),
+            auto_title_llm: self.auto_title_llm.clone(),
+            memory: self.memory.clone(),
+        };
 
-        for (idx, example) in examples.iter().enumerate() {
-            let example_num = idx + 1;
-            prompt.push_str(&format!("Example {}:\n", example_num));
-            prompt.push_str(&format!("Input: {}\n", example.input));
-            prompt.push_str(&format!(
-                "Expected Output: {}\n",
-                example.expected_output
-            ));
-            prompt.push_str(&format!("Description: {}\n", example.description));
-            if idx < examples.len() - 1 {
-                prompt.push_str("\n");
-            }
+        // Derive the sub-agent's policy from the PARENT's actual policy so that
+        // cost/step/runtime caps, allowed agents and skills all carry over.
+        let mut policy = ctx.agent_policy.clone();
+
+        // Tool scope: the already-narrowed effective scope from the parent context
+        // (agent ∩ pipeline ∩ step ∩ skill), so inner steps intersect against the
+        // narrowed set rather than the agent-level default.
+        policy.allowed_tools = ctx.allowed_tools.clone();
+
+        // Filesystem: inherit the parent's *resolved* policy. `ctx.filesystem_policy`
+        // already has `workspace_root` rewritten to the active TempDir/Sandboxed root
+        // by `run_internal`, so isolation is set to `None` here to keep the child
+        // pinned to that same sandbox instead of minting a second, unrelated temp dir
+        // (which would hide the parent's files from the sub-pipeline).
+        policy.filesystem_policy = ctx.filesystem_policy.clone();
+        policy.filesystem_policy.workspace_isolation =
+            crate::agent::WorkspaceIsolation::None;
+
+        // Network: inherit the parent's actual policy, not a fresh DenyAll.
+        policy.network_policy = ctx.network_policy.clone();
+
+        let agent = crate::agent::Agent {
+            name: ctx.agent_name.clone(),
+            description: "Child pipeline agent".into(),
+            pipeline: pipeline.as_ref().clone(),
+            tools: ctx.allowed_tools.clone(),
+            skills: SkillSet {
+                skills: ctx.active_skills.clone(),
+            },
+            policy,
+            scorers: Vec::new(),
+        };
+
+        // Run the child pipeline through the depth/budget-aware entry point —
+        // the same one `execute_delegation` uses.
+        let result = child_runner
+            .run_with_delegation_depth_and_budget(
+                pipeline,
+                &agent,
+                ctx.input.clone(),
+                child_depth,
+                ctx.agent_name.clone(),
+                Some(ctx.budget.clone()),
+            )
+            .await
+            .map_err(|e| crate::action::StepError::ActionFailed {
+                reason: format!("SubPipeline failed: {}", e),
+            })?;
+
+        // Propagate the child's budget back so cost/call accounting is continuous.
+        ctx.budget = result.budget.clone();
+
+        // Merge the child's audit entries into the parent log so the sub-pipeline
+        // is not invisible to auditing.
+        for entry in result.audit_log.entries() {
+            self.audit_log.append(entry.clone());
         }
 
-        prompt
+        // Get the LAST step's output deterministically by finding the last step in
+        // the pipeline and looking it up by name (not by HashMap iteration order).
+        let output = pipeline
+            .steps
+            .last()
+            .and_then(|last_step| result.step_results.get(&last_step.name))
+            .map(|sr| sr.output.clone())
+            .unwrap_or_else(|| crate::action::StepOutput::new(String::new()));
+
+        Ok(output)
     }
 
-    /// Run skill evaluation and return a formatted eval result string.
-    ///
-    /// Evaluation is informational (non-blocking) — results are attached to output
-    /// for audit/visibility purposes but do not gate step success.
-    pub(crate) async fn run_skill_eval(
-        &self,
-        skill_eval: &crate::skills::SkillEval,
-        output: &StepOutput,
-        skill_name: &str,
-    ) -> String {
-        // Simple evaluation: check if all criteria are mentioned in the output
-        // More sophisticated evaluation (with scoring, LLM checks, etc.) can be added later
-        let output_text = &output.raw;
-        let mut met_criteria = 0;
+    /// Handle LoopUntil action.
+    /// Executes a body action repeatedly until a condition guard passes or max_iterations reached.
+    pub(crate) async fn handle_loop_until(
+        &mut self,
+        body: &std::boxed::Box<crate::action::StepAction>,
+        condition: &crate::guards::Guard,
+        max_iterations: &u32,
+        on_iteration_failure: &crate::action::IterationFailureMode,
+        ctx: &mut crate::context::StepContext,
+    ) -> Result<crate::action::StepOutput, crate::action::StepError> {
+        use crate::guards::GuardEngine;
 
-        for criterion in &skill_eval.criteria {
-            if output_text.contains(criterion) {
-                met_criteria += 1;
+        for iteration in 0u32..*max_iterations {
+            // Execute the body
+            let body_result = self.execute_action(body, ctx).await;
+
+            match body_result {
+                Ok(output) => {
+                    ctx.output = Some(output);
+                }
+                Err(e) => {
+                    match on_iteration_failure {
+                        crate::action::IterationFailureMode::Retry => {
+                            // Continue to next iteration
+                            continue;
+                        }
+                        crate::action::IterationFailureMode::Skip => {
+                            // Skip to next iteration without error
+                            continue;
+                        }
+                        crate::action::IterationFailureMode::Abort => {
+                            // Fail the entire loop
+                            return Err(e);
+                        }
+                    }
+                }
+            }
+
+            // Check the condition guard
+            match GuardEngine::evaluate(condition, ctx).await {
+                Ok(()) => {
+                    // Condition passed, exit the loop
+                    break;
+                }
+                Err(_) => {
+                    // Condition failed, continue looping
+                    if iteration + 1 >= *max_iterations {
+                        break; // Max iterations reached — exit loop normally
+                    }
+                }
             }
         }
 
-        let criteria_count = skill_eval.criteria.len();
-        let score = if criteria_count == 0 {
-            1.0
-        } else {
-            met_criteria as f64 / criteria_count as f64
-        };
+        Ok(ctx
+            .output
+            .clone()
+            .unwrap_or_else(|| crate::action::StepOutput::new(String::new())))
+    }
 
-        let threshold_check = if score < skill_eval.min_score {
-            format!(" [BELOW threshold]")
-        } else {
-            String::new()
-        };
+    /// Handle Branch action.
+    /// Dispatches to if_true or if_false branch based on condition string presence in output.
+    pub(crate) async fn handle_branch(
+        &mut self,
+        condition: &str,
+        if_true: &crate::action::StepAction,
+        if_false: &Option<Box<crate::action::StepAction>>,
+        ctx: &mut crate::context::StepContext,
+    ) -> Result<crate::action::StepOutput, crate::action::StepError> {
+        let output_str = ctx
+            .output
+            .as_ref()
+            .map(|o| o.raw.clone())
+            .unwrap_or_default();
 
-        format!(
-            "SkillEval[{}]: {}/{} criteria met (score: {:.2}, min: {:.2}){}",
-            skill_name, met_criteria, criteria_count, score, skill_eval.min_score, threshold_check
-        )
+        if output_str.contains(condition) {
+            self.execute_action(if_true, ctx).await
+        } else if let Some(false_action) = if_false {
+            self.execute_action(false_action, ctx).await
+        } else {
+            // No false branch, return empty output
+            Ok(crate::action::StepOutput::new(String::new()))
+        }
     }
 }
-
-// NOTE: Task 3 will add further skill-related methods (UseSkill handler logic) to this file.
-// Keep pub(crate) on all methods.
