@@ -261,13 +261,34 @@ pub struct OpenAiCompatibleProvider {
 }
 
 impl OpenAiCompatibleProvider {
-    /// Create a new OpenAI-compatible provider.
+    /// Create a new OpenAI-compatible provider with default 120-second timeout.
     pub fn new(base_url: String, api_key: String, default_model: String) -> Self {
         Self {
             base_url,
             api_key,
             default_model,
-            client: Client::new(),
+            client: Client::builder()
+                .timeout(std::time::Duration::from_secs(120))
+                .build()
+                .unwrap_or_else(|_| Client::new()),
+        }
+    }
+
+    /// Create a new OpenAI-compatible provider with custom timeout (in seconds).
+    pub fn with_timeout(
+        base_url: String,
+        api_key: String,
+        default_model: String,
+        timeout_secs: u64,
+    ) -> Self {
+        Self {
+            base_url,
+            api_key,
+            default_model,
+            client: Client::builder()
+                .timeout(std::time::Duration::from_secs(timeout_secs))
+                .build()
+                .unwrap_or_else(|_| Client::new()),
         }
     }
 }
@@ -443,115 +464,172 @@ impl LlmProvider for OpenAiCompatibleProvider {
         let base = self.base_url.trim_end_matches('/').trim_end_matches("/v1");
         let url = format!("{}/v1/chat/completions", base);
 
-        // Make the HTTP request
-        let response = self
-            .client
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", self.api_key))
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| {
-                if e.is_timeout() {
-                    LlmError::NetworkError(e.to_string())
-                } else if e.is_connect() {
-                    LlmError::NetworkError(e.to_string())
-                } else {
-                    LlmError::RequestFailed(e.to_string())
-                }
-            })?;
-
-        // Check status code — always read the body for error context
-        let status = response.status();
-        if !status.is_success() {
-            let body = response
-                .text()
-                .await
-                .unwrap_or_else(|_| String::from("(could not read response body)"));
-            if status == reqwest::StatusCode::UNAUTHORIZED
-                || status == reqwest::StatusCode::FORBIDDEN
-            {
-                return Err(LlmError::AuthFailed);
+        // Retry loop with exponential backoff: 3 total attempts, retries on 429/5xx/transport errors
+        let mut last_err: Option<LlmError> = None;
+        for attempt in 0u32..3 {
+            // Apply exponential backoff on retry (but not on first attempt)
+            if attempt > 0 {
+                let backoff_secs = 2u64.pow(attempt - 1);
+                tokio::time::sleep(std::time::Duration::from_secs(backoff_secs)).await;
             }
-            if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+
+            // Make the HTTP request
+            let response_result = self
+                .client
+                .post(&url)
+                .header("Authorization", format!("Bearer {}", self.api_key))
+                .json(&body)
+                .send()
+                .await;
+
+            let response = match response_result {
+                Ok(r) => r,
+                Err(e) => {
+                    // Transport error (timeout, connection refused, DNS failure, etc.) — retry
+                    last_err = Some(if e.is_timeout() {
+                        LlmError::NetworkError(e.to_string())
+                    } else if e.is_connect() {
+                        LlmError::NetworkError(e.to_string())
+                    } else {
+                        LlmError::RequestFailed(e.to_string())
+                    });
+                    continue;
+                }
+            };
+
+            // Check status code — always read the body for error context
+            let status = response.status();
+            if !status.is_success() {
+                let resp_body = response
+                    .text()
+                    .await
+                    .unwrap_or_else(|_| String::from("(could not read response body)"));
+                
+                // Non-retryable 4xx (auth, forbidden, not-found, bad-request) — fail immediately
+                if status == reqwest::StatusCode::UNAUTHORIZED
+                    || status == reqwest::StatusCode::FORBIDDEN
+                {
+                    return Err(LlmError::AuthFailed);
+                }
+                if status.is_client_error() && status != reqwest::StatusCode::TOO_MANY_REQUESTS {
+                    // Other 4xx errors (400, 404, etc.) — non-retryable
+                    return Err(LlmError::RequestFailed(format!(
+                        "HTTP {status} from {url}: {resp_body}"
+                    )));
+                }
+
+                // Retryable errors: 429 (rate limit) or 5xx (server error) — save and retry
+                if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+                    last_err = Some(LlmError::RateLimited);
+                    continue;
+                }
+                if status.is_server_error() {
+                    last_err = Some(LlmError::RequestFailed(format!(
+                        "HTTP {status} from {url}: {resp_body}"
+                    )));
+                    continue;
+                }
+
+                // Unexpected: success range but !is_success (shouldn't happen)
                 return Err(LlmError::RequestFailed(format!(
-                    "HTTP 429 from {url}: {body}"
+                    "HTTP {status} from {url}: {resp_body}"
                 )));
             }
-            return Err(LlmError::RequestFailed(format!(
-                "HTTP {status} from {url}: {body}"
-            )));
+
+            // Success — proceed to response parsing
+            // Re-obtain the response text for deserialization
+            let raw_body = match response.text().await {
+                Ok(b) => b,
+                Err(e) => {
+                    last_err = Some(LlmError::InvalidResponse(e.to_string()));
+                    continue;
+                }
+            };
+
+            // Trace: log first 300 chars of raw response to see if tool_calls are present
+            let preview_end = raw_body
+                .char_indices()
+                .nth(300)
+                .map(|(i, _)| i)
+                .unwrap_or(raw_body.len());
+            let preview = &raw_body[..preview_end];
+            let has_tool_calls = raw_body.contains("\"tool_calls\"");
+            trace!(status = %status, has_tool_calls = has_tool_calls, body_preview = %preview, "LLM raw response");
+
+            // Deserialize the response
+            let api_response: OpenAiResponse = match serde_json::from_str(&raw_body) {
+                Ok(r) => r,
+                Err(e) => {
+                    last_err = Some(LlmError::InvalidResponse(format!(
+                        "{}: body={}",
+                        e,
+                        &raw_body[..raw_body.len().min(500)]
+                    )));
+                    continue;
+                }
+            };
+
+            // Extract first choice
+            let first_choice = match api_response
+                .choices
+                .into_iter()
+                .next()
+            {
+                Some(c) => c,
+                None => {
+                    last_err = Some(LlmError::InvalidResponse("no choices in response".into()));
+                    continue;
+                }
+            };
+
+            // Extract content (may be null/empty when tool_calls are present)
+            let content = first_choice.message.content.unwrap_or_default();
+
+            // Parse tool_calls if present
+            let tool_calls = first_choice
+                .message
+                .tool_calls
+                .map(|calls| {
+                    calls
+                        .into_iter()
+                        .filter_map(|tc| {
+                            // Parse the arguments JSON string
+                            let arguments =
+                                serde_json::from_str::<serde_json::Value>(&tc.function.arguments)
+                                    .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+                            Some(ToolCall {
+                                name: tc.function.name,
+                                arguments,
+                                id: tc.id.clone(),
+                            })
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .filter(|v: &Vec<ToolCall>| !v.is_empty());
+
+            // Extract usage if available
+            let usage = api_response.usage.map(|u| LlmUsage {
+                prompt_tokens: u.prompt_tokens,
+                completion_tokens: u.completion_tokens,
+            });
+
+            // Success! Return the response
+            return Ok(LlmResponse {
+                content,
+                model: api_response.model,
+                usage,
+                tool_calls,
+            });
         }
 
-        // Read raw body so we can deserialize
-        let raw_body = response
-            .text()
-            .await
-            .map_err(|e| LlmError::InvalidResponse(e.to_string()))?;
-
-        // Trace: log first 300 chars of raw response to see if tool_calls are present
-        let preview_end = raw_body
-            .char_indices()
-            .nth(300)
-            .map(|(i, _)| i)
-            .unwrap_or(raw_body.len());
-        let preview = &raw_body[..preview_end];
-        let has_tool_calls = raw_body.contains("\"tool_calls\"");
-        trace!(status = %status, has_tool_calls = has_tool_calls, body_preview = %preview, "LLM raw response");
-
-        // Deserialize the response
-        let api_response: OpenAiResponse = serde_json::from_str(&raw_body).map_err(|e| {
-            LlmError::InvalidResponse(format!(
-                "{}: body={}",
-                e,
-                &raw_body[..raw_body.len().min(500)]
+        // All retry attempts exhausted
+        if let Some(err) = last_err {
+            Err(err)
+        } else {
+            Err(LlmError::RequestFailed(
+                "max retries exceeded with no recorded error".into(),
             ))
-        })?;
-
-        // Extract first choice
-        let first_choice = api_response
-            .choices
-            .into_iter()
-            .next()
-            .ok_or_else(|| LlmError::InvalidResponse("no choices in response".into()))?;
-
-        // Extract content (may be null/empty when tool_calls are present)
-        let content = first_choice.message.content.unwrap_or_default();
-
-        // Parse tool_calls if present
-        let tool_calls = first_choice
-            .message
-            .tool_calls
-            .map(|calls| {
-                calls
-                    .into_iter()
-                    .filter_map(|tc| {
-                        // Parse the arguments JSON string
-                        let arguments =
-                            serde_json::from_str::<serde_json::Value>(&tc.function.arguments)
-                                .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
-                        Some(ToolCall {
-                            name: tc.function.name,
-                            arguments,
-                            id: tc.id.clone(),
-                        })
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .filter(|v: &Vec<ToolCall>| !v.is_empty());
-
-        // Extract usage if available
-        let usage = api_response.usage.map(|u| LlmUsage {
-            prompt_tokens: u.prompt_tokens,
-            completion_tokens: u.completion_tokens,
-        });
-
-        Ok(LlmResponse {
-            content,
-            model: api_response.model,
-            usage,
-            tool_calls,
-        })
+        }
     }
 
     fn stream(
@@ -744,3 +822,5 @@ impl LlmProvider for OpenAiCompatibleProvider {
         )
     }
 }
+
+
