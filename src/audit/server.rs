@@ -9,16 +9,37 @@ pub struct MonitoringServer {
     agent_registry: Option<std::sync::Arc<crate::registry::AgentRegistry>>,
     conversation_registry:
         Option<std::sync::Arc<std::sync::Mutex<crate::llm::ConversationRegistry>>>,
+    timeout_duration: std::time::Duration,
+    /// Delay for testing timeout behavior (only set via test constructors, never from client input)
+    test_delay: Option<std::time::Duration>,
 }
 
 impl MonitoringServer {
-    /// Create a new monitoring server
+    /// Create a new monitoring server with default 30s timeout
     pub fn new(audit_log: AuditLog, trace: crate::context::PipelineTrace) -> Self {
         Self {
             audit_log: std::sync::Arc::new(std::sync::Mutex::new(audit_log)),
             trace: std::sync::Arc::new(std::sync::Mutex::new(trace)),
             agent_registry: None,
             conversation_registry: None,
+            timeout_duration: std::time::Duration::from_secs(30),
+            test_delay: None,
+        }
+    }
+
+    /// Create a new monitoring server with custom timeout duration
+    pub fn with_timeout(
+        audit_log: AuditLog,
+        trace: crate::context::PipelineTrace,
+        timeout: std::time::Duration,
+    ) -> Self {
+        Self {
+            audit_log: std::sync::Arc::new(std::sync::Mutex::new(audit_log)),
+            trace: std::sync::Arc::new(std::sync::Mutex::new(trace)),
+            agent_registry: None,
+            conversation_registry: None,
+            timeout_duration: timeout,
+            test_delay: None,
         }
     }
 
@@ -40,6 +61,14 @@ impl MonitoringServer {
         self
     }
 
+    /// Test-only constructor helper: create a server with delay injection for timeout testing
+    /// Used only by tests to simulate slow handlers for timeout validation.
+    /// In production code, test_delay remains None and has no performance impact.
+    pub fn with_test_delay(mut self, delay: std::time::Duration) -> Self {
+        self.test_delay = Some(delay);
+        self
+    }
+
     /// Start the monitoring HTTP server on the given address
     pub async fn serve(self, addr: std::net::SocketAddr) -> Result<(), Box<dyn std::error::Error>> {
         use axum::{
@@ -53,6 +82,7 @@ impl MonitoringServer {
         let trace = self.trace.clone();
         let agent_registry = self.agent_registry.clone();
         let conversation_registry = self.conversation_registry.clone();
+        let test_delay = self.test_delay;
 
         // App state structure
         #[derive(Clone)]
@@ -62,6 +92,8 @@ impl MonitoringServer {
             agent_registry: Option<std::sync::Arc<crate::registry::AgentRegistry>>,
             conversation_registry:
                 Option<std::sync::Arc<std::sync::Mutex<crate::llm::ConversationRegistry>>>,
+            /// Test delay for timeout testing (normally None, no runtime cost)
+            test_delay: Option<std::time::Duration>,
         }
 
         let app_state = AppState {
@@ -69,6 +101,7 @@ impl MonitoringServer {
             trace: trace.clone(),
             agent_registry: agent_registry.clone(),
             conversation_registry: conversation_registry.clone(),
+            test_delay,
         };
 
         // Handlers
@@ -114,7 +147,14 @@ impl MonitoringServer {
             AxumHtml(html)
         }
 
-        async fn entries_handler(State(state): State<AppState>) -> Json<Vec<crate::audit::AuditEntry>> {
+        async fn entries_handler(
+            State(state): State<AppState>,
+        ) -> Json<Vec<crate::audit::AuditEntry>> {
+            // Test-only delay injection via AppState (safe, server-side only, not client-controlled)
+            if let Some(delay) = state.test_delay {
+                tokio::time::sleep(delay).await;
+            }
+            
             let log = state.audit_log.lock().ok();
             let entries: Vec<_> = log
                 .map(|l| {
@@ -188,7 +228,8 @@ impl MonitoringServer {
             .route("/api/trace", get(trace_handler))
             .route("/api/agents", get(agents_handler))
             .route("/api/conversations", get(conversations_handler))
-            .with_state(app_state);
+            .with_state(app_state)
+            .layer(tower_http::timeout::TimeoutLayer::new(self.timeout_duration));
 
         let listener = tokio::net::TcpListener::bind(addr).await?;
         axum::serve(listener, app).await?;
