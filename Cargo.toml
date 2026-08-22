@@ -26,6 +26,7 @@ async-recursion = "1"
 uuid = { version = "1", features = ["v4", "serde"] }
 regex = "1"
 tempfile = "3"
+tracing = "0.1"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }

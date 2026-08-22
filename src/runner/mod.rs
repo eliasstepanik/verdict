@@ -1,12 +1,23 @@
 use std::sync::Arc;
 
 mod budget;
+mod dag;
 mod delegation;
 mod execution;
+mod fallback;
 mod injection_check;
+mod llm_synthesis;
 mod parallel;
 mod step_exec;
+mod step_executor;
+mod step_executor_misc;
+mod use_skill;
+mod tool_executor;
+mod tool_schemas;
+mod tool_use_loop;
+mod tool_use_loop_synthesis;
 mod types;
+mod xml_tools;
 
 pub use types::{
     LogEntry, LogLevel, OutputEvent, OutputSink, PipelineError, PipelineResult, SuspendedState,
@@ -16,15 +27,37 @@ pub use types::{
 #[allow(unused_imports)]
 pub(crate) use budget::*;
 #[allow(unused_imports)]
+pub(crate) use dag::*;
+#[allow(unused_imports)]
 pub(crate) use delegation::*;
 #[allow(unused_imports)]
 pub(crate) use execution::*;
 #[allow(unused_imports)]
+pub(crate) use fallback::*;
+#[allow(unused_imports)]
 pub(crate) use injection_check::*;
+#[allow(unused_imports)]
+pub(crate) use llm_synthesis::*;
 #[allow(unused_imports)]
 pub(crate) use parallel::*;
 #[allow(unused_imports)]
 pub(crate) use step_exec::*;
+#[allow(unused_imports)]
+pub(crate) use step_executor::*;
+#[allow(unused_imports)]
+pub(crate) use step_executor_misc::*;
+#[allow(unused_imports)]
+pub(crate) use use_skill::*;
+#[allow(unused_imports)]
+pub(crate) use tool_executor::*;
+#[allow(unused_imports)]
+pub(crate) use tool_schemas::*;
+#[allow(unused_imports)]
+pub(crate) use tool_use_loop::*;
+#[allow(unused_imports)]
+pub(crate) use tool_use_loop_synthesis::*;
+#[allow(unused_imports)]
+pub(crate) use xml_tools::*;
 
 /// Executor for pipelines with guards, verdicts, and audit logging
 #[derive(Clone)]

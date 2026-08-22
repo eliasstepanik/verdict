@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 //! External command-line tools that wrap arbitrary CLI binaries
 
 use async_trait::async_trait;

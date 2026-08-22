@@ -3,6 +3,7 @@ use crate::config::AppConfig;
 use crate::telemetry;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use tracing::{warn, info, error};
 use verdict::prelude::*;
 
 /// Run the interactive chat REPL
@@ -14,8 +15,8 @@ pub async fn run(config: AppConfig, agent_name: String) {
         println!("✓ LLM configured: model={}", config.effective_model());
         run_chat_with_llm(config, agent_name).await;
     } else {
-        eprintln!("⚠  No API key found. Set OPENAI_API_KEY or add config to ~/.config/verdict-app/config.toml");
-        eprintln!("   Falling back to echo mode.");
+        warn!("no API key found; set OPENAI_API_KEY or add config to ~/.config/verdict-app/config.toml");
+        info!("falling back to echo mode");
         run_echo_mode(agent_name).await;
     }
 }
@@ -59,7 +60,7 @@ async fn run_chat_with_llm(config: AppConfig, agent_name: String) {
     {
         Ok(id) => id,
         Err(e) => {
-            eprintln!("Failed to create session: {}", e);
+            error!(error = %e, "failed to create session");
             return;
         }
     };
@@ -439,7 +440,7 @@ async fn run_echo_mode(agent_name: String) {
     {
         Ok(id) => id,
         Err(e) => {
-            eprintln!("Failed to create session: {}", e);
+            error!(error = %e, "failed to create session");
             return;
         }
     };

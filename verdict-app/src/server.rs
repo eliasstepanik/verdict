@@ -46,7 +46,7 @@ pub async fn run(config: AppConfig) {
     let server = AgentServer::new(session_runner, transport);
 
     if let Err(e) = server.run().await {
-        eprintln!("Server error: {}", e);
+        tracing::error!(error = %e, "server error");
         std::process::exit(1);
     }
 }

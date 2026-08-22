@@ -1,5 +1,6 @@
 use serde::Deserialize;
 use std::path::PathBuf;
+use tracing::warn;
 use verdict::prelude::LlmClient;
 
 /// Application configuration, loaded from file and environment
@@ -21,21 +22,12 @@ impl AppConfig {
                 Ok(content) => match toml::from_str::<AppConfig>(&content) {
                     Ok(cfg) => cfg,
                     Err(e) => {
-                        eprintln!(
-                            "⚠  Config file parse error at {}: {}",
-                            config_path.display(),
-                            e
-                        );
-                        eprintln!("   Falling back to defaults.");
+                        warn!(path = %config_path.display(), error = %e, "config file parse error; falling back to defaults");
                         AppConfig::default()
                     }
                 },
                 Err(e) => {
-                    eprintln!(
-                        "⚠  Could not read config file at {}: {}",
-                        config_path.display(),
-                        e
-                    );
+                    warn!(path = %config_path.display(), error = %e, "could not read config file; using defaults");
                     AppConfig::default()
                 }
             }

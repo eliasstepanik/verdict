@@ -440,7 +440,9 @@ impl SessionRunner {
         // Record user message in history
         {
             let mut sessions = self.sessions.lock().await;
-            let session = sessions.get_mut(id).unwrap();
+            let session = sessions
+                .get_mut(id)
+                .ok_or_else(|| SessionError::NotFound(id.to_string()))?;
             session
                 .history
                 .push_user(input.content.text.clone(), turn_index);
@@ -758,6 +760,37 @@ mod tests {
         match result {
             Err(SessionError::Closed) => (),
             _ => panic!("Expected Closed error"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_turn_session_not_found() {
+        let runner = Arc::new(Mutex::new(PipelineRunner::new()));
+        let session_runner = SessionRunner::new(runner);
+
+        let bogus_id = SessionId::new();
+        let input = UserTurn::text("hello");
+        let result = session_runner.turn(&bogus_id, input).await;
+
+        assert!(result.is_err());
+        match result {
+            Err(SessionError::NotFound(_)) => (),
+            e => panic!("Expected NotFound error, got: {:?}", e),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_get_history_session_not_found() {
+        let runner = Arc::new(Mutex::new(PipelineRunner::new()));
+        let session_runner = SessionRunner::new(runner);
+
+        let bogus_id = SessionId::new();
+        let result = session_runner.get_history(&bogus_id).await;
+
+        assert!(result.is_err());
+        match result {
+            Err(SessionError::NotFound(_)) => (),
+            e => panic!("Expected NotFound error, got: {:?}", e),
         }
     }
 }
