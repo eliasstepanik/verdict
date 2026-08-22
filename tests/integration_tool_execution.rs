@@ -441,9 +441,8 @@ async fn test_multiple_sequential_tool_steps_each_record_correct_output() {
     assert_eq!(r.step_results["s3"].output.raw, "third");
 
     // Verify audit log recorded all three in order
-    let completed: Vec<&str> = r
-        .audit_log
-        .entries()
+    let entries = r.audit_log.entries();
+    let completed: Vec<&str> = entries
         .iter()
         .filter_map(|e| match &e.event {
             AuditEvent::ToolCallCompleted { tool, .. } => Some(tool.as_str()),

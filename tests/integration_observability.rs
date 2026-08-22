@@ -826,9 +826,8 @@ async fn test_audit_log_event_ordering_within_step() {
         .await
         .unwrap();
 
-    let slice: Vec<&AuditEntry> = r
-        .audit_log
-        .entries()
+    let entries_vec = r.audit_log.entries();
+    let slice: Vec<&AuditEntry> = entries_vec
         .iter()
         .filter(|e| e.step_name == "s1")
         .collect();
