@@ -53,6 +53,17 @@ impl PipelineRunner {
                 tool_choice: None,
             };
 
+            // Rate-limit check before synthesis LLM call — MUST be before match to surface errors
+            if let Some(rate_limiter_mutex) = &self.rate_limiter {
+                if let Ok(mut rate_limiter) = rate_limiter_mutex.lock() {
+                    if let Err(budget_err) = rate_limiter.check_rate_limit() {
+                        return Err(StepError::ActionFailed {
+                            reason: format!("rate limit: {}", budget_err),
+                        });
+                    }
+                }
+            }
+
             match llm_client.complete(synthesis_req).await {
                 Ok(syn_resp) => {
                     ctx.budget.llm_calls_used += 1;

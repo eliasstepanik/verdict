@@ -122,6 +122,7 @@ impl PipelineRunner {
             plugin_registry: self.plugin_registry.clone(),
             auto_title_llm: self.auto_title_llm.clone(),
             memory: self.memory.clone(),
+            rate_limiter: self.rate_limiter.clone(),
         };
 
         // Run through the depth/budget-aware entry point — the same one

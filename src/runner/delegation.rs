@@ -157,6 +157,7 @@ impl PipelineRunner {
             plugin_registry: self.plugin_registry.clone(),
             auto_title_llm: self.auto_title_llm.clone(),
             memory: self.memory.clone(),
+            rate_limiter: self.rate_limiter.clone(),
         };
 
         // Step 6: Run child agent pipeline with increased delegation depth

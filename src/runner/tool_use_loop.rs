@@ -215,6 +215,17 @@ impl PipelineRunner {
             tool_choice,
         };
 
+        // Rate-limit check before LLM call in tool use loop
+        if let Some(rate_limiter_mutex) = &self.rate_limiter {
+            if let Ok(mut rate_limiter) = rate_limiter_mutex.lock() {
+                if let Err(budget_err) = rate_limiter.check_rate_limit() {
+                    return Err(StepError::ActionFailed {
+                        reason: format!("rate limit: {}", budget_err),
+                    });
+                }
+            }
+        }
+
         let response = llm_client
             .complete(req)
             .await

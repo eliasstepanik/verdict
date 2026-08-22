@@ -74,6 +74,17 @@ impl PipelineRunner {
             });
         }
 
+        // Step 2.25: Rate-limit check — before any resource consumption
+        if let Some(rate_limiter_mutex) = &self.rate_limiter {
+            if let Ok(mut rate_limiter) = rate_limiter_mutex.lock() {
+                if let Err(budget_err) = rate_limiter.check_rate_limit() {
+                    return Err(StepError::ActionFailed {
+                        reason: format!("rate limit: {}", budget_err),
+                    });
+                }
+            }
+        }
+
         // Step 2.5: Track this tool as being used
         ctx.tools_used.push(tool_name.to_string());
 
