@@ -389,6 +389,7 @@ impl PipelineRunner {
 
             ctx.step_name = step.name.clone();
             ctx.input = input.clone();
+            ctx.injection_protection = step.injection_protection.clone();
 
             // Compute effective tool scope for this step.
             // Shared with the parallel path via `step_exec::step_tool_scope`.

@@ -11,6 +11,7 @@ use tracing::warn;
 use tokio::process::{Child, Command};
 
 use super::server::McpServerConfig;
+use crate::injection::sanitize_for_exposure;
 
 /// Error type for MCP operations
 #[derive(Error, Debug, Clone)]
@@ -136,10 +137,11 @@ impl McpClient {
             match cmd.spawn() {
                 Ok(child) => Some(child),
                 Err(e) => {
-                    return Err(McpError::Io(format!(
+                    let msg = format!(
                         "Failed to spawn '{}': {}",
                         command, e
-                    )))
+                    );
+                    return Err(McpError::Io(sanitize_for_exposure(&msg)))
                 }
             }
         } else {
@@ -188,10 +190,10 @@ impl McpClient {
                     .json(&init_request)
                     .send()
                     .await
-                    .map_err(|e| McpError::Io(e.to_string()))?
+                    .map_err(|e| McpError::Io(sanitize_for_exposure(&e.to_string())))?
                     .json()
                     .await
-                    .map_err(|e| McpError::JsonRpc(e.to_string()))?;
+                    .map_err(|e| McpError::JsonRpc(sanitize_for_exposure(&e.to_string())))?;
 
                 // Verify response is valid
                 let _protocol_version = response
@@ -220,11 +222,11 @@ impl McpClient {
                 stdin
                     .write_all(init_request_str.as_bytes())
                     .await
-                    .map_err(|e| McpError::Io(e.to_string()))?;
+                    .map_err(|e| McpError::Io(sanitize_for_exposure(&e.to_string())))?;
                 stdin
                     .flush()
                     .await
-                    .map_err(|e| McpError::Io(e.to_string()))?;
+                    .map_err(|e| McpError::Io(sanitize_for_exposure(&e.to_string())))?;
             }
 
             // Read initialize response from stdout with timeout
@@ -243,10 +245,11 @@ impl McpClient {
                 )
                 .await
                 .map_err(|_| McpError::Timeout("initialize handshake read timed out".into()))?
-                .map_err(|e| McpError::Io(e.to_string()))?;
+                .map_err(|e| McpError::Io(sanitize_for_exposure(&e.to_string())))?;
 
                 init_response = serde_json::from_str(response_line.trim()).map_err(|e| {
-                    McpError::JsonRpc(format!("initialize response parse error: {}", e))
+                    let msg = format!("initialize response parse error: {}", e);
+                    McpError::JsonRpc(sanitize_for_exposure(&msg))
                 })?;
             }
 
@@ -256,7 +259,7 @@ impl McpClient {
                     .get("message")
                     .and_then(|m| m.as_str())
                     .unwrap_or("unknown error");
-                return Err(McpError::JsonRpc(format!("initialize failed: {}", msg)));
+                return Err(McpError::JsonRpc(sanitize_for_exposure(&format!("initialize failed: {}", msg))));
             }
 
             // Send notifications/initialized (MCP spec requirement)
@@ -275,11 +278,11 @@ impl McpClient {
                 stdin
                     .write_all(notif_str.as_bytes())
                     .await
-                    .map_err(|e| McpError::Io(e.to_string()))?;
+                    .map_err(|e| McpError::Io(sanitize_for_exposure(&e.to_string())))?;
                 stdin
                     .flush()
                     .await
-                    .map_err(|e| McpError::Io(e.to_string()))?;
+                    .map_err(|e| McpError::Io(sanitize_for_exposure(&e.to_string())))?;
             }
         }
 
@@ -299,10 +302,10 @@ impl McpClient {
                 .json(&req_body)
                 .send()
                 .await
-                .map_err(|e| McpError::Io(e.to_string()))?
+                .map_err(|e| McpError::Io(sanitize_for_exposure(&e.to_string())))?
                 .json()
                 .await
-                .map_err(|e| McpError::JsonRpc(e.to_string()))?;
+                .map_err(|e| McpError::JsonRpc(sanitize_for_exposure(&e.to_string())))?;
 
             let tools_arr = response
                 .get("result")
@@ -366,11 +369,11 @@ impl McpClient {
         stdin
             .write_all(request_str.as_bytes())
             .await
-            .map_err(|e| McpError::Io(e.to_string()))?;
+            .map_err(|e| McpError::Io(sanitize_for_exposure(&e.to_string())))?;
         stdin
             .flush()
             .await
-            .map_err(|e| McpError::Io(e.to_string()))?;
+            .map_err(|e| McpError::Io(sanitize_for_exposure(&e.to_string())))?;
 
         // Read response using BufReader with timeout
         use tokio::io::{AsyncBufReadExt, BufReader};
@@ -382,11 +385,11 @@ impl McpClient {
         )
         .await
         .map_err(|_| McpError::Timeout("discover tools read timed out".into()))?
-        .map_err(|e| McpError::Io(e.to_string()))?;
+        .map_err(|e| McpError::Io(sanitize_for_exposure(&e.to_string())))?;
 
         // Parse JSON-RPC response
         let response: Value =
-            serde_json::from_str(&response_line).map_err(|e| McpError::JsonRpc(e.to_string()))?;
+            serde_json::from_str(&response_line).map_err(|e| McpError::JsonRpc(sanitize_for_exposure(&e.to_string())))?;
 
         // Validate that the response id matches the request id
         let response_id = response.get("id").and_then(|v| v.as_u64());
@@ -473,17 +476,17 @@ impl McpClient {
                 .json(&req_body)
                 .send()
                 .await
-                .map_err(|e| McpError::Io(e.to_string()))?
+                .map_err(|e| McpError::Io(sanitize_for_exposure(&e.to_string())))?
                 .json()
                 .await
-                .map_err(|e| McpError::JsonRpc(e.to_string()))?;
+                .map_err(|e| McpError::JsonRpc(sanitize_for_exposure(&e.to_string())))?;
 
             if let Some(error) = response.get("error") {
                 let msg = error
                     .get("message")
                     .and_then(|m| m.as_str())
                     .unwrap_or("unknown error");
-                return Err(McpError::JsonRpc(format!("tool call failed: {}", msg)));
+                return Err(McpError::JsonRpc(format!("tool call failed: {}", sanitize_for_exposure(msg))));
             }
 
             let content = response
@@ -527,11 +530,11 @@ impl McpClient {
         stdin
             .write_all(request_str.as_bytes())
             .await
-            .map_err(|e| McpError::Io(e.to_string()))?;
+            .map_err(|e| McpError::Io(sanitize_for_exposure(&e.to_string())))?;
         stdin
             .flush()
             .await
-            .map_err(|e| McpError::Io(e.to_string()))?;
+            .map_err(|e| McpError::Io(sanitize_for_exposure(&e.to_string())))?;
 
         // Read response from child stdout with timeout
         let stdout = process
@@ -547,11 +550,11 @@ impl McpClient {
         )
         .await
         .map_err(|_| McpError::Timeout("tool call read timed out".into()))?
-        .map_err(|e| McpError::Io(e.to_string()))?;
+        .map_err(|e| McpError::Io(sanitize_for_exposure(&e.to_string())))?;
 
         // Parse JSON-RPC response
         let response: Value =
-            serde_json::from_str(&response_line).map_err(|e| McpError::JsonRpc(e.to_string()))?;
+            serde_json::from_str(&response_line).map_err(|e| McpError::JsonRpc(sanitize_for_exposure(&e.to_string())))?;
 
         // Validate that the response id matches the request id
         let response_id = response.get("id").and_then(|v| v.as_u64());
@@ -568,7 +571,7 @@ impl McpClient {
                 .get("message")
                 .and_then(|m| m.as_str())
                 .unwrap_or("unknown error");
-            return Err(McpError::JsonRpc(format!("tool call failed: {}", msg)));
+            return Err(McpError::JsonRpc(format!("tool call failed: {}", sanitize_for_exposure(msg))));
         }
 
         // Extract result.content

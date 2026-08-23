@@ -26,6 +26,7 @@ fn make_test_context() -> StepContext {
         budget: crate::context::BudgetState::default(),
         filesystem_policy: crate::agent::FilesystemPolicy::default(),
         network_policy: crate::agent::NetworkPolicy::DenyAll,
+        injection_protection: crate::pipeline::InjectionProtection::None,
         agent_policy: crate::agent::AgentPolicy::default(),
         llm_client: None,
         conversation_history: crate::llm::provider::MessageHistory::new(),
