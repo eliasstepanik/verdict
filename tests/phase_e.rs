@@ -259,3 +259,181 @@ async fn test_monitoring_server_timeout_layer_allows_fast_requests() {
     // Cleanup
     server_task.abort();
 }
+
+/// Test 1: Server without auth (backward compatibility) - any request succeeds
+#[tokio::test]
+async fn test_monitoring_server_no_auth_allows_all_requests() {
+    use std::time::Duration;
+    use verdict::audit::{AuditLog, MonitoringServer};
+    use verdict::context::PipelineTrace;
+
+    let audit_log = AuditLog::new();
+    let trace = PipelineTrace::new();
+
+    eprintln!("TEST: Creating server WITHOUT auth token (backward compatible)");
+    let server = MonitoringServer::new(audit_log, trace);
+
+    let server_addr: std::net::SocketAddr = "127.0.0.1:19284"
+        .parse()
+        .expect("failed to parse socket addr");
+
+    // Spawn server in background
+    let server_task = tokio::spawn(async move {
+        let _ = server.serve(server_addr).await;
+    });
+
+    // Give server time to bind
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // Client without Authorization header should succeed (no auth requirement)
+    let client = reqwest::Client::new();
+    let result = client
+        .get(&format!("http://{}/api/entries", server_addr))
+        .timeout(Duration::from_secs(5))
+        .send()
+        .await;
+
+    assert!(result.is_ok(), "request failed: {:?}", result);
+    assert_eq!(
+        result.unwrap().status(),
+        200,
+        "expected 200 OK without auth header when auth is disabled"
+    );
+
+    eprintln!("PASS: Server without auth accepts all requests");
+    server_task.abort();
+}
+
+/// Test 2: Server with auth + correct token - request succeeds
+#[tokio::test]
+async fn test_monitoring_server_with_auth_correct_token_succeeds() {
+    use std::time::Duration;
+    use verdict::audit::{AuditLog, MonitoringServer};
+    use verdict::context::PipelineTrace;
+
+    let audit_log = AuditLog::new();
+    let trace = PipelineTrace::new();
+
+    eprintln!("TEST: Creating server WITH auth token (secret123)");
+    let server = MonitoringServer::new(audit_log, trace).with_auth_token("secret123");
+
+    let server_addr: std::net::SocketAddr = "127.0.0.1:19285"
+        .parse()
+        .expect("failed to parse socket addr");
+
+    // Spawn server in background
+    let server_task = tokio::spawn(async move {
+        let _ = server.serve(server_addr).await;
+    });
+
+    // Give server time to bind
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // Client WITH correct Authorization header should succeed
+    let client = reqwest::Client::new();
+    let result = client
+        .get(&format!("http://{}/api/entries", server_addr))
+        .header("Authorization", "Bearer secret123")
+        .timeout(Duration::from_secs(5))
+        .send()
+        .await;
+
+    assert!(result.is_ok(), "request failed: {:?}", result);
+    assert_eq!(
+        result.unwrap().status(),
+        200,
+        "expected 200 OK with correct token"
+    );
+
+    eprintln!("PASS: Server with auth accepts correct token");
+    server_task.abort();
+}
+
+/// Test 3: Server with auth + missing header - request returns 401
+#[tokio::test]
+async fn test_monitoring_server_with_auth_missing_header_returns_401() {
+    use std::time::Duration;
+    use verdict::audit::{AuditLog, MonitoringServer};
+    use verdict::context::PipelineTrace;
+
+    let audit_log = AuditLog::new();
+    let trace = PipelineTrace::new();
+
+    eprintln!("TEST: Creating server WITH auth token; testing missing header");
+    let server = MonitoringServer::new(audit_log, trace).with_auth_token("secret123");
+
+    let server_addr: std::net::SocketAddr = "127.0.0.1:19286"
+        .parse()
+        .expect("failed to parse socket addr");
+
+    // Spawn server in background
+    let server_task = tokio::spawn(async move {
+        let _ = server.serve(server_addr).await;
+    });
+
+    // Give server time to bind
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // Client WITHOUT Authorization header should fail
+    let client = reqwest::Client::new();
+    let result = client
+        .get(&format!("http://{}/api/entries", server_addr))
+        .timeout(Duration::from_secs(5))
+        .send()
+        .await;
+
+    assert!(result.is_ok(), "request failed: {:?}", result);
+    assert_eq!(
+        result.unwrap().status(),
+        401,
+        "expected 401 Unauthorized without auth header"
+    );
+
+    eprintln!("PASS: Server with auth rejects missing header with 401");
+    server_task.abort();
+}
+
+/// Test 4: Server with auth + wrong token - request returns 401
+#[tokio::test]
+async fn test_monitoring_server_with_auth_wrong_token_returns_401() {
+    use std::time::Duration;
+    use verdict::audit::{AuditLog, MonitoringServer};
+    use verdict::context::PipelineTrace;
+
+    let audit_log = AuditLog::new();
+    let trace = PipelineTrace::new();
+
+    eprintln!("TEST: Creating server WITH auth token; testing wrong token");
+    let server = MonitoringServer::new(audit_log, trace).with_auth_token("secret123");
+
+    let server_addr: std::net::SocketAddr = "127.0.0.1:19287"
+        .parse()
+        .expect("failed to parse socket addr");
+
+    // Spawn server in background
+    let server_task = tokio::spawn(async move {
+        let _ = server.serve(server_addr).await;
+    });
+
+    // Give server time to bind
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // Client WITH wrong Authorization header should fail
+    let client = reqwest::Client::new();
+    let result = client
+        .get(&format!("http://{}/api/entries", server_addr))
+        .header("Authorization", "Bearer wrongtoken")
+        .timeout(Duration::from_secs(5))
+        .send()
+        .await;
+
+    assert!(result.is_ok(), "request failed: {:?}", result);
+    assert_eq!(
+        result.unwrap().status(),
+        401,
+        "expected 401 Unauthorized with wrong token"
+    );
+
+    eprintln!("PASS: Server with auth rejects wrong token with 401");
+    server_task.abort();
+}
