@@ -249,19 +249,339 @@ async fn test_rate_limit_on_tool_calls() {
 
      // Pipeline MUST fail at step 3 with a rate-limit error. No accept-either-outcome branch.
      // If the rate-limit gate were removed, this assertion would fail, catching the regression.
-     match result {
-         Err(PipelineError::StepFailed {
-             step,
-             error: StepError::ActionFailed { reason },
-         }) => {
-             assert_eq!(step, "tool_call_3", "Expected rate limit failure at step 3");
-             assert!(
-                 reason.contains("rate limit"),
-                 "Expected rate limit error at step 3, got: {}",
-                 reason
-             );
-         }
-         Err(e) => panic!("Expected StepFailed with rate limit error at step 3, got: {:?}", e),
-         Ok(_) => panic!("Expected rate limit error at step 3, but pipeline succeeded — rate limiter gate is missing or broken"),
-     }
- }
+      match result {
+          Err(PipelineError::StepFailed {
+              step,
+              error: StepError::ActionFailed { reason },
+          }) => {
+              assert_eq!(step, "tool_call_3", "Expected rate limit failure at step 3");
+              assert!(
+                  reason.contains("rate limit"),
+                  "Expected rate limit error at step 3, got: {}",
+                  reason
+              );
+          }
+          Err(e) => panic!("Expected StepFailed with rate limit error at step 3, got: {:?}", e),
+          Ok(_) => panic!("Expected rate limit error at step 3, but pipeline succeeded — rate limiter gate is missing or broken"),
+      }
+  }
+
+/// Test 5: LlmCallStreaming gate specifically. 
+/// The gate is at src/runner/llm_synthesis.rs ~133-141, in handle_llm_call_streaming().
+/// Deleting this gate alone (while keeping the LlmCall gate) should cause this test to fail.
+/// CRITICAL: Must exercise the STREAMING path specifically (not plain LlmCall).
+#[tokio::test]
+async fn test_rate_limit_llm_call_streaming_gate() {
+    use crate::common::{ScriptedMockLlmProvider, ScriptedResponse};
+
+    // Pipeline with LlmCallStreaming actions (not LlmCall).
+    let pipeline = Pipeline {
+        name: "streaming_rate_limit_test".into(),
+        steps: vec![
+            AgentStep {
+                name: "streaming_call_1".into(),
+                guard_in: Guard::None,
+                action: StepAction::LlmCallStreaming {
+                    system: "You are a helpful assistant.".into(),
+                    user: "Streaming call 1".into(),
+                    model: None,
+                    conversation_id: None,
+                    append_to_history: false,
+                },
+                guard_out: Guard::None,
+                verdict: Verdict::None,
+                tools: ToolSet::None,
+                injection_protection: InjectionProtection::None,
+                output_schema: None,
+                dependencies: vec![],
+                parallel: false,
+                input_processors: vec![],
+                output_processors: vec![],
+            },
+            AgentStep {
+                name: "streaming_call_2".into(),
+                guard_in: Guard::None,
+                action: StepAction::LlmCallStreaming {
+                    system: "You are a helpful assistant.".into(),
+                    user: "Streaming call 2".into(),
+                    model: None,
+                    conversation_id: None,
+                    append_to_history: false,
+                },
+                guard_out: Guard::None,
+                verdict: Verdict::None,
+                tools: ToolSet::None,
+                injection_protection: InjectionProtection::None,
+                output_schema: None,
+                dependencies: vec![],
+                parallel: false,
+                input_processors: vec![],
+                output_processors: vec![],
+            },
+            AgentStep {
+                name: "streaming_call_3".into(),
+                guard_in: Guard::None,
+                action: StepAction::LlmCallStreaming {
+                    system: "You are a helpful assistant.".into(),
+                    user: "Streaming call 3".into(),
+                    model: None,
+                    conversation_id: None,
+                    append_to_history: false,
+                },
+                guard_out: Guard::None,
+                verdict: Verdict::None,
+                tools: ToolSet::None,
+                injection_protection: InjectionProtection::None,
+                output_schema: None,
+                dependencies: vec![],
+                parallel: false,
+                input_processors: vec![],
+                output_processors: vec![],
+            },
+        ],
+        on_failure: FailureMode::Abort,
+        max_retries: 0,
+    };
+
+    let agent = make_agent(&pipeline);
+    let mut runner = PipelineRunner::new();
+
+    // Configure mock with exactly 2 successful responses (3rd will be rate-limited)
+    let mock_provider = Arc::new(ScriptedMockLlmProvider::new(vec![
+        ScriptedResponse::text("Streaming response 1"),
+        ScriptedResponse::text("Streaming response 2"),
+        // No 3rd response — rate limit will trigger first
+    ]));
+    runner.llm_client = Some(Arc::new(verdict::llm::LlmClient::new(mock_provider)));
+
+    // Configure rate limiter: 2 calls per minute
+    let rate_limiter = RateLimiter::new().with_max_calls_per_minute(2);
+    runner.rate_limiter = Some(Arc::new(std::sync::Mutex::new(rate_limiter)));
+
+    let result = runner.run(&pipeline, &agent, json!({})).await;
+
+    // HARD ASSERTION: 3rd streaming call MUST fail with rate-limit error.
+    // If the streaming gate is removed, this test fails (3rd call would succeed).
+    match result {
+        Err(PipelineError::StepFailed {
+            step,
+            error: StepError::ActionFailed { reason },
+        }) => {
+            assert_eq!(step, "streaming_call_3", "Expected rate limit failure at streaming_call_3");
+            assert!(
+                reason.contains("rate limit"),
+                "Expected rate limit error, got: {}",
+                reason
+            );
+        }
+        Err(e) => panic!("Expected StepFailed with rate limit error at streaming_call_3, got: {:?}", e),
+        Ok(_) => panic!("Expected rate limit error at streaming_call_3, but pipeline succeeded — LlmCallStreaming gate missing"),
+    }
+}
+
+/// Test 6: ToolUseLoop MAIN loop LLM-call gate.
+/// The gate is at src/runner/tool_use_loop.rs ~219-227, in run_tool_loop_round().
+/// Deleting this gate alone should cause this test to fail.
+/// CRITICAL: Must exercise the MAIN loop (round 0) specifically, where the initial LLM call happens.
+#[tokio::test]
+async fn test_rate_limit_tool_use_loop_main_gate() {
+    use crate::common::{ScriptedMockLlmProvider, ScriptedResponse};
+
+    // Pipeline with TWO ToolUseLoop actions in sequence.
+    // Each one will make an LLM call in its main round.
+    let pipeline = Pipeline {
+        name: "tool_use_loop_main_rate_limit_test".into(),
+        steps: vec![
+            AgentStep {
+                name: "tool_loop_1".into(),
+                guard_in: Guard::None,
+                action: StepAction::ToolUseLoop {
+                    system: "You are a tool-using assistant.".into(),
+                    user: "Execute tool loop 1".into(),
+                    model: ProviderSpec { 
+                        model: String::new(),
+                        provider: "test".into(),
+                    },
+                    tools: vec!["shell.run".into()],
+                    max_rounds: 1usize,
+                    stop_condition: StopCondition::TextOnly,
+                },
+                guard_out: Guard::None,
+                verdict: Verdict::None,
+                tools: ToolSet::Allow(vec!["shell.run".into()]),
+                injection_protection: InjectionProtection::None,
+                output_schema: None,
+                dependencies: vec![],
+                parallel: false,
+                input_processors: vec![],
+                output_processors: vec![],
+            },
+            AgentStep {
+                name: "tool_loop_2".into(),
+                guard_in: Guard::None,
+                action: StepAction::ToolUseLoop {
+                    system: "You are a tool-using assistant.".into(),
+                    user: "Execute tool loop 2".into(),
+                    model: ProviderSpec { 
+                        model: String::new(),
+                        provider: "test".into(),
+                    },
+                    tools: vec!["shell.run".into()],
+                    max_rounds: 1usize,
+                    stop_condition: StopCondition::TextOnly,
+                },
+                guard_out: Guard::None,
+                verdict: Verdict::None,
+                tools: ToolSet::Allow(vec!["shell.run".into()]),
+                injection_protection: InjectionProtection::None,
+                output_schema: None,
+                dependencies: vec![],
+                parallel: false,
+                input_processors: vec![],
+                output_processors: vec![],
+            },
+            AgentStep {
+                name: "tool_loop_3".into(),
+                guard_in: Guard::None,
+                action: StepAction::ToolUseLoop {
+                    system: "You are a tool-using assistant.".into(),
+                    user: "Execute tool loop 3".into(),
+                    model: ProviderSpec { 
+                        model: String::new(),
+                        provider: "test".into(),
+                    },
+                    tools: vec!["shell.run".into()],
+                    max_rounds: 1usize,
+                    stop_condition: StopCondition::TextOnly,
+                },
+                guard_out: Guard::None,
+                verdict: Verdict::None,
+                tools: ToolSet::Allow(vec!["shell.run".into()]),
+                injection_protection: InjectionProtection::None,
+                output_schema: None,
+                dependencies: vec![],
+                parallel: false,
+                input_processors: vec![],
+                output_processors: vec![],
+            },
+        ],
+        on_failure: FailureMode::Abort,
+        max_retries: 0,
+    };
+
+    let agent = make_agent(&pipeline);
+    let mut runner = PipelineRunner::new();
+
+    // Configure mock: each ToolUseLoop's main round will consume one response.
+    // We provide exactly 2 responses, so the 3rd loop's main-round LLM call will be rate-limited.
+    let mock_provider = Arc::new(ScriptedMockLlmProvider::new(vec![
+        ScriptedResponse::text("Tool loop 1 result"),
+        ScriptedResponse::text("Tool loop 2 result"),
+        // No 3rd response — rate limit will trigger
+    ]));
+    runner.llm_client = Some(Arc::new(verdict::llm::LlmClient::new(mock_provider)));
+
+    // Configure rate limiter: 2 calls per minute (tight)
+    let rate_limiter = RateLimiter::new().with_max_calls_per_minute(2);
+    runner.rate_limiter = Some(Arc::new(std::sync::Mutex::new(rate_limiter)));
+
+    let result = runner.run(&pipeline, &agent, json!({})).await;
+
+    // HARD ASSERTION: 3rd ToolUseLoop's main-round LLM call MUST fail with rate-limit error.
+    // If the main-loop gate is removed, this test fails (3rd loop succeeds).
+    match result {
+        Err(PipelineError::StepFailed {
+            step,
+            error: StepError::ActionFailed { reason },
+        }) => {
+            assert_eq!(step, "tool_loop_3", "Expected rate limit failure at tool_loop_3");
+            assert!(
+                reason.contains("rate limit"),
+                "Expected rate limit error, got: {}",
+                reason
+            );
+        }
+        Err(e) => panic!("Expected StepFailed with rate limit error at tool_loop_3, got: {:?}", e),
+        Ok(_) => panic!("Expected rate limit error at tool_loop_3, but pipeline succeeded — ToolUseLoop main gate missing"),
+    }
+}
+
+/// Test 7: ToolUseLoop SYNTHESIS loop LLM-call gate.
+/// The gate is at src/runner/tool_use_loop_synthesis.rs ~57-65, in run_synthesis_loop().
+/// Deleting this gate alone should cause this test to fail.
+/// CRITICAL: Must trigger SYNTHESIS path specifically (main loop produces non-text but no final answer).
+#[tokio::test]
+async fn test_rate_limit_tool_use_loop_synthesis_gate() {
+    use crate::common::{ScriptedMockLlmProvider, ScriptedResponse};
+
+    // ToolUseLoop that will exhaust rate limit in synthesis.
+    // Strategy: provide tool calls in response but no final text, forcing synthesis retry.
+    let pipeline = Pipeline {
+        name: "tool_use_loop_synthesis_rate_limit_test".into(),
+        steps: vec![
+            AgentStep {
+                name: "synthesis_test".into(),
+                guard_in: Guard::None,
+                action: StepAction::ToolUseLoop {
+                    system: "You are a tool assistant.".into(),
+                    user: "Use tools to complete the task.".into(),
+                    model: ProviderSpec { 
+                        model: String::new(),
+                        provider: "test".into(),
+                    },
+                    tools: vec!["shell.run".into()],
+                    max_rounds: 1usize,
+                    stop_condition: StopCondition::TextOnly,
+                },
+                guard_out: Guard::None,
+                verdict: Verdict::None,
+                tools: ToolSet::Allow(vec!["shell.run".into()]),
+                injection_protection: InjectionProtection::None,
+                output_schema: None,
+                dependencies: vec![],
+                parallel: false,
+                input_processors: vec![],
+                output_processors: vec![],
+            },
+        ],
+        on_failure: FailureMode::Abort,
+        max_retries: 0,
+    };
+
+    let agent = make_agent(&pipeline);
+    let mut runner = PipelineRunner::new();
+
+    // Script: 1st response has a tool call (no final text) — this exhausts budget but doesn't trigger synthesis yet.
+    // 2nd response would be synthesis retry — but rate limit will trigger first.
+    // We configure rate limit for exactly 1 call, so synthesis attempt will fail.
+    let mock_provider = Arc::new(ScriptedMockLlmProvider::new(vec![
+        ScriptedResponse::tool_call("shell.run", json!({ "command": "echo", "args": ["test"] })),
+        // 2nd response would be for synthesis, but rate limit prevents it
+    ]));
+    runner.llm_client = Some(Arc::new(verdict::llm::LlmClient::new(mock_provider)));
+
+    // Configure rate limiter: only 1 call per minute
+    // Main loop uses it, synthesis retry will hit limit
+    let rate_limiter = RateLimiter::new().with_max_calls_per_minute(1);
+    runner.rate_limiter = Some(Arc::new(std::sync::Mutex::new(rate_limiter)));
+
+    let result = runner.run(&pipeline, &agent, json!({})).await;
+
+    // HARD ASSERTION: synthesis LLM call MUST fail with rate-limit error.
+    // If the synthesis gate is removed, this test fails (synthesis call succeeds or proceeds further).
+    match result {
+        Err(PipelineError::StepFailed {
+            step,
+            error: StepError::ActionFailed { reason },
+        }) => {
+            assert_eq!(step, "synthesis_test", "Expected rate limit failure during synthesis_test");
+            assert!(
+                reason.contains("rate limit"),
+                "Expected rate limit error in synthesis, got: {}",
+                reason
+            );
+        }
+        Err(e) => panic!("Expected StepFailed with rate limit error during synthesis, got: {:?}", e),
+        Ok(_) => panic!("Expected rate limit error during synthesis, but pipeline succeeded — ToolUseLoop synthesis gate missing"),
+    }
+}

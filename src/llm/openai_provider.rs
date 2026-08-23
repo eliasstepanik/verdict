@@ -10,7 +10,7 @@
 // "divergent duplicate path" bug class this session found and fixed 8+ times elsewhere
 // (see notes/verdict-audit-cycle1-fix-plan.md, H1/C2/C3/C4 fixes). Approved as an
 // escalation-clause exception per AGENTS.md 300-Line File Limit rule (tightly-coupled
-// trait-impl methods sharing centralized dependencies). File shrunk from 463 to 382
+// trait-impl methods sharing centralized dependencies). File shrunk from 463 to 396
 // lines via the openai_shared.rs extraction; further splitting was assessed as
 // disproportionate risk relative to benefit and explicitly declined by the user.
 
