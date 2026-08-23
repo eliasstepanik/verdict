@@ -182,22 +182,10 @@ impl PipelineRunner {
                     };
                     break;
                 }
-                Err(_) => {
-                    let tool_results: Vec<String> = history
-                        .messages
-                        .iter()
-                        .filter(|m| matches!(m.role, crate::llm::ChatRole::Tool))
-                        .map(|m| m.content.clone())
-                        .collect();
-                    final_text = if tool_results.is_empty() {
-                        "Task completed.".to_string()
-                    } else {
-                        format!(
-                            "Task completed.\n{}",
-                            tool_results.last().unwrap_or(&String::new())
-                        )
-                    };
-                    break;
+                Err(llm_err) => {
+                    return Err(StepError::ActionFailed {
+                        reason: format!("synthesis LLM call failed: {}", llm_err),
+                    });
                 }
             }
         }

@@ -65,17 +65,22 @@ impl LlmProvider for MockLlmProvider {
     }
 }
 
-/// A single scripted LLM response
-pub struct ScriptedResponse {
-    pub content: String,
-    pub tool_calls: Option<Vec<(String, serde_json::Value)>>, // (tool_name, args)
-    pub usage: Option<LlmUsage>,
+/// A single scripted LLM response (or error)
+pub enum ScriptedResponse {
+    /// Successful response with text and optional tool calls
+    Success {
+        content: String,
+        tool_calls: Option<Vec<(String, serde_json::Value)>>, // (tool_name, args)
+        usage: Option<LlmUsage>,
+    },
+    /// Failure response — LLM provider returns an error
+    Error(LlmError),
 }
 
 impl ScriptedResponse {
     /// Create a text-only response
     pub fn text(content: impl Into<String>) -> Self {
-        Self {
+        Self::Success {
             content: content.into(),
             tool_calls: None,
             usage: None,
@@ -84,7 +89,7 @@ impl ScriptedResponse {
 
     /// Create a response with a single tool call
     pub fn tool_call(tool_name: impl Into<String>, args: serde_json::Value) -> Self {
-        Self {
+        Self::Success {
             content: String::new(),
             tool_calls: Some(vec![(tool_name.into(), args)]),
             usage: None,
@@ -93,7 +98,7 @@ impl ScriptedResponse {
 
     /// Create a response with multiple tool calls
     pub fn multi_tool_call(calls: Vec<(String, serde_json::Value)>) -> Self {
-        Self {
+        Self::Success {
             content: String::new(),
             tool_calls: Some(calls),
             usage: None,
@@ -117,7 +122,7 @@ impl ScriptedResponse {
             (content_str, None)
         };
         
-        Self {
+        Self::Success {
             content,
             tool_calls,
             usage: Some(LlmUsage {
@@ -125,6 +130,11 @@ impl ScriptedResponse {
                 completion_tokens,
             }),
         }
+    }
+
+    /// Create an error response — synthesizes an LlmError
+    pub fn error(llm_error: LlmError) -> Self {
+        Self::Error(llm_error)
     }
 }
 
@@ -169,23 +179,45 @@ impl LlmProvider for ScriptedMockLlmProvider {
             });
         }
         let r = &self.responses[idx];
-        let tool_calls = r.tool_calls.as_ref().map(|calls| {
-            calls
-                .iter()
-                .enumerate()
-                .map(|(i, (name, args))| ToolCall {
-                    name: name.clone(),
-                    arguments: args.clone(),
-                    id: Some(format!("call_{}", i)),
+        match r {
+            ScriptedResponse::Error(LlmError::NetworkError(msg)) => {
+                Err(LlmError::NetworkError(msg.clone()))
+            }
+            ScriptedResponse::Error(LlmError::RequestFailed(msg)) => {
+                Err(LlmError::RequestFailed(msg.clone()))
+            }
+            ScriptedResponse::Error(LlmError::InvalidResponse(msg)) => {
+                Err(LlmError::InvalidResponse(msg.clone()))
+            }
+            ScriptedResponse::Error(LlmError::RateLimited) => {
+                Err(LlmError::RateLimited)
+            }
+            ScriptedResponse::Error(LlmError::AuthFailed) => {
+                Err(LlmError::AuthFailed)
+            }
+            ScriptedResponse::Error(LlmError::NotConfigured) => {
+                Err(LlmError::NotConfigured)
+            }
+            ScriptedResponse::Success { content, tool_calls, usage } => {
+                let tool_calls = tool_calls.as_ref().map(|calls| {
+                    calls
+                        .iter()
+                        .enumerate()
+                        .map(|(i, (name, args))| ToolCall {
+                            name: name.clone(),
+                            arguments: args.clone(),
+                            id: Some(format!("call_{}", i)),
+                        })
+                        .collect::<Vec<_>>()
+                });
+                Ok(LlmResponse {
+                    content: content.clone(),
+                    model: "scripted-mock".into(),
+                    usage: usage.clone(),
+                    tool_calls,
                 })
-                .collect::<Vec<_>>()
-        });
-        Ok(LlmResponse {
-            content: r.content.clone(),
-            model: "scripted-mock".into(),
-            usage: r.usage.clone(),
-            tool_calls,
-        })
+            }
+        }
     }
 
     fn stream(

@@ -1129,3 +1129,129 @@ async fn test_tool_use_loop_synthesis_xml_rejects_tool_outside_scope() {
          dispatch does not route through execute_llm_tool_call"
     );
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+// CRITICAL BUG FIX: Synthesis loop error propagation (lines 185–201)
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+
+/// CRITICAL: Test that when LLM provider returns an error in synthesis loop,
+/// the error is genuinely propagated, NOT silently swallowed into a fake "Task completed." success.
+///
+/// This tests the fix to lines 185–201 in tool_use_loop_synthesis.rs:
+/// The old code had: `Err(_) => { final_text = "Task completed."; break; }`
+/// Which silently converted ANY error (network, rate-limit, auth) into a fake success.
+/// The new code has: `Err(llm_err) => { return Err(StepError::ActionFailed { ... }) }`
+#[tokio::test]
+async fn test_synthesis_loop_propagates_llm_errors() {
+    // Script: main loop returns ONLY a tool call (no text), triggering synthesis.
+    // Synthesis LLM call fails with a rate-limit error.
+    let script = vec![
+        // Main loop: tool call only, no final text → synthesis will run
+        ScriptedResponse::tool_call("fs.list", json!({ "path": "." })),
+        // Synthesis call: LLM provider fails with rate-limit
+        ScriptedResponse::error(LlmError::RateLimited),
+    ];
+    let llm_client = LlmClient::new(Arc::new(ScriptedMockLlmProvider::new(script)));
+    let tool_registry = ToolRegistry::with_builtins();
+
+    let step = tool_use_loop_step(
+        "syn_error_prop",
+        "Synthesize a completion.",
+        "Please complete the task.",
+        vec!["fs.list".to_string()],
+        1, // max_rounds = 1 (main loop only, then synthesis)
+    );
+
+    let pipeline = Pipeline {
+        name: "test_synthesis_error".into(),
+        steps: vec![step],
+        on_failure: FailureMode::Abort,
+        max_retries: 0,
+    };
+
+    let agent = make_agent(pipeline.clone(), ToolSet::Full);
+
+    let mut runner = PipelineRunner::with_tool_registry(Arc::new(tool_registry));
+    runner = runner.with_llm_client(Arc::new(llm_client));
+
+    let result = runner.run(&pipeline, &agent, json!({})).await;
+
+    // CRITICAL ASSERTION: The pipeline runner must return Err (PipelineError).
+    // If the error-swallowing bug exists, the step would succeed with output "Task completed.".
+    match result {
+        Err(pipeline_err) => {
+            let err_str = pipeline_err.to_string();
+            assert!(
+                err_str.contains("synthesis LLM call failed"),
+                "Expected error message to contain 'synthesis LLM call failed', got: {}",
+                err_str
+            );
+        }
+        Ok(pipeline_result) => {
+            panic!(
+                "CRITICAL BUG: Synthesis loop swallowed LLM error and fabricated success. \
+                 Expected pipeline to fail with ActionFailed, but it succeeded. \
+                 Output was: {}. This is the error-swallowing bug. \
+                 Lines 185–188 in tool_use_loop_synthesis.rs must propagate Err(llm_err).",
+                pipeline_result.step_results["syn_error_prop"].output.raw
+            );
+        }
+    }
+}
+
+/// Secondary test: Verify network errors are also propagated, not swallowed.
+#[tokio::test]
+async fn test_synthesis_loop_propagates_network_errors() {
+    let script = vec![
+        // Main loop: tool call only (no text) → synthesis will run
+        ScriptedResponse::tool_call("fs.list", json!({ "path": "." })),
+        // Synthesis call: network failure
+        ScriptedResponse::error(LlmError::NetworkError("connection timeout".into())),
+    ];
+    let llm_client = LlmClient::new(Arc::new(ScriptedMockLlmProvider::new(script)));
+    let tool_registry = ToolRegistry::with_builtins();
+
+    let step = tool_use_loop_step(
+        "syn_net_error",
+        "Synthesize.",
+        "Complete.",
+        vec!["fs.list".to_string()],
+        1,
+    );
+
+    let pipeline = Pipeline {
+        name: "test_synthesis_network".into(),
+        steps: vec![step],
+        on_failure: FailureMode::Abort,
+        max_retries: 0,
+    };
+
+    let agent = make_agent(pipeline.clone(), ToolSet::Full);
+
+    let mut runner = PipelineRunner::with_tool_registry(Arc::new(tool_registry));
+    runner = runner.with_llm_client(Arc::new(llm_client));
+
+    let result = runner.run(&pipeline, &agent, json!({})).await;
+
+    // The pipeline runner must return Err (PipelineError).
+    // If the error-swallowing bug exists, the step would succeed with output "Task completed.".
+    match result {
+        Err(pipeline_err) => {
+            let err_str = pipeline_err.to_string();
+            assert!(
+                err_str.contains("synthesis LLM call failed"),
+                "Expected error message to contain 'synthesis LLM call failed', got: {}",
+                err_str
+            );
+        }
+        Ok(pipeline_result) => {
+            panic!(
+                "CRITICAL BUG: Synthesis loop swallowed network error and fabricated success. \
+                 Expected pipeline to fail, but it succeeded with output: {}. \
+                 This is the error-swallowing bug. \
+                 Lines 185–188 in tool_use_loop_synthesis.rs must propagate Err(llm_err).",
+                pipeline_result.step_results["syn_net_error"].output.raw
+            );
+        }
+    }
+}

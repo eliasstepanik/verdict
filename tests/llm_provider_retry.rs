@@ -252,3 +252,62 @@ async fn test_retry_exhaustion_after_3_attempts() {
         elapsed
     );
 }
+
+#[tokio::test]
+async fn test_stream_classifies_429_correctly() {
+    // Verify that stream() now correctly classifies 429 (rate-limit) error
+    // This test ensures that stream() uses the shared classify_http_error() function
+    // and gets the same thorough error classification as complete() does.
+    let mut server = mockito::Server::new_async().await;
+    
+    let _mock = server
+        .mock("POST", "/v1/chat/completions")
+        .expect(1)
+        .with_status(429)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"error": "rate limited"}"#)
+        .create();
+    
+    let provider = OpenAiCompatibleProvider::new(
+        server.url(),
+        "test-key".into(),
+        "test-model".into(),
+    );
+
+    let req = LlmRequest {
+        system: "You are helpful".into(),
+        user: "Hello".into(),
+        model: "test-model".into(),
+        max_tokens: None,
+        temperature: None,
+        tool_choice: None,
+        tools: None,
+        history: None,
+    };
+
+    // Collect the first error from the stream
+    use futures::StreamExt;
+    let mut stream = provider.stream(req);
+    let first_result = stream.next().await;
+    
+    // Should fail with RateLimited, not the generic RequestFailed
+    assert!(
+        first_result.is_some(),
+        "Expected stream to yield an error item"
+    );
+    match first_result.unwrap() {
+        Err(LlmError::RateLimited) => {
+            // Correct — stream now correctly classifies 429 as RateLimited
+        }
+        Err(e) => {
+            panic!(
+                "Expected RateLimited error from stream(), got: {:?}. \
+                This indicates stream() is not using the shared classify_http_error() function.",
+                e
+            );
+        }
+        Ok(_) => {
+            panic!("Expected error from stream on 429 response");
+        }
+    }
+}

@@ -5,6 +5,8 @@ use serde_json::json;
 use std::sync::Arc;
 use verdict::prelude::*;
 
+mod common;
+
 fn simple_llm_step(name: &str, prompt: &str) -> AgentStep {
     AgentStep {
         name: name.into(),
@@ -63,8 +65,13 @@ fn make_agent(pipeline: &Pipeline) -> Agent {
 }
 
 /// Test 1: With a tight rate limit (2 req/min), 3 rapid LLM calls in sequence should fail on the 3rd.
+/// This test is CRITICAL: it must GENUINELY verify the rate-limit gate is enforced.
+/// The gate is at llm_synthesis.rs:51-58, and is ONLY reached if an LLM client is configured.
+/// Removing that gate will cause this test to FAIL (3rd call succeeds instead of erroring).
 #[tokio::test]
 async fn test_rate_limit_tight_llm_calls_rejects_third() {
+    use crate::common::{ScriptedMockLlmProvider, ScriptedResponse};
+    
     let pipeline = Pipeline {
         name: "rate_limit_test".into(),
         steps: vec![
@@ -79,31 +86,38 @@ async fn test_rate_limit_tight_llm_calls_rejects_third() {
     let agent = make_agent(&pipeline);
     let mut runner = PipelineRunner::new();
 
+    // Configure mock LLM client with exactly 2 successful responses
+    // (3rd call will be rate-limited before even reaching the provider)
+    let mock_provider = Arc::new(ScriptedMockLlmProvider::new(vec![
+        ScriptedResponse::text("Response 1"),
+        ScriptedResponse::text("Response 2"),
+        // No 3rd response — but we won't reach it due to rate limit
+    ]));
+    runner.llm_client = Some(Arc::new(verdict::llm::LlmClient::new(mock_provider)));
+
     // Configure rate limiter: 2 calls per minute
+    // With 3 rapid calls, the 3rd MUST fail with rate-limit error
     let rate_limiter = RateLimiter::new().with_max_calls_per_minute(2);
     runner.rate_limiter = Some(Arc::new(std::sync::Mutex::new(rate_limiter)));
 
-    // Note: no LLM client configured — will fail at LlmCall but that's fine,
-    // we're testing that rate limit gate is hit before the actual LLM call
     let result = runner.run(&pipeline, &agent, json!({})).await;
 
-    // Should fail with a rate-limit related error at step 3
-    // Note: without an LLM client, the step will fail even earlier, but the test
-    // demonstrates the rate limiter is wired (would need mock LLM to test fully)
+    // HARD ASSERTION: Pipeline must fail at step 3 with rate-limit error.
+    // If the rate-limit gate were removed, this assertion fails, catching the regression.
     match result {
-        Err(e) => {
-            // Just verify we get some error — with a real LLM client,
-            // the 3rd call would definitely be rate-limited
-            let err_str = format!("{:?}", e);
+        Err(PipelineError::StepFailed {
+            step,
+            error: StepError::ActionFailed { reason },
+        }) => {
+            assert_eq!(step, "call_3", "Expected rate limit failure at step 3, got error at step: {}", step);
             assert!(
-                err_str.contains("call_1") || err_str.contains("call"),
-                "Got error at a pipeline step: {}",
-                err_str
+                reason.contains("rate limit"),
+                "Expected rate limit error at step 3, got: {}",
+                reason
             );
         }
-        Ok(_) => {
-            // Might succeed if LLM client returns mock response
-        }
+        Err(e) => panic!("Expected StepFailed with rate limit error at step 3, got: {:?}", e),
+        Ok(_) => panic!("Expected rate limit error at step 3, but pipeline succeeded — rate limiter gate is missing or broken"),
     }
 }
 

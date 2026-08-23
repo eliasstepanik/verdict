@@ -9,7 +9,6 @@ use super::json_decode::event_from_json;
 /// Audit log for pipeline execution with bounded FIFO eviction
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct AuditLog {
-    #[serde(skip)]
     entries: VecDeque<AuditEntry>,
     #[serde(default = "default_max_entries")]
     max_entries: usize,
@@ -207,5 +206,77 @@ mod tests {
         let entries = log.entries();
         assert_eq!(entries[0].pipeline_name, "test_5");
         assert_eq!(entries[4].pipeline_name, "test_9");
+    }
+
+    #[test]
+    fn test_audit_log_serde_roundtrip_preserves_entries() {
+        // Regression test: #[serde(skip)] on entries field caused silent data loss
+        // This test verifies that entries survive JSON serialization/deserialization
+        let mut log = AuditLog::with_capacity(100);
+
+        // Append 3 distinct entries
+        let now = Utc::now();
+        let entry1 = AuditEntry {
+            timestamp: now,
+            pipeline_name: "pipe_one".to_string(),
+            step_name: "step_alpha".to_string(),
+            event: AuditEvent::StepStarted,
+        };
+        let entry2 = AuditEntry {
+            timestamp: now + chrono::Duration::seconds(1),
+            pipeline_name: "pipe_two".to_string(),
+            step_name: "step_beta".to_string(),
+            event: AuditEvent::StepCompleted { verdict_passed: true },
+        };
+        let entry3 = AuditEntry {
+            timestamp: now + chrono::Duration::seconds(2),
+            pipeline_name: "pipe_three".to_string(),
+            step_name: "step_gamma".to_string(),
+            event: AuditEvent::StepFailed { error: "oops".to_string() },
+        };
+
+        log.append(entry1.clone());
+        log.append(entry2.clone());
+        log.append(entry3.clone());
+
+        // Serialize to JSON
+        let json_str = serde_json::to_string(&log)
+            .expect("Failed to serialize AuditLog");
+
+        // Deserialize back
+        let restored_log: AuditLog = serde_json::from_str(&json_str)
+            .expect("Failed to deserialize AuditLog");
+
+        // Verify entries count and field-by-field content match
+        assert_eq!(restored_log.len(), 3, "Expected 3 entries after round-trip");
+
+        let restored_entries = restored_log.entries();
+        
+        // Entry 1
+        assert_eq!(restored_entries[0].pipeline_name, "pipe_one");
+        assert_eq!(restored_entries[0].step_name, "step_alpha");
+        assert_eq!(restored_entries[0].timestamp, entry1.timestamp);
+        match &restored_entries[0].event {
+            AuditEvent::StepStarted => {},
+            _ => panic!("Entry 1 event mismatch"),
+        }
+
+        // Entry 2
+        assert_eq!(restored_entries[1].pipeline_name, "pipe_two");
+        assert_eq!(restored_entries[1].step_name, "step_beta");
+        assert_eq!(restored_entries[1].timestamp, entry2.timestamp);
+        match &restored_entries[1].event {
+            AuditEvent::StepCompleted { verdict_passed: true } => {},
+            _ => panic!("Entry 2 event mismatch"),
+        }
+
+        // Entry 3
+        assert_eq!(restored_entries[2].pipeline_name, "pipe_three");
+        assert_eq!(restored_entries[2].step_name, "step_gamma");
+        assert_eq!(restored_entries[2].timestamp, entry3.timestamp);
+        match &restored_entries[2].event {
+            AuditEvent::StepFailed { error } if error == "oops" => {},
+            _ => panic!("Entry 3 event mismatch"),
+        }
     }
 }
