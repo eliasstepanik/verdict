@@ -160,6 +160,36 @@ impl PipelineRunner {
             rate_limiter: self.rate_limiter.clone(),
         };
 
+        // Step 5.5: Clamp the child's tool scope to the parent's effective ceiling.
+        //
+        // SECURITY (privilege escalation fix). `inherit_tool_scope` above only
+        // decides WHICH `ToolRegistry` the child receives — that is permission-
+        // *widening* and says nothing about the child's allowed-tools SET. Without
+        // this clamp the child ran with `agent.policy.allowed_tools` verbatim: the
+        // nested `run_internal` recomputes each inner step's scope as
+        // `child_agent_policy ∩ step.tools`, so a tool the PARENT denied
+        // (`ToolSet::Deny([..])` / `ToolSet::None`) was simply absent from that
+        // computation and executed freely one hop down. `SubPipeline` had already
+        // been fixed (`step_executor.rs`); `DelegateAgent` was left divergent.
+        //
+        // `ctx.allowed_tools` is the parent's ALREADY-narrowed effective scope for
+        // this delegating step (agent ∩ pipeline ∩ step ∩ skill), so intersecting
+        // against it makes a broader-than-parent child scope unrepresentable.
+        // Shared with the SubPipeline boundary via `child_policy` so the two paths
+        // cannot diverge again.
+        let mut scoped_policy = agent.policy.clone();
+        super::child_policy::narrow_child_tool_scope(&mut scoped_policy, &ctx.allowed_tools);
+
+        let scoped_agent = crate::agent::Agent {
+            name: agent.name.clone(),
+            description: agent.description.clone(),
+            pipeline: agent.pipeline.clone(),
+            tools: scoped_policy.allowed_tools.clone(),
+            skills: agent.skills.clone(),
+            policy: scoped_policy,
+            scorers: agent.scorers.clone(),
+        };
+
         // Step 6: Run child agent pipeline with increased delegation depth
         let inherited_budget = if delegation_policy.inherit_budget {
             Some(ctx.budget.clone())
@@ -169,8 +199,8 @@ impl PipelineRunner {
 
         let child_result = child_runner
             .run_with_delegation_depth_and_budget(
-                &agent.pipeline,
-                &agent,
+                &scoped_agent.pipeline,
+                &scoped_agent,
                 delegate_input.clone(),
                 ctx.delegation_depth + 1,
                 ctx.agent_name.clone(),
