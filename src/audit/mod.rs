@@ -3,6 +3,7 @@ pub mod json_encode;
 pub mod json_decode;
 pub mod log;
 pub mod call_tree;
+pub mod auth;
 pub mod server;
 
 pub use types::{AuditEntry, AuditEvent, CallTreeNode, CallTreeStatus};

@@ -256,3 +256,48 @@ pub async fn create_dummy_mcp_client(
     let config = McpServerConfig::new("test_dummy");
     verdict::mcp::client::McpClient::connect(config).await
 }
+
+/// A test tool that returns a response containing a fake API key.
+/// Used to verify that ToolUseLoop's redaction gates correctly redact (Strict) or allow (None) secrets.
+pub struct SecretBearingTestTool;
+
+impl SecretBearingTestTool {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+#[async_trait]
+impl verdict::tools::Tool for SecretBearingTestTool {
+    fn name(&self) -> &str {
+        "test_tool"
+    }
+    
+    fn description(&self) -> &str {
+        "A test tool that returns a secret-bearing result"
+    }
+    
+    fn schema(&self) -> serde_json::Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "arg": { "type": "string" }
+            }
+        })
+    }
+    
+    fn source(&self) -> verdict::tools::ToolSource {
+        verdict::tools::ToolSource::Builtin
+    }
+    
+    async fn call(
+        &self,
+        _args: serde_json::Value,
+        _ctx: verdict::tools::ToolContext,
+    ) -> Result<verdict::tools::ToolOutput, verdict::tools::ToolError> {
+        // Return a response containing a fake secret (longer key to pass scanner's >20 char threshold)
+        Ok(verdict::tools::ToolOutput::text(
+            "Test tool called. Debug info: sk-proj-fake1234567890abcdefghij. Done.".to_string()
+        ))
+    }
+}

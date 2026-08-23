@@ -1,28 +1,7 @@
 use crate::audit::AuditLog;
+use crate::audit::auth::{AppState, auth_middleware};
 use serde_json::json;
 use tracing::error;
-
-/// Constant-time comparison for bearer tokens (XOR-fold to prevent timing attacks).
-/// Returns true only if both strings are byte-identical, comparing all bytes even on mismatch.
-fn constant_time_compare(expected: &str, actual: &str) -> bool {
-    let expected_bytes = expected.as_bytes();
-    let actual_bytes = actual.as_bytes();
-    
-    // Lengths must match; still fold all bits to avoid timing leak
-    let mut result: u32 = (expected_bytes.len() ^ actual_bytes.len()) as u32;
-    
-    // XOR all bytes (safe: we compare min length, then fold length mismatch bit)
-    // Note: loop length depends on min(expected.len(), actual.len()), which could leak token
-    // LENGTH via timing in a hostile network environment. This is acceptable here because the
-    // token's length is not itself secret (only its VALUE is) — an attacker learning "the token
-    // is roughly N bytes" doesn't help them guess the value.
-    let min_len = expected_bytes.len().min(actual_bytes.len());
-    for i in 0..min_len {
-        result |= (expected_bytes[i] as u32) ^ (actual_bytes[i] as u32);
-    }
-    
-    result == 0
-}
 
 /// Monitoring server for Web UI dashboard (Phase E)
 pub struct MonitoringServer {
@@ -119,20 +98,6 @@ impl MonitoringServer {
         let test_delay = self.test_delay;
         let auth_token = self.auth_token.clone();
 
-        // App state structure
-        #[derive(Clone)]
-        struct AppState {
-            audit_log: std::sync::Arc<std::sync::Mutex<AuditLog>>,
-            trace: std::sync::Arc<std::sync::Mutex<crate::context::PipelineTrace>>,
-            agent_registry: Option<std::sync::Arc<crate::registry::AgentRegistry>>,
-            conversation_registry:
-                Option<std::sync::Arc<std::sync::Mutex<crate::llm::ConversationRegistry>>>,
-            /// Test delay for timeout testing (normally None, no runtime cost)
-            test_delay: Option<std::time::Duration>,
-            /// Optional bearer token for auth middleware (None = auth disabled)
-            auth_token: Option<String>,
-        }
-
         let app_state = AppState {
             audit_log: audit_log.clone(),
             trace: trace.clone(),
@@ -141,52 +106,6 @@ impl MonitoringServer {
             test_delay,
             auth_token: auth_token.clone(),
         };
-
-        // Auth middleware: checks Authorization: Bearer <token> header if auth_token is configured
-        use axum::http::StatusCode;
-        use axum::middleware::Next;
-        use axum::http::Request;
-        use axum::body::Body;
-        
-        async fn auth_middleware(
-            State(state): State<AppState>,
-            req: Request<Body>,
-            next: Next,
-        ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-            // If auth is disabled (auth_token is None), pass through unconditionally
-            if state.auth_token.is_none() {
-                return Ok(next.run(req).await);
-            }
-
-            let expected_token = state.auth_token.as_ref().unwrap();
-            
-            // Extract Authorization header
-            let auth_header = req
-                .headers()
-                .get("Authorization")
-                .and_then(|v| v.to_str().ok())
-                .unwrap_or("");
-
-            // Parse "Bearer <token>"
-            let provided_token = if let Some(token) = auth_header.strip_prefix("Bearer ") {
-                token
-            } else {
-                return Err((
-                    StatusCode::UNAUTHORIZED,
-                    Json(json!({ "error": "Missing or invalid Authorization header" })),
-                ));
-            };
-
-            // Constant-time comparison
-            if !constant_time_compare(expected_token, provided_token) {
-                return Err((
-                    StatusCode::UNAUTHORIZED,
-                    Json(json!({ "error": "Invalid token" })),
-                ));
-            }
-
-            Ok(next.run(req).await)
-        }
 
         // Handlers
         async fn index_handler() -> impl IntoResponse {

@@ -17,6 +17,19 @@ use crate::injection::sanitize_for_exposure;
 use crate::pipeline::InjectionProtection;
 use crate::runner::PipelineRunner;
 
+/// Shared gate for tool-result sanitization: applies injection protection scanning
+/// if InjectionProtection::Strict is configured, otherwise returns result unchanged.
+/// This function is the SINGLE enforcement point for all 4 tool-result codepaths
+/// (JSON main-loop, XML main-loop, JSON synthesis, XML synthesis) to prevent
+/// divergent-gate bugs.
+pub(crate) fn gate_tool_result(ctx: &StepContext, result: String) -> String {
+    if ctx.injection_protection == InjectionProtection::Strict {
+        sanitize_for_exposure(&result)
+    } else {
+        result
+    }
+}
+
 impl PipelineRunner {
     /// Handle ToolUseLoop action: multi-round LLM conversation with tool execution.
     ///
@@ -313,12 +326,8 @@ impl PipelineRunner {
                     .execute_llm_tool_call(&registry_name, &tc.arguments, ctx)
                     .await;
 
-                // Gate: apply intermediate-response scanning only when injection_protection is Strict
-                let sanitized_result = if ctx.injection_protection == InjectionProtection::Strict {
-                    sanitize_for_exposure(&tool_result)
-                } else {
-                    tool_result
-                };
+                // Gate: apply intermediate-response scanning via shared enforcement point
+                let sanitized_result = gate_tool_result(ctx, tool_result);
 
                 history
                     .messages
@@ -354,12 +363,8 @@ impl PipelineRunner {
 
                 let tool_result = self.execute_llm_tool_call(tool_name, args, ctx).await;
                 
-                // Gate: apply intermediate-response scanning only when injection_protection is Strict
-                let sanitized_result = if ctx.injection_protection == InjectionProtection::Strict {
-                    sanitize_for_exposure(&tool_result)
-                } else {
-                    tool_result
-                };
+                // Gate: apply intermediate-response scanning via shared enforcement point
+                let sanitized_result = gate_tool_result(ctx, tool_result);
 
                 history.messages.push(
                     crate::llm::ChatMessage::tool_result(call_id, sanitized_result),
