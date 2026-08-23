@@ -393,6 +393,36 @@ impl SecretScanner {
     }
 }
 
+/// Sanitize a string by redacting it entirely if it contains High/Critical risk secrets.
+///
+/// This function is designed to be the last line of defense for secrets that might
+/// escape into error messages, logs, or other exposure paths. Rather than attempting
+/// surgical/partial redaction (which requires knowing where a secret ends, information
+/// not available from the `SecretMatch` struct), this function takes a conservative
+/// approach: if any High or Critical risk secret is detected, the entire string is
+/// replaced with a generic redaction message.
+///
+/// # Rationale
+/// - `SecretMatch` provides `position` and `pattern_name` but no `end_position` or length,
+///   so we cannot know where a detected secret ends.
+/// - Attempting partial redaction risks leaving enough of the secret exposed for an
+///   attacker to reconstruct it.
+/// - This conservative approach is safe and sufficient for error messages.
+pub fn sanitize_for_exposure(text: &str) -> String {
+    let matches = SecretScanner::scan(text);
+    
+    // If any High or Critical risk secret is detected, replace the entire string
+    if matches
+        .iter()
+        .any(|m| matches!(m.risk_level, Some(RiskLevel::High) | Some(RiskLevel::Critical)))
+    {
+        return "[REDACTED: response contained a secret pattern]".to_string();
+    }
+    
+    // Otherwise, return the original text unchanged
+    text.to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

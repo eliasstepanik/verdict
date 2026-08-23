@@ -194,6 +194,7 @@ impl EvaluationRunner {
                         budget: Default::default(),
                         filesystem_policy: agent.policy.filesystem_policy.clone(),
                         network_policy: agent.policy.network_policy.clone(),
+                        injection_protection: crate::pipeline::InjectionProtection::None,
                         agent_policy: agent.policy.clone(),
                         llm_client: runner.llm_client.clone(),
                         conversation_history: Default::default(),

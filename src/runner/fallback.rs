@@ -3,9 +3,9 @@
 //! When a step with a `FailureMode::Fallback(fallback_pipeline)` fails, the fallback
 //! is executed as a replacement for the failed step — **not** as a deeper nesting level.
 //!
-//! This means the fallback inherits the parent's delegation_depth unchanged, budget,
-//! filesystem_policy, and network_policy — preserving the security context and
-//! preventing depth-based laundries.
+//! This means the fallback inherits the failing step's delegation_depth unchanged,
+//! budget, filesystem_policy, network_policy, and effective tool scope — preserving
+//! the security context and preventing depth- or tool-scope-based laundries.
 
 use super::PipelineRunner;
 use super::PipelineError;
@@ -23,7 +23,8 @@ impl PipelineRunner {
     /// Execute a fallback pipeline when a step fails.
     ///
     /// A fallback replaces the failed step *in place*, running under the same security
-    /// context (same delegation_depth, budget, filesystem_policy, network_policy).
+    /// context (same delegation_depth, budget, filesystem_policy, network_policy, and
+    /// effective tool scope).
     ///
     /// # Arguments
     ///
@@ -81,11 +82,29 @@ impl PipelineRunner {
         let fallback_depth = ctx.delegation_depth;
 
         // Derive the fallback agent's policy from the PARENT's actual policy
-        // so cost/step/runtime caps, allowed agents, skills and tool scope all
-        // carry over. Tool scope stays at the agent level (not the failed
-        // step's narrowed scope) because each fallback step intersects the
-        // agent policy with its own declared `tools` during `run_internal`.
+        // so cost/step/runtime caps, allowed agents and skills all carry over.
         let mut fallback_policy = ctx.agent_policy.clone();
+
+        // SECURITY (privilege escalation fix). Tool scope must be clamped to the
+        // FAILED STEP's already-narrowed effective scope, not left at the agent
+        // level. This handler previously cloned `ctx.agent_policy` verbatim and
+        // justified it with "each fallback step intersects the agent policy with
+        // its own declared `tools` during `run_internal`" — which conflates
+        // widening with narrowing. That intersection only lets a fallback step
+        // narrow further *from the agent default*; it cannot reconstruct a
+        // restriction the failed step imposed. So a step scoped
+        // `ToolSet::Deny(["x"])` whose fallback pipeline declared `ToolSet::Full`
+        // computed `agent_policy ∩ Full` one level down and called `x` freely.
+        //
+        // A fallback is the same logical step retried a different way (see the
+        // depth rationale above): if it inherits the step's depth and budget, it
+        // must inherit the step's tool ceiling too. `ctx.allowed_tools` is that
+        // ceiling (agent ∩ pipeline ∩ step ∩ skill) as of the moment of failure.
+        //
+        // Routed through the shared `child_policy` helper — the same one
+        // `delegation::execute_delegation` and the `SubPipeline` handler in
+        // `step_executor.rs` use — so these boundaries cannot drift apart again.
+        super::child_policy::narrow_child_tool_scope(&mut fallback_policy, &ctx.allowed_tools);
 
         // Filesystem: inherit the parent's *resolved* policy.
         // `ctx.filesystem_policy.workspace_root` already points at the active

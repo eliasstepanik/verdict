@@ -64,10 +64,17 @@ impl PipelineRunner {
         // cost/step/runtime caps, allowed agents and skills all carry over.
         let mut policy = ctx.agent_policy.clone();
 
-        // Tool scope: the already-narrowed effective scope from the parent context
-        // (agent ∩ pipeline ∩ step ∩ skill), so inner steps intersect against the
-        // narrowed set rather than the agent-level default.
-        policy.allowed_tools = ctx.allowed_tools.clone();
+        // Tool scope: clamp to the already-narrowed effective scope from the parent
+        // context (agent ∩ pipeline ∩ step ∩ skill), so inner steps intersect against
+        // the narrowed set rather than the agent-level default.
+        //
+        // Routed through the shared `child_policy` helper — the same one
+        // `delegation::execute_delegation` uses — so the two delegation boundaries
+        // cannot drift apart again. (This path previously assigned
+        // `ctx.allowed_tools` directly; the intersection is equivalent here because
+        // `policy` is cloned from `ctx.agent_policy` and `ctx.allowed_tools` is
+        // already `agent_policy.allowed_tools ∩ step.tools`.)
+        super::child_policy::narrow_child_tool_scope(&mut policy, &ctx.allowed_tools);
 
         // Filesystem: inherit the parent's *resolved* policy. `ctx.filesystem_policy`
         // already has `workspace_root` rewritten to the active TempDir/Sandboxed root
@@ -85,7 +92,7 @@ impl PipelineRunner {
             name: ctx.agent_name.clone(),
             description: "Child pipeline agent".into(),
             pipeline: pipeline.as_ref().clone(),
-            tools: ctx.allowed_tools.clone(),
+            tools: policy.allowed_tools.clone(),
             skills: SkillSet {
                 skills: ctx.active_skills.clone(),
             },

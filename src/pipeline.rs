@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -7,9 +8,10 @@ use crate::toolset::ToolSet;
 use crate::verdict::Verdict;
 
 /// Injection protection strategy for a step
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub enum InjectionProtection {
     /// No protection (Phase 2+: would scan for injection patterns)
+    #[default]
     None,
 
     /// Strict protection (Phase 2+: would apply aggressive filtering)

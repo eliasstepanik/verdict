@@ -3,7 +3,7 @@
 
 use crate::action::{ProviderSpec, StepError};
 use crate::context::StepContext;
-use crate::runner::PipelineRunner;
+use crate::runner::{gate_tool_result, PipelineRunner};
 
 impl PipelineRunner {
     /// Run synthesis loop: retry with XML tool calls to complete the task.
@@ -120,9 +120,11 @@ impl PipelineRunner {
                         for (i, (tname, targs)) in xml_calls.iter().enumerate() {
                             let cid = format!("syn_xml_{}", i);
                             let result = self.execute_llm_tool_call(tname, targs, ctx).await;
+                            // Gate: apply intermediate-response scanning via shared enforcement point
+                            let sanitized_result = gate_tool_result(ctx, result.clone());
                             xml_tool_results.push(result.clone());
                             history.messages.push(
-                                crate::llm::ChatMessage::tool_result(cid, result),
+                                crate::llm::ChatMessage::tool_result(cid, sanitized_result),
                             );
                         }
 
@@ -233,10 +235,12 @@ impl PipelineRunner {
                 .cloned()
                 .unwrap_or_else(|| tc.name.clone());
             let result = self.execute_llm_tool_call(&rname, &tc.arguments, ctx).await;
+            // Gate: apply intermediate-response scanning via shared enforcement point
+            let sanitized_result = gate_tool_result(ctx, result.clone());
             tool_results.push(result.clone());
             history
                 .messages
-                .push(crate::llm::ChatMessage::tool_result(cid, result));
+                .push(crate::llm::ChatMessage::tool_result(cid, sanitized_result));
         }
 
         // Track consecutive tool failures

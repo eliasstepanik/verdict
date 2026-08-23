@@ -4,6 +4,7 @@ use reqwest::StatusCode;
 use serde_json::json;
 
 use super::{LlmError, LlmRequest};
+use crate::injection::sanitize_for_exposure;
 
 /// Build the JSON request body for OpenAI API calls.
 ///
@@ -82,14 +83,16 @@ pub fn classify_http_error(status: StatusCode, body: &str, url: &str) -> Option<
         return Some(LlmError::RateLimited);
     }
     if status.is_client_error() {
-        return Some(LlmError::RequestFailed(format!(
+        let msg = format!(
             "HTTP {status} from {url}: {body}"
-        )));
+        );
+        return Some(LlmError::RequestFailed(sanitize_for_exposure(&msg)));
     }
     if status.is_server_error() {
-        return Some(LlmError::RequestFailed(format!(
+        let msg = format!(
             "HTTP {status} from {url}: {body}"
-        )));
+        );
+        return Some(LlmError::RequestFailed(sanitize_for_exposure(&msg)));
     }
     None
 }

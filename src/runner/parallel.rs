@@ -62,13 +62,14 @@ pub(crate) async fn execute_parallel_batch(
     for &step_idx in batch {
         let step = pipeline.steps[step_idx].clone();
 
-        let mut step_ctx = ctx.clone();
-        step_ctx.step_name = step.name.clone();
-        step_ctx.input = ctx.input.clone();
-        // Effective tool scope = agent policy ∩ step scope, via the same helper
-        // the sequential path uses. Intersecting the inherited context scope
-        // here instead would bypass agent-level policy (see `step_tool_scope`).
-        step_ctx.allowed_tools = step_tool_scope(agent_tools, &step);
+         let mut step_ctx = ctx.clone();
+         step_ctx.step_name = step.name.clone();
+         step_ctx.input = ctx.input.clone();
+         // Effective tool scope = agent policy ∩ step scope, via the same helper
+         // the sequential path uses. Intersecting the inherited context scope
+         // here instead would bypass agent-level policy (see `step_tool_scope`).
+         step_ctx.allowed_tools = step_tool_scope(agent_tools, &step);
+         step_ctx.injection_protection = step.injection_protection.clone();
 
         emit_step_started(runner, &step, &step_ctx);
         if let Err(e) = run_guard_in(runner, &step, &step_ctx).await {

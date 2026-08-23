@@ -1,4 +1,5 @@
 use crate::audit::AuditLog;
+use crate::audit::auth::{AppState, auth_middleware};
 use serde_json::json;
 use tracing::error;
 
@@ -12,6 +13,8 @@ pub struct MonitoringServer {
     timeout_duration: std::time::Duration,
     /// Delay for testing timeout behavior (only set via test constructors, never from client input)
     test_delay: Option<std::time::Duration>,
+    /// Optional bearer token for authentication (None = disabled, backward-compatible)
+    auth_token: Option<String>,
 }
 
 impl MonitoringServer {
@@ -24,6 +27,7 @@ impl MonitoringServer {
             conversation_registry: None,
             timeout_duration: std::time::Duration::from_secs(30),
             test_delay: None,
+            auth_token: None,
         }
     }
 
@@ -40,6 +44,7 @@ impl MonitoringServer {
             conversation_registry: None,
             timeout_duration: timeout,
             test_delay: None,
+            auth_token: None,
         }
     }
 
@@ -69,6 +74,14 @@ impl MonitoringServer {
         self
     }
 
+    /// Enable bearer token authentication for this server.
+    /// If set, requests must include Authorization: Bearer <token> header.
+    /// If None (default), all requests are allowed (backward compatible).
+    pub fn with_auth_token(mut self, token: impl Into<String>) -> Self {
+        self.auth_token = Some(token.into());
+        self
+    }
+
     /// Start the monitoring HTTP server on the given address
     pub async fn serve(self, addr: std::net::SocketAddr) -> Result<(), Box<dyn std::error::Error>> {
         use axum::{
@@ -83,18 +96,7 @@ impl MonitoringServer {
         let agent_registry = self.agent_registry.clone();
         let conversation_registry = self.conversation_registry.clone();
         let test_delay = self.test_delay;
-
-        // App state structure
-        #[derive(Clone)]
-        struct AppState {
-            audit_log: std::sync::Arc<std::sync::Mutex<AuditLog>>,
-            trace: std::sync::Arc<std::sync::Mutex<crate::context::PipelineTrace>>,
-            agent_registry: Option<std::sync::Arc<crate::registry::AgentRegistry>>,
-            conversation_registry:
-                Option<std::sync::Arc<std::sync::Mutex<crate::llm::ConversationRegistry>>>,
-            /// Test delay for timeout testing (normally None, no runtime cost)
-            test_delay: Option<std::time::Duration>,
-        }
+        let auth_token = self.auth_token.clone();
 
         let app_state = AppState {
             audit_log: audit_log.clone(),
@@ -102,6 +104,7 @@ impl MonitoringServer {
             agent_registry: agent_registry.clone(),
             conversation_registry: conversation_registry.clone(),
             test_delay,
+            auth_token: auth_token.clone(),
         };
 
         // Handlers
@@ -228,8 +231,13 @@ impl MonitoringServer {
             .route("/api/trace", get(trace_handler))
             .route("/api/agents", get(agents_handler))
             .route("/api/conversations", get(conversations_handler))
-            .with_state(app_state)
-            .layer(tower_http::timeout::TimeoutLayer::new(self.timeout_duration));
+            .with_state(app_state.clone())
+            .layer(tower_http::timeout::TimeoutLayer::new(self.timeout_duration))
+            // Auth middleware applied AFTER TimeoutLayer = OUTERMOST layer (runs first on incoming request)
+            .layer(axum::middleware::from_fn_with_state(
+                app_state,
+                auth_middleware,
+            ));
 
         let listener = tokio::net::TcpListener::bind(addr).await?;
         axum::serve(listener, app).await?;

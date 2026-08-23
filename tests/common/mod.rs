@@ -1,6 +1,8 @@
 //! Shared test utilities and mock implementations
 #![allow(dead_code, unused_imports)]
 
+pub mod delegation;
+
 use async_trait::async_trait;
 use serde_json::json;
 use std::sync::Arc;
@@ -141,11 +143,17 @@ impl ScriptedResponse {
 /// A scripted mock LLM provider that returns different responses in sequence.
 /// Each call to `complete()` returns the next response in the script.
 /// The script can include tool calls (via tool_calls field) or plain text.
+///
+/// CRITICAL: This provider CAPTURES all incoming requests in order, allowing
+/// tests to inspect the conversation history (which contains potentially redacted
+/// or raw tool results).
 pub struct ScriptedMockLlmProvider {
     /// Pre-programmed responses, returned in order.
     pub responses: Vec<ScriptedResponse>,
     /// Index of the next response to return.
     pub call_index: AtomicUsize,
+    /// Captured incoming LlmRequest objects, one per complete() call
+    pub captured_requests: Arc<Mutex<Vec<LlmRequest>>>,
 }
 
 impl ScriptedMockLlmProvider {
@@ -153,6 +161,7 @@ impl ScriptedMockLlmProvider {
         Self {
             responses,
             call_index: AtomicUsize::new(0),
+            captured_requests: Arc::new(Mutex::new(Vec::new())),
         }
     }
 }
@@ -167,7 +176,10 @@ impl LlmProvider for ScriptedMockLlmProvider {
         "scripted-mock-model"
     }
 
-    async fn complete(&self, _req: LlmRequest) -> Result<LlmResponse, LlmError> {
+    async fn complete(&self, req: LlmRequest) -> Result<LlmResponse, LlmError> {
+        // CRITICAL: Capture the incoming request so tests can inspect the conversation history
+        self.captured_requests.lock().unwrap().push(req.clone());
+        
         let idx = self.call_index.fetch_add(1, Ordering::SeqCst);
         if idx >= self.responses.len() {
             // Out of script — return a default text response
@@ -243,4 +255,49 @@ pub async fn create_dummy_mcp_client(
 ) -> Result<verdict::mcp::client::McpClient, verdict::mcp::client::McpError> {
     let config = McpServerConfig::new("test_dummy");
     verdict::mcp::client::McpClient::connect(config).await
+}
+
+/// A test tool that returns a response containing a fake API key.
+/// Used to verify that ToolUseLoop's redaction gates correctly redact (Strict) or allow (None) secrets.
+pub struct SecretBearingTestTool;
+
+impl SecretBearingTestTool {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+#[async_trait]
+impl verdict::tools::Tool for SecretBearingTestTool {
+    fn name(&self) -> &str {
+        "test_tool"
+    }
+    
+    fn description(&self) -> &str {
+        "A test tool that returns a secret-bearing result"
+    }
+    
+    fn schema(&self) -> serde_json::Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "arg": { "type": "string" }
+            }
+        })
+    }
+    
+    fn source(&self) -> verdict::tools::ToolSource {
+        verdict::tools::ToolSource::Builtin
+    }
+    
+    async fn call(
+        &self,
+        _args: serde_json::Value,
+        _ctx: verdict::tools::ToolContext,
+    ) -> Result<verdict::tools::ToolOutput, verdict::tools::ToolError> {
+        // Return a response containing a fake secret (longer key to pass scanner's >20 char threshold)
+        Ok(verdict::tools::ToolOutput::text(
+            "Test tool called. Debug info: sk-proj-fake1234567890abcdefghij. Done.".to_string()
+        ))
+    }
 }

@@ -35,6 +35,21 @@ fn step(name: &str, action: StepAction, tools: ToolSet) -> AgentStep {
 }
 
 fn failing_step(name: &str) -> AgentStep {
+    failing_step_scoped(name, ToolSet::None)
+}
+
+/// A failing step carrying an explicit tool scope.
+///
+/// The fallback inherits the FAILED STEP's effective tool scope (a fallback is
+/// the same logical step retried a different way, so it inherits that step's
+/// ceiling alongside its depth and budget — `src/runner/fallback.rs`). A step
+/// scoped `ToolSet::None` therefore yields a fallback that can call nothing,
+/// which is correct: "None because this step needs no tools" and "None because
+/// this step is restricted" are indistinguishable, and resolving that ambiguity
+/// in favour of the permissive reading is exactly the widening-vs-narrowing
+/// conflation that caused the escalation. Tests whose fallback must actually
+/// call a tool therefore scope the failing step to permit that tool.
+fn failing_step_scoped(name: &str, tools: ToolSet) -> AgentStep {
     step(
         name,
         StepAction::Custom(Arc::new(|_ctx| {
@@ -42,7 +57,7 @@ fn failing_step(name: &str) -> AgentStep {
                 reason: "forced failure to trigger fallback".into(),
             })
         })),
-        ToolSet::None,
+        tools,
     )
 }
 
@@ -157,9 +172,15 @@ async fn fallback_inherits_and_accumulates_budget() {
         ToolSet::Allow(vec!["fs.list".into()]),
     );
 
+    // The failing step is scoped to permit `fs.list` because its fallback calls
+    // `fs.list`; the fallback inherits this step's scope. This test asserts budget
+    // continuity, not tool scoping (that is `delegation_tool_denial_fallback.rs`).
     let main = pipeline(
         "main",
-        vec![bump, failing_step("boom")],
+        vec![
+            bump,
+            failing_step_scoped("boom", ToolSet::Allow(vec!["fs.list".into()])),
+        ],
         FailureMode::Fallback(Box::new(fallback)),
     );
 
@@ -351,9 +372,14 @@ async fn tempdir_isolation_survives_fallback() {
         FailureMode::Abort,
     );
 
+    // Scoped to permit `fs.write` because the fallback calls it and inherits this
+    // step's scope. This test asserts TempDir isolation, not tool scoping.
     let main = pipeline(
         "main",
-        vec![failing_step("boom")],
+        vec![failing_step_scoped(
+            "boom",
+            ToolSet::Allow(vec!["fs.write".into()]),
+        )],
         FailureMode::Fallback(Box::new(fallback)),
     );
 

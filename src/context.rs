@@ -8,6 +8,7 @@ use crate::action::StepOutput;
 use crate::agent::{AgentPolicy, FilesystemPolicy, NetworkPolicy};
 use crate::cancel::CancellationToken;
 use crate::llm::provider::MessageHistory;
+use crate::pipeline::InjectionProtection;
 use crate::registry::{AgentRegistry, ToolRegistry};
 use crate::skills::registry::SkillRegistry;
 use crate::toolset::ToolSet;
@@ -133,6 +134,11 @@ pub struct SerializableStepContext {
     /// network policy and budget caps across checkpoint/resume.
     #[serde(default)]
     pub agent_policy: AgentPolicy,
+
+    /// Injection protection policy for restored context — controls whether
+    /// intermediate tool results are scanned for secrets/injections.
+    #[serde(default)]
+    pub injection_protection: InjectionProtection,
 
     /// Custom metadata for extensions
     pub metadata: Value,
@@ -281,6 +287,7 @@ pub struct StepContext {
     pub budget: BudgetState,
     pub filesystem_policy: FilesystemPolicy,
     pub network_policy: NetworkPolicy,
+    pub injection_protection: InjectionProtection,
 
     /// Full policy of the agent currently executing this context.
     ///
@@ -347,6 +354,7 @@ impl StepContext {
             budget: BudgetState::default(),
             filesystem_policy,
             network_policy: NetworkPolicy::DenyAll,
+            injection_protection: InjectionProtection::None,
             agent_policy: AgentPolicy::default(),
             llm_client: None,
             conversation_history: MessageHistory::new(),
@@ -385,6 +393,7 @@ impl StepContext {
             filesystem_policy: self.filesystem_policy.clone(),
             network_policy: self.network_policy.clone(),
             agent_policy: self.agent_policy.clone(),
+            injection_protection: self.injection_protection.clone(),
 
             metadata: Value::Object(serde_json::Map::new()),
             request_context: self.request_context.clone(),
@@ -426,6 +435,7 @@ impl StepContext {
             budget: serializable.budget,
             filesystem_policy: serializable.filesystem_policy,
             network_policy: serializable.network_policy,
+            injection_protection: serializable.injection_protection,
             agent_policy: serializable.agent_policy,
             llm_client: None,
             conversation_history: serializable.conversation_history,

@@ -23,6 +23,7 @@ use tracing::{debug, trace};
 use super::{ChatRole, LlmChunk, LlmError, LlmProvider, LlmRequest, LlmResponse, LlmUsage, ToolCall};
 use crate::llm::openai_types::OpenAiResponse;
 use crate::llm::openai_shared::{build_request_body, classify_http_error};
+use crate::injection::sanitize_for_exposure;
 
 /// OpenAI-compatible provider (e.g., OpenAI, local Ollama, etc.).
 pub struct OpenAiCompatibleProvider {
@@ -150,11 +151,11 @@ impl LlmProvider for OpenAiCompatibleProvider {
                 Ok(r) => r,
                 Err(e) => {
                     last_err = Some(if e.is_timeout() {
-                        LlmError::NetworkError(e.to_string())
+                        LlmError::NetworkError(sanitize_for_exposure(&e.to_string()))
                     } else if e.is_connect() {
-                        LlmError::NetworkError(e.to_string())
+                        LlmError::NetworkError(sanitize_for_exposure(&e.to_string()))
                     } else {
-                        LlmError::RequestFailed(e.to_string())
+                        LlmError::RequestFailed(sanitize_for_exposure(&e.to_string()))
                     });
                     continue;
                 }
@@ -177,16 +178,17 @@ impl LlmProvider for OpenAiCompatibleProvider {
                         }
                     }
                 } else {
-                    return Err(LlmError::RequestFailed(format!(
+                    let msg = format!(
                         "HTTP {status} from {url}: {resp_body}"
-                    )));
+                    );
+                    return Err(LlmError::RequestFailed(sanitize_for_exposure(&msg)));
                 }
             }
 
             let raw_body = match response.text().await {
                 Ok(b) => b,
                 Err(e) => {
-                    last_err = Some(LlmError::InvalidResponse(e.to_string()));
+                    last_err = Some(LlmError::InvalidResponse(sanitize_for_exposure(&e.to_string())));
                     continue;
                 }
             };
@@ -203,11 +205,12 @@ impl LlmProvider for OpenAiCompatibleProvider {
             let api_response: OpenAiResponse = match serde_json::from_str(&raw_body) {
                 Ok(r) => r,
                 Err(e) => {
-                    last_err = Some(LlmError::InvalidResponse(format!(
+                    let msg = format!(
                         "{}: body={}",
                         e,
                         &raw_body[..raw_body.len().min(500)]
-                    )));
+                    );
+                    last_err = Some(LlmError::InvalidResponse(sanitize_for_exposure(&msg)));
                     continue;
                 }
             };
@@ -292,7 +295,7 @@ impl LlmProvider for OpenAiCompatibleProvider {
                     .json(&body)
                     .send()
                     .await
-                    .map_err(|e| LlmError::NetworkError(e.to_string()))?;
+                    .map_err(|e| LlmError::NetworkError(sanitize_for_exposure(&e.to_string())))?;
 
                 let status = resp.status();
                 if !status.is_success() {
@@ -303,15 +306,16 @@ impl LlmProvider for OpenAiCompatibleProvider {
                     if let Some(err) = classify_http_error(status, &body_text, &url) {
                         return Err(err);
                     }
-                    return Err(LlmError::RequestFailed(format!(
+                    let msg = format!(
                         "HTTP {status} from {url}: {body_text}"
-                    )));
+                    );
+                    return Err(LlmError::RequestFailed(sanitize_for_exposure(&msg)));
                 }
 
                 let full_text = resp
                     .text()
                     .await
-                    .map_err(|e| LlmError::NetworkError(e.to_string()))?;
+                    .map_err(|e| LlmError::NetworkError(sanitize_for_exposure(&e.to_string())))?;
                 Ok(full_text)
             })
             .flat_map(|text_result| {
