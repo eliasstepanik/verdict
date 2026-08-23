@@ -8,14 +8,12 @@ use crate::context::StepContext;
 /// - `{input}` → ctx.input (or "task" field if object)
 /// - `{step_name}` → prior step's output for that step name
 ///
-/// NOTE: O(n²) performance when many placeholders exist — addressed in future optimization phase.
-/// If a step output contains literal `{...}` patterns matching step names, those patterns may be
-/// substituted in subsequent iterations, potentially causing unexpected cascading replacements.
-/// For safety, avoid step outputs that contain literal `{...}` patterns matching step names.
+/// Performs single-pass substitution (O(n) scan): walks left-to-right through the template,
+/// identifying placeholders and substituting them directly into an output buffer.
+/// Substituted content is never re-scanned, preventing cascading replacements and ensuring
+/// step outputs that happen to contain literal `{...}` patterns are NOT re-substituted.
 pub fn resolve_template(template: &str, ctx: &StepContext) -> String {
-    let mut result = template.to_string();
-
-    // Substitute {input}
+    // Compute input_str once, used for {input} substitution
     let input_str = match &ctx.input {
         serde_json::Value::String(s) => s.clone(),
         serde_json::Value::Object(map) => {
@@ -28,15 +26,51 @@ pub fn resolve_template(template: &str, ctx: &StepContext) -> String {
         }
         v => v.to_string(),
     };
-    result = result.replace("{input}", &input_str);
 
-    // Substitute {step_name} for each prior step result
-    for (step_name, step_result) in &ctx.step_results {
-        let value_str = step_result.output.raw.clone();
-        result = result.replace(&format!("{{{}}}", step_name), &value_str);
+    let mut output = String::new();
+    let mut chars = template.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch == '{' {
+            // Try to match a placeholder: collect chars until '}' or end of string
+            let mut placeholder_name = String::new();
+            let mut found_close = false;
+
+            while let Some(&next_ch) = chars.peek() {
+                if next_ch == '}' {
+                    chars.next(); // consume the '}'
+                    found_close = true;
+                    break;
+                } else if next_ch == '{' {
+                    // Nested '{' — this is not a valid placeholder, treat outer '{' as literal
+                    break;
+                }
+                placeholder_name.push(chars.next().unwrap());
+            }
+
+            if found_close {
+                // We have a complete placeholder; try to resolve it
+                if placeholder_name == "input" {
+                    output.push_str(&input_str);
+                } else if let Some(step_result) = ctx.step_results.get(&placeholder_name) {
+                    output.push_str(&step_result.output.raw);
+                } else {
+                    // Placeholder not recognized; output the literal text
+                    output.push('{');
+                    output.push_str(&placeholder_name);
+                    output.push('}');
+                }
+            } else {
+                // No closing '}' found; output the literal '{'
+                output.push('{');
+                output.push_str(&placeholder_name);
+            }
+        } else {
+            output.push(ch);
+        }
     }
 
-    result
+    output
 }
 
 /// Strip XML tool-call artifacts that Claude sometimes halluccinates in synthesis responses.
@@ -201,3 +235,7 @@ pub fn parse_xml_tool_calls(text: &str) -> Vec<(String, serde_json::Value)> {
 
     result
 }
+
+#[cfg(test)]
+#[path = "xml_tools_tests.rs"]
+mod tests;

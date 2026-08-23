@@ -1,6 +1,10 @@
 //! LLM provider integration.
 
 pub mod client;
+pub mod messages;
+pub mod openai_provider;
+pub mod openai_shared;
+pub mod openai_types;
 pub mod provider;
 
 pub use client::LlmClient;

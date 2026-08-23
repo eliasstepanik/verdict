@@ -57,6 +57,7 @@ impl PipelineRunner {
             plugin_registry: self.plugin_registry.clone(),
             auto_title_llm: self.auto_title_llm.clone(),
             memory: self.memory.clone(),
+            rate_limiter: self.rate_limiter.clone(),
         };
 
         // Derive the sub-agent's policy from the PARENT's actual policy so that

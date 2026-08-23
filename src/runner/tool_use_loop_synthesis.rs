@@ -53,6 +53,17 @@ impl PipelineRunner {
                 tool_choice: None,
             };
 
+            // Rate-limit check before synthesis LLM call — MUST be before match to surface errors
+            if let Some(rate_limiter_mutex) = &self.rate_limiter {
+                if let Ok(mut rate_limiter) = rate_limiter_mutex.lock() {
+                    if let Err(budget_err) = rate_limiter.check_rate_limit() {
+                        return Err(StepError::ActionFailed {
+                            reason: format!("rate limit: {}", budget_err),
+                        });
+                    }
+                }
+            }
+
             match llm_client.complete(synthesis_req).await {
                 Ok(syn_resp) => {
                     ctx.budget.llm_calls_used += 1;
@@ -171,22 +182,10 @@ impl PipelineRunner {
                     };
                     break;
                 }
-                Err(_) => {
-                    let tool_results: Vec<String> = history
-                        .messages
-                        .iter()
-                        .filter(|m| matches!(m.role, crate::llm::ChatRole::Tool))
-                        .map(|m| m.content.clone())
-                        .collect();
-                    final_text = if tool_results.is_empty() {
-                        "Task completed.".to_string()
-                    } else {
-                        format!(
-                            "Task completed.\n{}",
-                            tool_results.last().unwrap_or(&String::new())
-                        )
-                    };
-                    break;
+                Err(llm_err) => {
+                    return Err(StepError::ActionFailed {
+                        reason: format!("synthesis LLM call failed: {}", llm_err),
+                    });
                 }
             }
         }

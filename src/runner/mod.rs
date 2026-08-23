@@ -75,6 +75,8 @@ pub struct PipelineRunner {
     pub auto_title_llm: Option<Arc<crate::llm::LlmClient>>,
     /// Multi-tier memory store (Phase C1)
     pub memory: Option<Arc<dyn crate::memory::MemoryStore>>,
+    /// Rate limiter for controlling call frequency (Phase 2)
+    pub rate_limiter: Option<Arc<std::sync::Mutex<crate::budget::RateLimiter>>>,
 }
 
 impl PipelineRunner {
@@ -93,6 +95,7 @@ impl PipelineRunner {
             plugin_registry: Arc::new(crate::pipeline::PluginRegistry::new()),
             auto_title_llm: None,
             memory: None,
+            rate_limiter: None,
         }
     }
 
@@ -111,6 +114,7 @@ impl PipelineRunner {
             context_store: None,
             auto_title_llm: None,
             memory: None,
+            rate_limiter: None,
         }
     }
 
@@ -129,6 +133,7 @@ impl PipelineRunner {
             context_store: None,
             auto_title_llm: None,
             memory: None,
+            rate_limiter: None,
         }
     }
 
@@ -148,6 +153,7 @@ impl PipelineRunner {
             )),
             plugin_registry: Arc::new(crate::pipeline::PluginRegistry::new()),
             context_store: None,
+            rate_limiter: None,
             auto_title_llm: None,
             memory: None,
         }
@@ -170,6 +176,7 @@ impl PipelineRunner {
             context_store: None,
             auto_title_llm: None,
             memory: None,
+            rate_limiter: None,
         }
     }
 
@@ -204,6 +211,13 @@ impl PipelineRunner {
     /// Set a multi-tier memory store for the runner (Phase C1).
     pub fn with_memory(mut self, store: Arc<dyn crate::memory::MemoryStore>) -> Self {
         self.memory = Some(store);
+        self
+    }
+
+    /// Set a rate limiter for the runner (Phase 2).
+    /// Limits the frequency of LLM and tool calls to the specified max calls per minute.
+    pub fn with_rate_limiter(mut self, rate_limiter: crate::budget::RateLimiter) -> Self {
+        self.rate_limiter = Some(Arc::new(std::sync::Mutex::new(rate_limiter)));
         self
     }
 }
