@@ -215,7 +215,7 @@ async fn test_monitoring_server_timeout_layer_allows_fast_requests() {
     // Create server with a reasonable 5-second timeout (handlers should be much faster)
     let server = MonitoringServer::with_timeout(audit_log, trace, Duration::from_secs(5));
 
-    let server_addr: std::net::SocketAddr = "127.0.0.1:19284"
+    let server_addr: std::net::SocketAddr = "127.0.0.1:19288"
         .parse()
         .expect("failed to parse addr");
 

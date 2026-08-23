@@ -143,11 +143,17 @@ impl ScriptedResponse {
 /// A scripted mock LLM provider that returns different responses in sequence.
 /// Each call to `complete()` returns the next response in the script.
 /// The script can include tool calls (via tool_calls field) or plain text.
+///
+/// CRITICAL: This provider CAPTURES all incoming requests in order, allowing
+/// tests to inspect the conversation history (which contains potentially redacted
+/// or raw tool results).
 pub struct ScriptedMockLlmProvider {
     /// Pre-programmed responses, returned in order.
     pub responses: Vec<ScriptedResponse>,
     /// Index of the next response to return.
     pub call_index: AtomicUsize,
+    /// Captured incoming LlmRequest objects, one per complete() call
+    pub captured_requests: Arc<Mutex<Vec<LlmRequest>>>,
 }
 
 impl ScriptedMockLlmProvider {
@@ -155,6 +161,7 @@ impl ScriptedMockLlmProvider {
         Self {
             responses,
             call_index: AtomicUsize::new(0),
+            captured_requests: Arc::new(Mutex::new(Vec::new())),
         }
     }
 }
@@ -169,7 +176,10 @@ impl LlmProvider for ScriptedMockLlmProvider {
         "scripted-mock-model"
     }
 
-    async fn complete(&self, _req: LlmRequest) -> Result<LlmResponse, LlmError> {
+    async fn complete(&self, req: LlmRequest) -> Result<LlmResponse, LlmError> {
+        // CRITICAL: Capture the incoming request so tests can inspect the conversation history
+        self.captured_requests.lock().unwrap().push(req.clone());
+        
         let idx = self.call_index.fetch_add(1, Ordering::SeqCst);
         if idx >= self.responses.len() {
             // Out of script — return a default text response
