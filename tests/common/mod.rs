@@ -1,6 +1,8 @@
 //! Shared test utilities and mock implementations
 #![allow(dead_code, unused_imports)]
 
+pub mod delegation;
+
 use async_trait::async_trait;
 use serde_json::json;
 use std::sync::Arc;
