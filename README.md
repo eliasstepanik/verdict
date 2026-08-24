@@ -54,7 +54,7 @@ Every guard is **enforced in code** — not just hoped for in a prompt.
 
 ## Overview
 
-Verdict is a Rust framework designed for building autonomous agents that can be **trusted** to complete complex tasks through hard, verifiable guarantees—not soft prompts and hopes.
+**Verdict is an embeddable Rust library** — not a standalone application or CLI tool. It's designed to be added as a dependency to your Rust project to build autonomous agents that can be **trusted** to complete complex tasks through hard, verifiable guarantees—not soft prompts and hopes.
 
 Traditional agent frameworks are built around LLM calls + tool definitions. Verdict is different:
 
@@ -80,7 +80,7 @@ Verdict runs on **9 phases of evolution**, each phase unlocking new capabilities
 | **6** | Built-in Agents | 6 specialist agents (planner, coder, reviewer, debugger, reflector, orchestrator) |
 | **7** | Safety & Production | InjectionScanner, SecretScanner, enhanced guards, deployment patterns |
 | **8** | Self-Improvement | EvaluationSuite, SelfUpdateEngine, agent versioning & promotion |
-| **9** | Advanced Execution | Plugin system, HotReload, RemoteAgent, MonitoringServer, WebUI |
+| **9** | Advanced Execution | Plugin system, HotReload, RemoteAgent |
 
 ---
 
@@ -128,7 +128,6 @@ Verdict runs on **9 phases of evolution**, each phase unlocking new capabilities
 ### Monitoring & Debugging
 - ✅ **Comprehensive audit logging** (JSON-serializable events)
 - ✅ **Pipeline tracing** with step results and timing
-- ✅ **Monitoring server** (HTTP + WebUI)
 - ✅ **Hot-reload support** for live agent updates
 
 ---
@@ -375,114 +374,6 @@ match runner.run(&pipeline, &agent, input).await {
 
 ---
 
-## Running the Monitoring Web UI
-
-Verdict includes a built-in `MonitoringServer` that serves:
-- An HTML dashboard showing pipeline execution in real-time
-- A JSON API for audit log entries
-- A JSON API for trace data
-
-### Starting the Monitoring Server
-
-Create the server and run it as a background task:
-
-```rust
-use verdict::prelude::*;
-use std::net::SocketAddr;
-use std::sync::Arc;
-
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // ... your pipeline setup ...
-
-    let mut runner = PipelineRunner::new();
-    let agent = planner_agent();
-    let pipeline = my_pipeline();
-
-    // Run the pipeline and collect audit log
-    let result = runner.run(&pipeline, &agent, input).await?;
-
-    // Create the monitoring server
-    let audit_log = runner.audit_log.clone();  // AuditLog is cloneable
-    let trace = runner.trace.clone();           // PipelineTrace is cloneable
-
-    let monitoring_server = MonitoringServer::new(audit_log, trace);
-
-    // Spawn the server on a background task
-    let server_addr: SocketAddr = "127.0.0.1:8080".parse()?;
-    
-    tokio::spawn(async move {
-        if let Err(e) = monitoring_server.serve(server_addr).await {
-            eprintln!("Monitoring server error: {:?}", e);
-        }
-    });
-
-    // Server is now listening. Open a browser:
-    println!("📊 Monitoring UI available at http://127.0.0.1:8080");
-
-    // Let the server run while you do other work
-    tokio::time::sleep(tokio::time::Duration::from_secs(300)).await;
-
-    Ok(())
-}
-```
-
-### MonitoringServer Endpoints
-
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/` | GET | HTML dashboard (interactive UI) |
-| `/api/entries` | GET | JSON array of audit log entries |
-| `/api/trace` | GET | JSON trace object with step timing |
-
-### Example: Full Integration with Monitoring
-
-```rust
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Create registries
-    let tool_registry = Arc::new(ToolRegistry::with_builtins());
-    let agent_registry = Arc::new(AgentRegistry::new());
-
-    // Register agents
-    agent_registry.register(coder_agent());
-    agent_registry.register(reviewer_agent());
-
-    // Create runner
-    let mut runner = PipelineRunner::with_registries(
-        tool_registry,
-        agent_registry,
-    );
-
-    // Start monitoring server in background
-    let audit_log = runner.audit_log.clone();
-    let trace = runner.trace.clone();
-    
-    tokio::spawn(async move {
-        let server = MonitoringServer::new(audit_log, trace);
-        let addr = "127.0.0.1:8080".parse()?;
-        server.serve(addr).await
-    });
-
-    println!("✅ Monitoring server started on http://127.0.0.1:8080");
-
-    // Run your pipeline
-    let pipeline = my_pipeline();
-    let agent = coder_agent();
-    let input = json!({"task": "implement feature X"});
-
-    let result = runner.run(&pipeline, &agent, input).await?;
-
-    println!("Pipeline result: {:?}", result.success);
-    println!("Check the dashboard at http://127.0.0.1:8080 for details");
-
-    // Keep the server alive
-    std::thread::sleep(std::time::Duration::from_secs(600));
-
-    Ok(())
-}
-```
-
 ---
 
 ## Core Concepts
@@ -566,14 +457,6 @@ Extend Verdict without recompiling:
 - **Plugin trait**: load at runtime
 - **PluginRegistry**: manage lifecycle
 - **HotReloadHandle**: live update agents/tools
-
-### MonitoringServer
-HTTP + WebUI for monitoring:
-- Real-time pipeline execution
-- Cost dashboards
-- Audit log viewer
-- Agent health
-- Listens on configurable port (default 8080)
 
 ---
 
@@ -776,71 +659,32 @@ MIT (see LICENSE file for details)
 
 ## Examples
 
-Two standalone example projects demonstrate Verdict in action:
+Verdict comes with example programs in the `examples/` directory, runnable via `cargo run --example <name>`:
 
-### [verdict-demo](https://github.com/eliasstepanik/verdict-demo)
-A showcase binary with 9 subcommands, each demonstrating a different feature of the framework:
-
-| Command | Demonstrates |
+| Example | Demonstrates |
 |---------|-------------|
-| `pipeline` | Pipeline structure, guard enforcement, graceful LLM-absent failure |
-| `agents` | AgentRegistry, built-in agent introspection |
-| `guards` | All major guard types with real TOML/YAML/JSON/secrets parsing |
-| `tools` | FunctionTool, ToolRegistry, ToolSet scoping |
-| `audit` | AuditLog, InjectionScanner, SecretScanner |
-| `eval` | EvaluationSuite with Custom closure evaluation |
-| `budget` | BudgetTracker exhaustion, RateLimiter |
-| `monitor` | MonitoringServer on `http://127.0.0.1:9001` |
-| `live` | **Real 3-step LLM pipeline** — Haiku drafts → Sonnet refines → Opus critiques |
+| `new_project` | Create a new project structure using Verdict |
+| `dev_pipeline` | Set up and run a development pipeline with guards and verdicts |
+| `check_pipeline` | Validation pipeline with detailed guard checks |
+| `run_agent` | Run a built-in agent (planner, coder, reviewer, etc.) through a pipeline |
+
+Run any example:
 
 ```bash
-git clone https://github.com/eliasstepanik/verdict-demo
-cd verdict-demo
-cargo run -- guards    # no LLM needed
-cargo run -- live      # requires an OpenAI-compatible endpoint
+cargo run --example new_project
+cargo run --example dev_pipeline
+cargo run --example check_pipeline
+cargo run --example run_agent
 ```
 
----
+Each example demonstrates core Verdict concepts:
+- **Pipeline structure** and step definitions
+- **Guard enforcement** and verdict gates
+- **Agent delegation** patterns
+- **Tool registry** integration
+- **Audit logging** and tracing
 
-### [verdict-micro-agent](https://github.com/eliasstepanik/verdict-micro-agent)
-A Micro Agent implementation — give it a natural-language function description and it
-generates Python code using a TDD loop: generate tests → write code → run → fix → repeat.
-
-```bash
-git clone https://github.com/eliasstepanik/verdict-micro-agent
-cd verdict-micro-agent
-cargo run -- "Write a Python function that checks if a number is prime"
-```
-
-The agent routes across three models based on task difficulty:
-- **Claude Haiku** — fast first code attempt
-- **Claude Sonnet** — fixes on iterations 1–2
-- **Claude Opus** — deep debugging on iterations 3+
-
-Loop exits as soon as all tests pass. Typical run: 1–2 iterations.
-
----
-
-### [verdict-code](https://github.com/eliasstepanik/verdict-code)
-An interactive opencode-like CLI assistant that demonstrates all major verdict features
-in a single runnable project: `Pipeline`, `Guard`, `Verdict`, `ToolRegistry`, `SkillRegistry`,
-`FunctionTool`, `StepAction::ToolCall`, and `StepAction::UseSkill`.
-
-Every user message runs through a real verdict pipeline. Slash commands let you exercise
-tools and skills directly:
-
-| Command | Demonstrates |
-|---------|-------------|
-| `/tools` | `ToolRegistry`, `FunctionTool`, `StepAction::ToolCall`, `ToolSet::Allow` |
-| `/skills` | `SkillRegistry`, built-in skills, `StepAction::UseSkill` |
-| type "count words" | triggers a 4th `ToolCall` step automatically in the pipeline |
-
-```bash
-git clone https://github.com/eliasstepanik/verdict-code
-cd verdict-code
-# Edit BASE_URL and API_KEY in src/main.rs
-cargo run
-```
+These examples are part of the Verdict library itself and show how to use Verdict as an embeddable Rust dependency in your own application.
 
 ---
 
