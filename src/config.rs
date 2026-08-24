@@ -41,7 +41,7 @@ pub struct DevConfig {
     #[serde(default)]
     pub agent: Option<String>,
 
-    /// Monitoring server port (default: 8080)
+    /// Development server port (currently unused)
     #[serde(default)]
     pub port: Option<u16>,
 

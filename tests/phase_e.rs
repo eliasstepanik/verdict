@@ -1,7 +1,7 @@
 use verdict::prelude::*;
 
-// Phase E: Observability & Deployment Integration Tests
-// This validates the monitoring server enhancements and registry extensions
+// Phase E: Registry and Pipeline Trace Integration Tests
+// This validates agent registry, conversation registry, and pipeline trace functionality
 
 #[test]
 fn test_agent_registry_list_agents() {

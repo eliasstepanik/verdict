@@ -1,5 +1,5 @@
 //! Phase 9: Advanced Execution tests
-//! Tests for DAG pipelines, branching, remote agents, plugins, hot-reload, and monitoring
+//! Tests for DAG pipelines, branching, remote agents, plugins, hot-reload, and prelude exports
 
 use serde_json::json;
 use std::sync::{Arc, Mutex};

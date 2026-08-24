@@ -671,7 +671,7 @@ Verdict comes with example programs in the `examples/` directory, runnable via `
 Run any example:
 
 ```bash
-cargo run --example new_project
+cargo run --example new_project -- my_project
 cargo run --example dev_pipeline
 cargo run --example check_pipeline
 cargo run --example run_agent
