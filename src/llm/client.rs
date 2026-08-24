@@ -80,25 +80,25 @@ impl LlmClient {
         &self,
         request: LlmRequest,
     ) -> Pin<Box<dyn Stream<Item = Result<LlmChunk, LlmError>> + Send>> {
-        // Check rate limit before starting the stream
-        if let Some(rate_limiter_mutex) = &self.rate_limiter {
-            // Recover from poisoned lock (fail-closed: still enforce rate limiting).
-            let mut rate_limiter = match rate_limiter_mutex.lock() {
-                Ok(guard) => guard,
-                Err(poisoned) => poisoned.into_inner(),
-            };
+         // Check rate limit before starting the stream
+         if let Some(rate_limiter_mutex) = &self.rate_limiter {
+             // Recover from poisoned lock (fail-closed: still enforce rate limiting).
+             let mut rate_limiter = match rate_limiter_mutex.lock() {
+                 Ok(guard) => guard,
+                 Err(poisoned) => poisoned.into_inner(),
+             };
 
-            if let Err(budget_err) = rate_limiter.check_rate_limit() {
-                // Return a stream that immediately yields a rate limit error
-                use futures::stream;
-                let err_msg = budget_err.to_string();
-                return Box::pin(stream::once(async {
-                    Err(LlmError::LocalRateLimit(err_msg))
-                }));
-            }
-        }
+             if let Err(budget_err) = rate_limiter.check_rate_limit() {
+                 // Return a stream that immediately yields a rate limit error
+                 use futures::stream;
+                 let err_msg = budget_err.to_string();
+                 return Box::pin(stream::once(async {
+                     Err(LlmError::LocalRateLimit(err_msg))
+                 }));
+             }
+         }
 
-        self.provider.stream(request)
+         self.provider.stream(request)
     }
 
     /// Get the default model name for this client's provider.

@@ -628,9 +628,10 @@ async fn test_no_rate_limiter_backward_compat() {
     }
 }
 
-// ─── RESTORED TEST 4: Second LLM call also is rate-limited ───────────────────────
-// Backup regression test: two consecutive LLM calls with rate limit of 2/min both succeed,
-// but a hypothetical 3rd would fail. This serves as a consistency check.
+// ─── RESTORED TEST 4: Rate limit on tool-executor shell.run calls ────────────────
+// Verifies that shell.run tool-call rate limiting works: 3x shell.run calls with 2/min limit
+// must fail on the 3rd call (tool_executor.rs rate-limit gate). This is separate from
+// LLM-path rate limiting and tests the tool-call concern specifically.
 #[tokio::test]
 async fn test_rate_limit_on_tool_calls() {
     let pipeline = Pipeline {
@@ -692,20 +693,20 @@ async fn test_rate_limit_on_tool_calls() {
         max_retries: 0,
     };
 
-    let mut policy = AgentPolicy::default();
-    policy.allowed_tools = ToolSet::Full;
-    let agent = Agent {
-        name: "poison_test_agent".into(),
-        description: "poison recovery test".into(),
-        pipeline: pipeline.clone(),
-        tools: ToolSet::Full,
-        skills: SkillSet::default(),
-        policy,
-        scorers: vec![],
-    };
-    let mut runner = PipelineRunner::new();
+     let mut policy = AgentPolicy::default();
+     policy.allowed_tools = ToolSet::Full;
+     let agent = Agent {
+         name: "tool_call_rate_limit_agent".into(),
+         description: "tests tool-call rate limiting".into(),
+         pipeline: pipeline.clone(),
+         tools: ToolSet::Full,
+         skills: SkillSet::default(),
+         policy,
+         scorers: vec![],
+     };
+     let mut runner = PipelineRunner::new();
 
-    // Configure rate limiter: 2 calls per minute (applies to both LLM and tool calls)
+     // Configure rate limiter: 2 calls per minute (applies to both LLM and tool calls)
     let rate_limiter = RateLimiter::new().with_max_calls_per_minute(2);
     runner.rate_limiter = Some(Arc::new(std::sync::Mutex::new(rate_limiter)));
 
@@ -1263,6 +1264,113 @@ async fn test_llm_client_poison_recovery_genuine() {
         hits.load(Ordering::SeqCst),
         0,
         "Provider should never be called when rate limit is enforced via poison recovery"
+    );
+}
+
+// ─── GENUINE POISON RECOVERY TEST 3: LLM stream() with poisoned mutex ───────────────
+// GENUINE TEST: Creates REAL LlmClient with GENUINE poison, calls ACTUAL stream(),
+// confirms rate limiting STILL ENFORCES via real poison recovery in stream() path.
+// This is the counterpart to test_llm_client_poison_recovery_genuine but for stream().
+#[tokio::test]
+async fn test_llm_client_stream_poison_recovery_genuine() {
+    use std::thread;
+    use verdict::llm::provider::{LlmChunk, LlmError, LlmProvider, LlmRequest, LlmResponse};
+    
+    // Trivial provider that tracks hits
+    struct TestProvider {
+        hits: Arc<AtomicUsize>,
+    }
+    
+    #[async_trait::async_trait]
+    impl LlmProvider for TestProvider {
+        fn name(&self) -> &str { "test" }
+        fn default_model(&self) -> &str { "test" }
+        async fn complete(&self, _req: LlmRequest) -> Result<LlmResponse, LlmError> {
+            self.hits.fetch_add(1, Ordering::SeqCst);
+            Ok(LlmResponse {
+                content: "test".into(),
+                model: "test".into(),
+                usage: None,
+                tool_calls: None,
+            })
+        }
+        fn stream(
+            &self,
+            _request: LlmRequest,
+        ) -> std::pin::Pin<Box<dyn futures::Stream<Item = Result<LlmChunk, LlmError>> + Send>> {
+            self.hits.fetch_add(1, Ordering::SeqCst);
+            Box::pin(futures::stream::once(async {
+                Ok(LlmChunk {
+                    delta: "test".into(),
+                    finish_reason: Some("stop".into()),
+                })
+            }))
+        }
+    }
+    
+    let hits = Arc::new(AtomicUsize::new(0));
+    let rate_limiter = Arc::new(std::sync::Mutex::new(
+        RateLimiter::new().with_max_calls_per_minute(0)
+    ));
+    
+    // Poison the mutex
+    let limiter_clone = rate_limiter.clone();
+    let poison_thread = thread::spawn(move || {
+        let _guard = limiter_clone.lock().unwrap();
+        panic!("intentional poison");
+    });
+    
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _ = poison_thread.join();
+    }));
+    
+    // Verify poison
+    assert!(rate_limiter.lock().is_err(), "mutex should be poisoned");
+    
+    // Create REAL LlmClient with POISONED rate limiter
+    let provider = Arc::new(TestProvider { hits: hits.clone() });
+    let client = LlmClient::new(provider).with_rate_limiter(rate_limiter);
+    
+    // Call REAL stream() against poisoned mutex
+    let req = LlmRequest {
+        system: "s".into(),
+        user: "u".into(),
+        model: "test".into(),
+        max_tokens: None,
+        history: None,
+        temperature: None,
+        tools: None,
+        tool_choice: None,
+    };
+    
+    let mut stream = client.stream(req);
+    
+    // Attempt to read from stream — should immediately get rate-limit error
+    use futures::stream::StreamExt;
+    let first = stream.next().await;
+    
+    // CRITICAL: Even with poison, rate limit MUST be enforced for stream() path
+    match first {
+        Some(Err(LlmError::LocalRateLimit(msg))) => {
+            assert!(
+                msg.contains("Rate limit"),
+                "GENUINE STREAM POISON TEST PASSED: Got rate limit error despite poison: {}",
+                msg
+            );
+        }
+        _ => {
+            panic!(
+                "GENUINE STREAM POISON TEST FAILED: Expected LocalRateLimit error from stream() even with poisoned mutex, got: {:?}",
+                first
+            );
+        }
+    }
+    
+    // Verify provider was NEVER hit due to rate-limit enforcement
+    assert_eq!(
+        hits.load(Ordering::SeqCst),
+        0,
+        "Provider stream() should never be called when rate limit is enforced via poison recovery"
     );
 }
 
