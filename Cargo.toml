@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "verdict-workspace", "verdict-app", "verdict-memory", "verdict-telemetry", "verdict-server"]
+members = [".", "verdict-workspace", "verdict-app", "verdict-memory", "verdict-telemetry"]
 resolver = "2"
 
 [package]
