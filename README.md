@@ -523,7 +523,7 @@ All 10 phases are **complete** ✅:
 6. ✅ **Phase 6: Built-in Agents** — 6 specialist agents (planner, coder, reviewer, debugger, reflector, orchestrator)
 7. ✅ **Phase 7: Safety & Production** — Injection detection, secret detection, enhanced guards
 8. ✅ **Phase 8: Self-Improvement** — EvaluationSuite, SelfUpdateEngine, agent versioning
-9. ✅ **Phase 9: Advanced Execution** — Plugin system, hot-reload, remote agents, monitoring server
+9. ✅ **Phase 9: Advanced Execution** — Plugin system, hot-reload, remote agents
 10. ✅ **Phase 10: Stub Completion** — Real LLM provider, HTTP tool, MCP JSON-RPC, TOML/YAML guard parsing
 
 ---

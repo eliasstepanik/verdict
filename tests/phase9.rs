@@ -4,7 +4,7 @@
 use serde_json::json;
 use std::sync::{Arc, Mutex};
 use verdict::agents;
-use verdict::context::{PipelineTrace, StepContext};
+use verdict::context::StepContext;
 use verdict::prelude::*;
 
 #[test]
