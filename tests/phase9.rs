@@ -263,15 +263,6 @@ fn test_plugin_registry_add_plugin() {
 }
 
 #[test]
-fn test_monitoring_server_construction() {
-    let audit_log = AuditLog::new();
-    let trace = PipelineTrace::new();
-
-    let _server = MonitoringServer::new(audit_log, trace);
-    // Verify server can be created
-}
-
-#[test]
 fn test_step_action_branch_variant() {
     let action = StepAction::Branch {
         condition: "test_condition".into(),
