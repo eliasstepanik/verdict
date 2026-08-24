@@ -89,7 +89,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Run the pipeline
-    let runner = PipelineRunner::new();
+    let mut runner = PipelineRunner::new();
     let result = runner.run(&agent.pipeline, &agent, json!({})).await?;
 
     println!("Pipeline completed: {:?}", result.success);
