@@ -10,7 +10,6 @@ pub use crate::llm::{
 // Phase 9: Advanced Execution
 pub use crate::action::RemoteAgentError;
 pub use crate::agent::RemoteAgentClient;
-pub use crate::audit::MonitoringServer;
 pub use crate::pipeline::{HotReloadHandle, Plugin, PluginError, PluginRegistry};
 
 // Phase 14: Cancellation and Interrupt

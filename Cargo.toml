@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "verdict-workspace", "verdict-app", "verdict-cli", "verdict-memory", "verdict-telemetry", "verdict-server"]
+members = [".", "verdict-workspace", "verdict-app", "verdict-memory", "verdict-telemetry"]
 resolver = "2"
 
 [package]
@@ -16,7 +16,6 @@ thiserror = "1"
 chrono = { version = "0.4", features = ["serde"] }
 jsonschema = "0.18"
 tiktoken-rs = "0.5"
-axum = "0.7"
 reqwest = { version = "0.12", features = ["json"] }
 url = "2"
 toml = "0.8"
@@ -27,7 +26,6 @@ uuid = { version = "1", features = ["v4", "serde"] }
 regex = "1"
 tempfile = "3"
 tracing = "0.1"
-tower-http = { version = "0.5", features = ["timeout"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }

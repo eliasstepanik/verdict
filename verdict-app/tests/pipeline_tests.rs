@@ -273,31 +273,25 @@ fn test_improve_pipeline_structure_validates() {
 
     let pipeline = build_improve_pipeline();
 
-    assert_eq!(pipeline.steps.len(), 2);
-    assert_eq!(pipeline.steps[0].name, "self_reflect");
-    assert_eq!(pipeline.steps[1].name, "propose_self_update");
+    // Single-step pipeline: reflect_and_propose
+    assert_eq!(pipeline.steps.len(), 1);
+    assert_eq!(pipeline.steps[0].name, "reflect_and_propose");
 
-    // Verify step 0 has DelegateAgent action
+    // Verify step 0 has LlmCall action
     match &pipeline.steps[0].action {
-        StepAction::DelegateAgent { agent, .. } => {
-            assert_eq!(agent, "reflector");
+        StepAction::LlmCall { system, user, .. } => {
+            assert!(system.contains("reflect"));
+            assert!(user.contains("{input}"));
         }
-        _ => panic!("Expected DelegateAgent action in self_reflect"),
+        _ => panic!("Expected LlmCall action in reflect_and_propose"),
     }
 
-    // Verify step 1 has LlmCall action and ValidJson verdict
-    match &pipeline.steps[1].action {
-        StepAction::LlmCall { user, .. } => {
-            assert!(user.contains("{self_reflect}"));
-        }
-        _ => panic!("Expected LlmCall action in propose_self_update"),
-    }
-
-    match &pipeline.steps[1].verdict {
-        Verdict::Automated(Guard::ValidJson) => {
+    // Verify step 0 has NonEmptyOutput verdict
+    match &pipeline.steps[0].verdict {
+        Verdict::Automated(Guard::NonEmptyOutput) => {
             // Correct!
         }
-        _ => panic!("Expected Verdict::Automated(Guard::ValidJson)"),
+        _ => panic!("Expected Verdict::Automated(Guard::NonEmptyOutput)"),
     }
 }
 

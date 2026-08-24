@@ -3,10 +3,6 @@ name = "verdict-app"
 version = "0.1.0"
 edition = "2021"
 
-[[bin]]
-name = "verdict-app"
-path = "src/main.rs"
-
 [lib]
 name = "verdict_app"
 path = "src/lib.rs"

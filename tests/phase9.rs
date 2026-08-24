@@ -1,10 +1,10 @@
 //! Phase 9: Advanced Execution tests
-//! Tests for DAG pipelines, branching, remote agents, plugins, hot-reload, and monitoring
+//! Tests for DAG pipelines, branching, remote agents, plugins, hot-reload, and prelude exports
 
 use serde_json::json;
 use std::sync::{Arc, Mutex};
 use verdict::agents;
-use verdict::context::{PipelineTrace, StepContext};
+use verdict::context::StepContext;
 use verdict::prelude::*;
 
 #[test]
@@ -260,15 +260,6 @@ fn test_plugin_registry_add_plugin() {
     let plugins = registry.plugins();
     assert_eq!(plugins.len(), 1);
     assert_eq!(plugins[0].name(), "test_plugin");
-}
-
-#[test]
-fn test_monitoring_server_construction() {
-    let audit_log = AuditLog::new();
-    let trace = PipelineTrace::new();
-
-    let _server = MonitoringServer::new(audit_log, trace);
-    // Verify server can be created
 }
 
 #[test]

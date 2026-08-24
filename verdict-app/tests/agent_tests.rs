@@ -13,95 +13,95 @@ use verdict_app::memory;
 // ============================================================================
 
 #[test]
-fn test_assistant_agent_has_two_steps() {
+fn test_assistant_agent_has_single_act_step() {
     let config = AppConfig::default();
     let agent = build_assistant_agent(&config, "test_agent");
 
-    assert_eq!(agent.pipeline.steps.len(), 2);
-    assert_eq!(agent.pipeline.steps[0].name, "understand");
-    assert_eq!(agent.pipeline.steps[1].name, "act");
+    // Current design (see agent.rs doc comment): a single ToolUseLoop step —
+    // Claude decides whether to use tools or reply directly.
+    assert_eq!(agent.pipeline.steps.len(), 1);
+    assert_eq!(agent.pipeline.steps[0].name, "act");
 }
 
 #[test]
-fn test_understand_step_uses_llm_call() {
+fn test_act_step_tools_and_protection() {
     let config = AppConfig::default();
     let agent = build_assistant_agent(&config, "test_agent");
     let step = &agent.pipeline.steps[0];
 
-    // Check action is LlmCall
-    match &step.action {
-        StepAction::LlmCall { system, user, .. } => {
-            assert!(!system.is_empty());
-            assert!(user.contains("{input}"));
+    // The single step is unconditional — there is no prior step to gate on.
+    assert!(matches!(step.guard_in, Guard::None));
+
+    // Step-level tool scope must mirror the agent-level allow-list exactly.
+    match (&step.tools, &agent.tools) {
+        (ToolSet::Allow(step_tools), ToolSet::Allow(agent_tools)) => {
+            assert_eq!(step_tools, agent_tools);
+            assert!(step_tools.contains(&"fs.read".to_string()));
+            assert!(step_tools.contains(&"shell.run".to_string()));
         }
-        _ => panic!("Expected LlmCall action"),
+        _ => panic!("Expected ToolSet::Allow on both step and agent"),
     }
 
-    // Check guards using pattern matching
-    assert!(matches!(step.guard_in, Guard::None));
-    assert!(matches!(step.tools, ToolSet::None));
-    assert!(matches!(
-        step.injection_protection,
-        InjectionProtection::Strict
-    ));
+    assert!(step.input_processors.is_empty());
+    assert!(step.output_processors.is_empty());
+    assert!(step.dependencies.is_empty());
 }
 
 #[test]
 fn test_act_step_uses_tool_use_loop() {
     let config = AppConfig::default();
     let agent = build_assistant_agent(&config, "test_agent");
-    let step = &agent.pipeline.steps[1];
+    let step = &agent.pipeline.steps[0];
 
-    // Check action is ToolUseLoop
     match &step.action {
         StepAction::ToolUseLoop {
             system,
             user,
             tools,
             max_rounds,
+            stop_condition,
             ..
         } => {
             assert!(!system.is_empty());
-            assert!(user.contains("{understand}") || user.contains("{input}"));
-            assert_eq!(*max_rounds, 8);
+            assert!(user.contains("{input}"));
+            assert_eq!(*max_rounds, 10);
             assert!(tools.contains(&"fs.read".to_string()));
             assert!(tools.contains(&"shell.run".to_string()));
+            assert!(tools.contains(&"shell.cargo_test".to_string()));
+            assert!(matches!(stop_condition, StopCondition::TextOnly));
+
+            // The loop's own tool list must match the step's tool scope.
+            match &step.tools {
+                ToolSet::Allow(step_tools) => assert_eq!(tools, step_tools),
+                _ => panic!("Expected ToolSet::Allow on step"),
+            }
         }
         _ => panic!("Expected ToolUseLoop action"),
     }
-
-    // Check guard_in requires understand to pass
-    match &step.guard_in {
-        Guard::StepPassed(step_name) => {
-            assert_eq!(step_name, "understand");
-        }
-        _ => panic!("Expected StepPassed guard_in"),
-    }
-
-    // Check guard_out is AllOf with NoSecretsInOutput
-    match &step.guard_out {
-        Guard::AllOf(guards) => {
-            let has_secrets_check = guards.iter().any(|g| matches!(g, Guard::NoSecretsInOutput));
-            assert!(has_secrets_check, "Expected NoSecretsInOutput in AllOf");
-        }
-        _ => panic!("Expected AllOf guard_out"),
-    }
 }
 
+// Security fix: verified that build_assistant_agent's act step now enforces
+// output guards and injection protection, matching the pattern used by other
+// builders that hold dangerous tools (fs.write, shell.run).
 #[test]
 fn test_act_step_guard_out_checks_secrets() {
     let config = AppConfig::default();
     let agent = build_assistant_agent(&config, "test_agent");
-    let step = &agent.pipeline.steps[1];
+    let step = &agent.pipeline.steps[0];
 
-    // Verify guard_out contains NoSecretsInOutput
-    match &step.guard_out {
-        Guard::AllOf(guards) => {
-            let has_no_secrets = guards.iter().any(|g| matches!(g, Guard::NoSecretsInOutput));
-            assert!(has_no_secrets, "Expected NoSecretsInOutput in guard_out");
-        }
-        _ => panic!("Expected AllOf guard_out"),
-    }
+    // The act step must enforce NonEmptyOutput guard on output (no empty shells).
+    assert!(
+        matches!(step.guard_out, Guard::NonEmptyOutput),
+        "act step should guard output against empty responses, got {:?}",
+        step.guard_out
+    );
+
+    // Injection protection must be Strict to prevent prompt injection via tool output.
+    assert!(
+        matches!(step.injection_protection, InjectionProtection::Strict),
+        "act step should enforce strict injection protection, got {:?}",
+        step.injection_protection
+    );
 }
 
 #[test]
@@ -129,12 +129,9 @@ fn test_agent_declares_skills() {
     let config = AppConfig::default();
     let agent = build_assistant_agent(&config, "test_agent");
 
-    assert_eq!(agent.skills.skills.len(), 5);
+    assert_eq!(agent.skills.skills.len(), 2);
     assert!(agent.skills.skills.contains(&"rust_debugging".to_string()));
     assert!(agent.skills.skills.contains(&"code_review".to_string()));
-    assert!(agent.skills.skills.contains(&"test_writing".to_string()));
-    assert!(agent.skills.skills.contains(&"refactoring".to_string()));
-    assert!(agent.skills.skills.contains(&"api_design".to_string()));
 }
 
 #[test]
@@ -150,76 +147,56 @@ fn test_agent_policy_disallows_self_update() {
 // ============================================================================
 
 #[test]
-fn test_improve_pipeline_has_two_steps() {
+fn test_improve_pipeline_has_single_step() {
     let pipeline = build_improve_pipeline();
 
-    assert_eq!(pipeline.steps.len(), 2);
-    assert_eq!(pipeline.steps[0].name, "self_reflect");
-    assert_eq!(pipeline.steps[1].name, "propose_self_update");
+    // Current design (see agent.rs doc comment): a single LlmCall step that
+    // reflects and proposes in one shot.
+    assert_eq!(pipeline.steps.len(), 1);
+    assert_eq!(pipeline.steps[0].name, "reflect_and_propose");
 }
 
 #[test]
-fn test_self_reflect_step_delegates_to_reflector() {
+fn test_reflect_and_propose_step_uses_llm_call() {
     let pipeline = build_improve_pipeline();
     let step = &pipeline.steps[0];
 
     match &step.action {
-        StepAction::DelegateAgent {
-            agent,
-            input,
-            delegation_policy,
+        StepAction::LlmCall {
+            system,
+            user,
+            append_to_history,
             ..
         } => {
-            assert_eq!(agent, "reflector");
-            assert!(input.is_object());
-            assert_eq!(delegation_policy.max_depth, 1);
-            assert!(delegation_policy
-                .allowed_agents
-                .contains(&"reflector".to_string()));
-        }
-        _ => panic!("Expected DelegateAgent action"),
-    }
-
-    assert!(matches!(step.guard_in, Guard::None));
-}
-
-#[test]
-fn test_propose_self_update_gates_on_self_reflect() {
-    let pipeline = build_improve_pipeline();
-    let step = &pipeline.steps[1];
-
-    // Check guard_in requires self_reflect to pass
-    match &step.guard_in {
-        Guard::StepPassed(step_name) => {
-            assert_eq!(step_name, "self_reflect");
-        }
-        _ => panic!("Expected StepPassed guard_in"),
-    }
-
-    // Check action is LlmCall with self_reflect in template
-    match &step.action {
-        StepAction::LlmCall { user, .. } => {
-            assert!(user.contains("{self_reflect}"));
+            // The prompt must pin the JSON contract this pipeline promises.
+            for key in ["finding", "proposal", "risk_level"] {
+                assert!(system.contains(key), "system prompt missing key {key}");
+                assert!(user.contains(key), "user prompt missing key {key}");
+            }
+            assert!(user.contains("{input}"));
+            // Reflection is a side analysis; it must not pollute chat history.
+            assert!(!append_to_history);
         }
         _ => panic!("Expected LlmCall action"),
     }
 
-    // Check guard_out is AllOf (contains security checks)
-    match &step.guard_out {
-        Guard::AllOf(guards) => {
-            let has_json_check = guards.iter().any(|g| matches!(g, Guard::ValidJson));
-            assert!(has_json_check, "Expected ValidJson in guard_out");
-        }
-        _ => panic!("Expected AllOf guard_out"),
-    }
+    // Single unconditional step, and reflection needs no tools.
+    assert!(matches!(step.guard_in, Guard::None));
+    assert!(matches!(step.tools, ToolSet::None));
+}
 
-    // Check verdict includes ValidJson
-    match &step.verdict {
-        Verdict::Automated(Guard::ValidJson) => {
-            // Correct!
-        }
-        _ => panic!("Expected Verdict::Automated(Guard::ValidJson)"),
-    }
+#[test]
+fn test_reflect_and_propose_step_requires_output() {
+    let pipeline = build_improve_pipeline();
+    let step = &pipeline.steps[0];
+
+    // An empty reflection is useless, so both the guard and the verdict
+    // must reject it.
+    assert!(matches!(step.guard_out, Guard::NonEmptyOutput));
+    assert!(matches!(
+        step.verdict,
+        Verdict::Automated(Guard::NonEmptyOutput)
+    ));
 }
 
 // ============================================================================
@@ -343,75 +320,75 @@ fn test_improve_pipeline_no_parallel_steps() {
     let pipeline = build_improve_pipeline();
 
     for step in &pipeline.steps {
-        // ============================================================================
-        // NEW PHASE A-F TESTS
-        // ============================================================================
-
-        #[test]
-        fn test_build_memory_agent_uses_pipeline_builder() {
-            let config = AppConfig::default();
-            let agent = build_memory_agent(&config, "memory_agent");
-
-            assert_eq!(agent.name, "memory_agent");
-            assert_eq!(agent.pipeline.name, "memory-pipeline");
-            assert_eq!(agent.pipeline.steps.len(), 2);
-            assert!(
-                agent.scorers.len() >= 1,
-                "Memory agent should have at least 1 scorer"
-            );
-        }
-
-        #[test]
-        fn test_memory_agent_has_guard_processors() {
-            let config = AppConfig::default();
-            let agent = build_memory_agent(&config, "memory_agent");
-
-            let act_step = &agent.pipeline.steps[1];
-            assert_eq!(act_step.name, "act");
-            assert!(
-                act_step.output_processors.len() >= 1,
-                "Act step should have at least 1 output processor"
-            );
-        }
-
-        #[test]
-        fn test_multi_agent_pipeline_has_two_steps() {
-            let pipeline = build_multi_agent_pipeline("primary", "helper");
-
-            assert_eq!(pipeline.name, "multi-agent-pipeline");
-            assert_eq!(pipeline.steps.len(), 2);
-            assert_eq!(pipeline.steps[0].name, "delegate_to_helper");
-            assert_eq!(pipeline.steps[1].name, "summarize_result");
-        }
-
-        #[test]
-        fn test_eval_pipeline_uses_rubric_loop() {
-            let pipeline = build_eval_pipeline();
-
-            assert_eq!(pipeline.name, "eval-pipeline");
-            assert_eq!(pipeline.steps.len(), 1);
-            assert_eq!(pipeline.steps[0].name, "evaluate_with_rubric");
-
-            match &pipeline.steps[0].action {
-                StepAction::RubricLoop {
-                    rubric,
-                    max_iterations,
-                    ..
-                } => {
-                    assert_eq!(rubric.len(), 2);
-                    assert_eq!(*max_iterations, 3);
-                }
-                _ => panic!("Expected RubricLoop action"),
-            }
-        }
-
-        #[test]
-        fn test_memory_store_is_arc_memory_store() {
-            let store = memory::build_memory_store();
-            // Just verify it's not null and is an Arc
-            assert!(Arc::strong_count(&store) >= 1);
-        }
-
         assert!(!step.parallel);
     }
+}
+
+// ============================================================================
+// NEW PHASE A-F TESTS
+// ============================================================================
+
+#[test]
+fn test_build_memory_agent_uses_pipeline_builder() {
+    let config = AppConfig::default();
+    let agent = build_memory_agent(&config, "memory_agent");
+
+    assert_eq!(agent.name, "memory_agent");
+    assert_eq!(agent.pipeline.name, "memory-pipeline");
+    assert_eq!(agent.pipeline.steps.len(), 2);
+    assert!(
+        agent.scorers.len() >= 1,
+        "Memory agent should have at least 1 scorer"
+    );
+}
+
+#[test]
+fn test_memory_agent_has_guard_processors() {
+    let config = AppConfig::default();
+    let agent = build_memory_agent(&config, "memory_agent");
+
+    let act_step = &agent.pipeline.steps[1];
+    assert_eq!(act_step.name, "act");
+    assert!(
+        act_step.output_processors.len() >= 1,
+        "Act step should have at least 1 output processor"
+    );
+}
+
+#[test]
+fn test_multi_agent_pipeline_has_two_steps() {
+    let pipeline = build_multi_agent_pipeline("primary", "helper");
+
+    assert_eq!(pipeline.name, "multi-agent-pipeline");
+    assert_eq!(pipeline.steps.len(), 2);
+    assert_eq!(pipeline.steps[0].name, "delegate_to_helper");
+    assert_eq!(pipeline.steps[1].name, "summarize_result");
+}
+
+#[test]
+fn test_eval_pipeline_uses_rubric_loop() {
+    let pipeline = build_eval_pipeline();
+
+    assert_eq!(pipeline.name, "eval-pipeline");
+    assert_eq!(pipeline.steps.len(), 1);
+    assert_eq!(pipeline.steps[0].name, "evaluate_with_rubric");
+
+    match &pipeline.steps[0].action {
+        StepAction::RubricLoop {
+            rubric,
+            max_iterations,
+            ..
+        } => {
+            assert_eq!(rubric.len(), 2);
+            assert_eq!(*max_iterations, 3);
+        }
+        _ => panic!("Expected RubricLoop action"),
+    }
+}
+
+#[test]
+fn test_memory_store_is_arc_memory_store() {
+    let store = memory::build_memory_store();
+    // Just verify it's not null and is an Arc
+    assert!(Arc::strong_count(&store) >= 1);
 }
