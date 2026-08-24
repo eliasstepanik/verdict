@@ -1,95 +1,150 @@
-//! Example: Run a development pipeline in an interactive mode.
+//! Example: Build and run a simple Verdict pipeline.
 //!
-//! This example demonstrates how to load a Verdict configuration from a `verdict.toml` file
-//! and start a development agent in the configured project.
+//! This example demonstrates how to construct a multi-step pipeline using the Verdict library,
+//! where each step transforms data and passes it to the next step via `ctx.step_results`.
 //!
 //! # Usage
 //!
 //! ```sh
-//! cargo run --example dev_pipeline -- --path /path/to/project
-//! cargo run --example dev_pipeline  # Uses current directory
+//! cargo run --example dev_pipeline
 //! ```
 //!
 //! The example will:
-//! 1. Load `verdict.toml` from the project directory
-//! 2. Extract the configured development agent name
-//! 3. Print development mode status and configuration
-//!
-//! In a full implementation, this would start an interactive REPL or file watcher
-//! for live agent development and testing.
+//! 1. Create a 3-step pipeline that transforms input data
+//! 2. Build an agent with that pipeline
+//! 3. Run the pipeline and print real output from each step
+//! 4. Demonstrate data flow between steps via step results
 
-use std::path::PathBuf;
+use serde_json::json;
+use std::sync::Arc;
+use verdict::prelude::*;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args: Vec<String> = std::env::args().collect();
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Create step 1: Echo input and add "-step1"
+    let step1 = AgentStep {
+        name: "transform_a".into(),
+        guard_in: Guard::None,
+        action: StepAction::Custom(Arc::new(|_ctx| {
+            Ok(StepOutput::new("input".into()))
+        })),
+        guard_out: Guard::NonEmptyOutput,
+        verdict: Verdict::Automated(Guard::NonEmptyOutput),
+        tools: ToolSet::None,
+        injection_protection: InjectionProtection::None,
+        output_schema: None,
+        dependencies: vec![],
+        parallel: false,
+        input_processors: vec![],
+        output_processors: vec![],
+    };
 
-    // Simple argument parsing for --path flag
-    let mut project_path: Option<PathBuf> = None;
+    // Create step 2: Take step1's output and append "-step2"
+    let step2 = AgentStep {
+        name: "transform_b".into(),
+        guard_in: Guard::None,
+        action: StepAction::Custom(Arc::new(|ctx| {
+            let prev = ctx
+                .step_results
+                .get("transform_a")
+                .ok_or_else(|| StepError::ActionFailed {
+                    reason: "transform_a not found".into(),
+                })?
+                .output
+                .raw
+                .clone();
+            Ok(StepOutput::new(format!("{prev}-step2")))
+        })),
+        guard_out: Guard::NonEmptyOutput,
+        verdict: Verdict::Automated(Guard::NonEmptyOutput),
+        tools: ToolSet::None,
+        injection_protection: InjectionProtection::None,
+        output_schema: None,
+        dependencies: vec!["transform_a".into()],
+        parallel: false,
+        input_processors: vec![],
+        output_processors: vec![],
+    };
 
-    let mut i = 1;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--path" => {
-                if i + 1 < args.len() {
-                    project_path = Some(PathBuf::from(&args[i + 1]));
-                    i += 2;
-                } else {
-                    eprintln!("Error: --path requires an argument");
-                    std::process::exit(1);
-                }
-            }
-            "-h" | "--help" => {
-                print_help(&args[0]);
-                return Ok(());
-            }
-            _ => {
-                eprintln!("Unknown argument: {}", args[i]);
-                std::process::exit(1);
-            }
+    // Create step 3: Take step2's output and append "-step3"
+    let step3 = AgentStep {
+        name: "transform_c".into(),
+        guard_in: Guard::None,
+        action: StepAction::Custom(Arc::new(|ctx| {
+            let prev = ctx
+                .step_results
+                .get("transform_b")
+                .ok_or_else(|| StepError::ActionFailed {
+                    reason: "transform_b not found".into(),
+                })?
+                .output
+                .raw
+                .clone();
+            Ok(StepOutput::new(format!("{prev}-step3")))
+        })),
+        guard_out: Guard::NonEmptyOutput,
+        verdict: Verdict::Automated(Guard::NonEmptyOutput),
+        tools: ToolSet::None,
+        injection_protection: InjectionProtection::None,
+        output_schema: None,
+        dependencies: vec!["transform_b".into()],
+        parallel: false,
+        input_processors: vec![],
+        output_processors: vec![],
+    };
+
+    // Build the pipeline
+    let pipeline = Pipeline {
+        name: "example_pipeline".into(),
+        steps: vec![step1, step2, step3],
+        on_failure: FailureMode::Abort,
+        max_retries: 0,
+    };
+
+    // Create an agent with this pipeline
+    let agent = Agent {
+        name: "example_agent".into(),
+        description: "Example agent demonstrating pipeline execution".into(),
+        pipeline,
+        tools: ToolSet::None,
+        skills: SkillSet::default(),
+        policy: AgentPolicy::default(),
+        scorers: vec![],
+    };
+
+    // Create a pipeline runner and execute
+    let mut runner = PipelineRunner::new();
+    let result = runner.run(&agent.pipeline, &agent, json!({})).await?;
+
+    // Print results
+    println!("═══════════════════════════════════════════");
+    println!("Pipeline Execution Results");
+    println!("═══════════════════════════════════════════\n");
+    println!("Pipeline: {}", agent.pipeline.name);
+    println!("Status: {}", if result.success { "✓ SUCCESS" } else { "✗ FAILED" });
+    println!("Steps passed: {}", result.steps_passed.join(", "));
+
+    if !result.steps_failed.is_empty() {
+        println!("Steps failed: {}", result.steps_failed.join(", "));
+    }
+
+    println!("\n───────────────────────────────────────────");
+    println!("Step Outputs:");
+    println!("───────────────────────────────────────────");
+
+    for step_name in &result.steps_passed {
+        if let Some(step_result) = result.step_results.get(step_name.as_str()) {
+            println!("  {}: {}", step_name, step_result.output.raw);
         }
     }
 
-    // Determine the project directory
-    let cwd = project_path.unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
-
-    println!("Development mode for Verdict project");
-    println!("Project path: {}", cwd.display());
-
-    // Check if verdict.toml exists
-    let config_path = cwd.join("verdict.toml");
-    if !config_path.exists() {
-        eprintln!("Warning: verdict.toml not found at {}", config_path.display());
-        println!("Using defaults...");
-    } else {
-        println!("Loaded configuration from {}", config_path.display());
-    }
-
-    // In a real implementation, we would:
-    // 1. Parse the verdict.toml file
-    // 2. Extract the dev.agent configuration
-    // 3. Start a file watcher for hot reloading
-    // 4. Run the configured agent in development mode
-    //
-    // For now, we just demonstrate the project loading capability.
-
-    println!("\nDevelopment agent initialized.");
-    println!("Press Ctrl+C to stop.");
-    println!("\nIn a full implementation, this would:");
-    println!("  - Watch for file changes");
-    println!("  - Recompile on save");
-    println!("  - Run the development agent");
-    println!("  - Show live logs and tracing");
+    println!("\n═══════════════════════════════════════════");
+    println!("Final Output: {}",
+             result.step_results
+                 .get("transform_c")
+                 .map(|sr| &sr.output.raw)
+                 .unwrap_or(&"(not available)".to_string()));
+    println!("═══════════════════════════════════════════");
 
     Ok(())
-}
-
-fn print_help(program_name: &str) {
-    println!(
-        "Usage: {} [OPTIONS]
-
-OPTIONS:
-  --path <PATH>    Path to the Verdict project (default: current directory)
-  -h, --help       Print this help message",
-        program_name
-    );
 }
