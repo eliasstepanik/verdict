@@ -201,6 +201,9 @@ impl LlmProvider for ScriptedMockLlmProvider {
             ScriptedResponse::Error(LlmError::InvalidResponse(msg)) => {
                 Err(LlmError::InvalidResponse(msg.clone()))
             }
+            ScriptedResponse::Error(LlmError::LocalRateLimit(msg)) => {
+                Err(LlmError::LocalRateLimit(msg.clone()))
+            }
             ScriptedResponse::Error(LlmError::RateLimited) => {
                 Err(LlmError::RateLimited)
             }

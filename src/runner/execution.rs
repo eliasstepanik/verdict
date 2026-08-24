@@ -277,6 +277,10 @@ impl PipelineRunner {
             event: AuditEvent::PipelineStarted,
         });
 
+        // Ensure rate limiter is wired into LLM client before running
+        // (handles cases where fields were set directly in tests)
+        self.ensure_rate_limiter_wired();
+
         let mut ctx = StepContext::new(
             agent.name.clone(),
             pipeline.name.clone(),
