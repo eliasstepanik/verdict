@@ -2319,19 +2319,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "verdict-cli"
-version = "0.1.0"
-dependencies = [
- "clap",
- "serde_json",
- "tempfile",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "verdict",
-]
-
-[[package]]
 name = "verdict-memory"
 version = "0.1.0"
 dependencies = [
