@@ -4,11 +4,14 @@ use crate::llm::provider::{LlmChunk, LlmError, LlmProvider, LlmRequest, LlmRespo
 use futures::stream::Stream;
 use std::fmt;
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 /// Client for making LLM requests.
 pub struct LlmClient {
     provider: Arc<dyn LlmProvider>,
+    /// Optional rate limiter for controlling call frequency.
+    /// When present, all calls to complete() will check the rate limit.
+    rate_limiter: Option<Arc<Mutex<crate::budget::RateLimiter>>>,
 }
 
 impl fmt::Debug for LlmClient {
@@ -19,23 +22,83 @@ impl fmt::Debug for LlmClient {
     }
 }
 
+impl Clone for LlmClient {
+    fn clone(&self) -> Self {
+        Self {
+            provider: Arc::clone(&self.provider),
+            rate_limiter: self.rate_limiter.clone(),
+        }
+    }
+}
+
 impl LlmClient {
     /// Create a new LLM client with the given provider.
     pub fn new(provider: Arc<dyn LlmProvider>) -> Self {
-        Self { provider }
+        Self {
+            provider,
+            rate_limiter: None,
+        }
+    }
+
+    /// Attach a rate limiter to this client. Enables fluent builder pattern.
+    pub fn with_rate_limiter(
+        mut self,
+        rate_limiter: Arc<Mutex<crate::budget::RateLimiter>>,
+    ) -> Self {
+        self.rate_limiter = Some(rate_limiter);
+        self
     }
 
     /// Make a completion request to the LLM.
+    /// If a rate limiter is configured, it will be checked before calling the provider.
     pub async fn complete(&self, req: LlmRequest) -> Result<LlmResponse, LlmError> {
+        // Check rate limit at the choke point, before calling the provider
+        if let Some(rate_limiter_mutex) = &self.rate_limiter {
+            // Recover from poisoned lock (fail-closed: still enforce rate limiting).
+            // If the lock was previously poisoned (a panic occurred while holding it),
+            // we extract and use the inner RateLimiter anyway. This ensures that even
+            // after a panic, we don't accidentally skip the rate-limit check. A poisoned
+            // lock is a sign of past internal error, but the rate-limit accounting
+            // should still be reasonably recoverable (call counts and timestamps, though
+            // stale, are still valid for preventing runaway call rates).
+            let mut rate_limiter = match rate_limiter_mutex.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+
+            if let Err(budget_err) = rate_limiter.check_rate_limit() {
+                return Err(LlmError::LocalRateLimit(budget_err.to_string()));
+            }
+        }
+
         self.provider.complete(req).await
     }
 
     /// Stream an LLM request, yielding chunks as they arrive.
+    /// If a rate limiter is configured, it will be checked before streaming begins.
     pub fn stream(
         &self,
         request: LlmRequest,
     ) -> Pin<Box<dyn Stream<Item = Result<LlmChunk, LlmError>> + Send>> {
-        self.provider.stream(request)
+         // Check rate limit before starting the stream
+         if let Some(rate_limiter_mutex) = &self.rate_limiter {
+             // Recover from poisoned lock (fail-closed: still enforce rate limiting).
+             let mut rate_limiter = match rate_limiter_mutex.lock() {
+                 Ok(guard) => guard,
+                 Err(poisoned) => poisoned.into_inner(),
+             };
+
+             if let Err(budget_err) = rate_limiter.check_rate_limit() {
+                 // Return a stream that immediately yields a rate limit error
+                 use futures::stream;
+                 let err_msg = budget_err.to_string();
+                 return Box::pin(stream::once(async {
+                     Err(LlmError::LocalRateLimit(err_msg))
+                 }));
+             }
+         }
+
+         self.provider.stream(request)
     }
 
     /// Get the default model name for this client's provider.

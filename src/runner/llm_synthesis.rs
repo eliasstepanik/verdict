@@ -47,18 +47,7 @@ impl PipelineRunner {
             tool_choice: None,
         };
 
-        // Rate-limit check before LLM call
-        if let Some(rate_limiter_mutex) = &self.rate_limiter {
-            if let Ok(mut rate_limiter) = rate_limiter_mutex.lock() {
-                if let Err(budget_err) = rate_limiter.check_rate_limit() {
-                    return Err(StepError::ActionFailed {
-                        reason: format!("rate limit: {}", budget_err),
-                    });
-                }
-            }
-        }
-
-        // Call the LLM
+        // Call the LLM (rate limiting is now handled inside LlmClient::complete())
         let response = llm_client
             .complete(req)
             .await
@@ -129,18 +118,7 @@ impl PipelineRunner {
             tool_choice: None,
         };
 
-        // Rate-limit check before streaming call
-        if let Some(rate_limiter_mutex) = &self.rate_limiter {
-            if let Ok(mut rate_limiter) = rate_limiter_mutex.lock() {
-                if let Err(budget_err) = rate_limiter.check_rate_limit() {
-                    return Err(StepError::ActionFailed {
-                        reason: format!("rate limit: {}", budget_err),
-                    });
-                }
-            }
-        }
-
-        // Stream the response
+        // Stream the response (rate limiting is now handled inside LlmClient::stream())
         let mut stream = llm_client.stream(req);
         let mut assembled = String::new();
 

@@ -76,12 +76,22 @@ impl PipelineRunner {
 
         // Step 2.25: Rate-limit check — before any resource consumption
         if let Some(rate_limiter_mutex) = &self.rate_limiter {
-            if let Ok(mut rate_limiter) = rate_limiter_mutex.lock() {
-                if let Err(budget_err) = rate_limiter.check_rate_limit() {
-                    return Err(StepError::ActionFailed {
-                        reason: format!("rate limit: {}", budget_err),
-                    });
-                }
+            // Recover from poisoned lock (fail-closed: still enforce rate limiting).
+            // If the lock was previously poisoned (a panic occurred while holding it),
+            // we extract and use the inner RateLimiter anyway. This ensures that even
+            // after a panic, we don't accidentally skip the rate-limit check. A poisoned
+            // lock is a sign of past internal error, but the rate-limit accounting
+            // should still be reasonably recoverable (call counts and timestamps, though
+            // stale, are still valid for preventing runaway call rates).
+            let mut rate_limiter = match rate_limiter_mutex.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+
+            if let Err(budget_err) = rate_limiter.check_rate_limit() {
+                return Err(StepError::ActionFailed {
+                    reason: format!("rate limit: {}", budget_err),
+                });
             }
         }
 

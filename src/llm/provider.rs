@@ -88,6 +88,9 @@ pub enum LlmError {
     #[error("invalid response: {0}")]
     InvalidResponse(String),
 
+    #[error("local rate limit exceeded: {0}")]
+    LocalRateLimit(String),
+
     #[error("rate limited (HTTP 429) — check your quota or try again later")]
     RateLimited,
 

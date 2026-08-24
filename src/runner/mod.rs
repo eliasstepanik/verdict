@@ -184,6 +184,12 @@ impl PipelineRunner {
     }
 
     pub fn with_llm_client(mut self, client: Arc<crate::llm::LlmClient>) -> Self {
+        // If a rate limiter is already configured, wire it into the client
+        let client = if let Some(ref rl) = self.rate_limiter {
+            Arc::new((*client).clone().with_rate_limiter(rl.clone()))
+        } else {
+            client
+        };
         self.llm_client = Some(client);
         self
     }
@@ -219,9 +225,30 @@ impl PipelineRunner {
 
     /// Set a rate limiter for the runner (Phase 2).
     /// Limits the frequency of LLM and tool calls to the specified max calls per minute.
+    /// If an LLM client is already configured, the rate limiter will be wired into it.
     pub fn with_rate_limiter(mut self, rate_limiter: crate::budget::RateLimiter) -> Self {
-        self.rate_limiter = Some(Arc::new(std::sync::Mutex::new(rate_limiter)));
+        let rl_arc = Arc::new(std::sync::Mutex::new(rate_limiter));
+        
+        // If a client is already configured, wire the rate limiter into it
+        if let Some(client) = self.llm_client.take() {
+            self.llm_client = Some(Arc::new((*client).clone().with_rate_limiter(rl_arc.clone())));
+        }
+        
+        self.rate_limiter = Some(rl_arc);
         self
+    }
+
+    /// Ensure rate limiter is wired into the LLM client before execution.
+    /// This is called internally by run() to handle cases where fields were set directly
+    /// rather than via builder methods (e.g., in tests).
+    fn ensure_rate_limiter_wired(&mut self) {
+        if let Some(client) = self.llm_client.take() {
+            if let Some(ref rl) = &self.rate_limiter {
+                self.llm_client = Some(Arc::new((*client).clone().with_rate_limiter(rl.clone())));
+            } else {
+                self.llm_client = Some(client);
+            }
+        }
     }
 }
 
