@@ -158,6 +158,8 @@ impl PipelineRunner {
             auto_title_llm: self.auto_title_llm.clone(),
             memory: self.memory.clone(),
             rate_limiter: self.rate_limiter.clone(),
+            tool_guards: self.tool_guards.clone(),
+            round_observer: self.round_observer.clone(),
         };
 
         // Step 5.5: Clamp the child's tool scope to the parent's effective ceiling.

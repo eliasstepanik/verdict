@@ -21,7 +21,8 @@ mod types;
 mod xml_tools;
 
 pub use types::{
-    LogEntry, LogLevel, OutputEvent, OutputSink, PipelineError, PipelineResult, SuspendedState,
+    LogEntry, LogLevel, OutputEvent, OutputSink, PipelineError, PipelineResult, RoundControl,
+    RoundObserver, SuspendedState,
 };
 
 // These are re-exported for use within impl blocks on PipelineRunner
@@ -80,6 +81,12 @@ pub struct PipelineRunner {
     pub memory: Option<Arc<dyn crate::memory::MemoryStore>>,
     /// Rate limiter for controlling call frequency (Phase 2)
     pub rate_limiter: Option<Arc<std::sync::Mutex<crate::budget::RateLimiter>>>,
+    /// Pre-execution tool-call guards, run in order before a tool is invoked
+    /// (VERDICT-CHANGE-1). First `Err(reason)` rejects the call before it runs.
+    pub tool_guards: Option<Arc<Vec<crate::tools::ToolGuard>>>,
+    /// Per-round observer polled between rounds of a `ToolUseLoop`
+    /// (VERDICT-CHANGE-2). Can abort the loop in-flight or inject a nudge.
+    pub round_observer: Option<Arc<dyn crate::runner::RoundObserver>>,
 }
 
 impl PipelineRunner {
@@ -99,6 +106,8 @@ impl PipelineRunner {
             auto_title_llm: None,
             memory: None,
             rate_limiter: None,
+            tool_guards: None,
+            round_observer: None,
         }
     }
 
@@ -118,6 +127,8 @@ impl PipelineRunner {
             auto_title_llm: None,
             memory: None,
             rate_limiter: None,
+            tool_guards: None,
+            round_observer: None,
         }
     }
 
@@ -137,6 +148,8 @@ impl PipelineRunner {
             auto_title_llm: None,
             memory: None,
             rate_limiter: None,
+            tool_guards: None,
+            round_observer: None,
         }
     }
 
@@ -157,6 +170,8 @@ impl PipelineRunner {
             plugin_registry: Arc::new(crate::pipeline::PluginRegistry::new()),
             context_store: None,
             rate_limiter: None,
+            tool_guards: None,
+            round_observer: None,
             auto_title_llm: None,
             memory: None,
         }
@@ -180,6 +195,8 @@ impl PipelineRunner {
             auto_title_llm: None,
             memory: None,
             rate_limiter: None,
+            tool_guards: None,
+            round_observer: None,
         }
     }
 
@@ -235,6 +252,22 @@ impl PipelineRunner {
         }
         
         self.rate_limiter = Some(rl_arc);
+        self
+    }
+
+    /// Set pre-execution tool-call guards for the runner (VERDICT-CHANGE-1).
+    /// Guards run in order, before a tool is invoked; the first `Err(reason)`
+    /// rejects the call with that reason and the tool never runs.
+    pub fn with_tool_guards(mut self, guards: Vec<crate::tools::ToolGuard>) -> Self {
+        self.tool_guards = Some(Arc::new(guards));
+        self
+    }
+
+    /// Set a per-round observer for `ToolUseLoop` execution (VERDICT-CHANGE-2).
+    /// Polled at the top of every round; can abort the loop in-flight via
+    /// `RoundControl::Abort` or inject a nudge message via `pending_nudge`.
+    pub fn with_round_observer(mut self, observer: Arc<dyn crate::runner::RoundObserver>) -> Self {
+        self.round_observer = Some(observer);
         self
     }
 

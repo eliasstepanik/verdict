@@ -78,9 +78,29 @@ impl PipelineRunner {
         let mut history = crate::llm::MessageHistory::new();
         let mut final_text = String::new();
         let mut answered_with_text = false;
+        // VERDICT-CHANGE-3: set when the observer issues an explicit Abort.
+        // An explicit abort means "stop everything now" — it must also skip
+        // the post-main-loop synthesis pass below, which otherwise runs
+        // unconditionally (and unobserved) whenever tools/history are non-empty.
+        let mut aborted_by_observer = false;
 
         // Main loop: execute tool calls until stop condition met.
         for round in 0..*max_rounds {
+            // VERDICT-CHANGE-2: poll the round observer, if configured, before
+            // the next LLM call. May abort the loop in-flight or inject a nudge.
+            if let Some(obs) = &self.round_observer {
+                if let crate::runner::RoundControl::Abort { reason } =
+                    obs.on_round(round, &history).await
+                {
+                    final_text = format!("{final_text}\n[aborted: {reason}]");
+                    aborted_by_observer = true;
+                    break;
+                }
+                if let Some(nudge) = obs.pending_nudge() {
+                    history.push(crate::llm::ChatRole::System, nudge);
+                }
+            }
+
             let user_msg = if round == 0 {
                 resolved_user.clone()
             } else {
@@ -151,7 +171,14 @@ impl PipelineRunner {
         }
 
         // Synthesis: if needed, run an XML-based tool-call pass to complete the task.
-        if !history.is_empty() && !tool_schemas.is_empty() && !answered_with_text {
+        // VERDICT-CHANGE-3: skip entirely if the observer aborted the main loop —
+        // an explicit abort must guarantee zero further outbound LLM/tool calls,
+        // not just terminate the loop it was visibly inserted into.
+        if !aborted_by_observer
+            && !history.is_empty()
+            && !tool_schemas.is_empty()
+            && !answered_with_text
+        {
             final_text = self
                 .run_synthesis_loop(
                     &llm_client,
