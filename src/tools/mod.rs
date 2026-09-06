@@ -18,5 +18,5 @@ pub use search::{GrepTool, SearchFilesTool};
 pub use shell::{CargoCheckTool, CargoFmtTool, CargoTestTool, RunCommandTool};
 pub use tool::{
     DiagnosticEntry, DiagnosticSeverity, StructuredOutput, Tool, ToolChunk, ToolContext, ToolError,
-    ToolOutput, ToolSource,
+    ToolGuard, ToolOutput, ToolSource,
 };

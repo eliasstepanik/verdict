@@ -119,7 +119,26 @@ impl PipelineRunner {
             }
         }
 
-        // Step 4: Apply tool-specific guards (stub for Phase 2)
+        // Step 4: Apply pre-execution tool-specific guards (VERDICT-CHANGE-1).
+        // ToolContext isn't assembled until Step 6, so build a guard-purposed
+        // context here from the same fields, using the same `audit_log`
+        // Arc<Mutex<AuditLog>> constructed above — cheaper than reordering
+        // Step 6 earlier and identical in the fields a guard can observe.
+        if let Some(guards) = &self.tool_guards {
+            let guard_ctx = crate::tools::ToolContext {
+                filesystem_policy: ctx.filesystem_policy.clone(),
+                network_policy: ctx.network_policy.clone(),
+                allowed_tools: ctx.allowed_tools.clone(),
+                audit_log: audit_log.clone(),
+            };
+            for guard in guards.iter() {
+                if let Err(reason) = guard(tool_name, args, &guard_ctx) {
+                    return Err(StepError::ActionFailed {
+                        reason: format!("tool '{tool_name}' rejected by guard: {reason}"),
+                    });
+                }
+            }
+        }
 
         // Step 5: Record audit log — tool call started
         let audit_log_mutex = audit_log.clone();

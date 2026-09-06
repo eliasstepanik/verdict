@@ -80,6 +80,9 @@ pub struct PipelineRunner {
     pub memory: Option<Arc<dyn crate::memory::MemoryStore>>,
     /// Rate limiter for controlling call frequency (Phase 2)
     pub rate_limiter: Option<Arc<std::sync::Mutex<crate::budget::RateLimiter>>>,
+    /// Pre-execution tool-call guards, run in order before a tool is invoked
+    /// (VERDICT-CHANGE-1). First `Err(reason)` rejects the call before it runs.
+    pub tool_guards: Option<Arc<Vec<crate::tools::ToolGuard>>>,
 }
 
 impl PipelineRunner {
@@ -99,6 +102,7 @@ impl PipelineRunner {
             auto_title_llm: None,
             memory: None,
             rate_limiter: None,
+            tool_guards: None,
         }
     }
 
@@ -118,6 +122,7 @@ impl PipelineRunner {
             auto_title_llm: None,
             memory: None,
             rate_limiter: None,
+            tool_guards: None,
         }
     }
 
@@ -137,6 +142,7 @@ impl PipelineRunner {
             auto_title_llm: None,
             memory: None,
             rate_limiter: None,
+            tool_guards: None,
         }
     }
 
@@ -157,6 +163,7 @@ impl PipelineRunner {
             plugin_registry: Arc::new(crate::pipeline::PluginRegistry::new()),
             context_store: None,
             rate_limiter: None,
+            tool_guards: None,
             auto_title_llm: None,
             memory: None,
         }
@@ -180,6 +187,7 @@ impl PipelineRunner {
             auto_title_llm: None,
             memory: None,
             rate_limiter: None,
+            tool_guards: None,
         }
     }
 
@@ -235,6 +243,14 @@ impl PipelineRunner {
         }
         
         self.rate_limiter = Some(rl_arc);
+        self
+    }
+
+    /// Set pre-execution tool-call guards for the runner (VERDICT-CHANGE-1).
+    /// Guards run in order, before a tool is invoked; the first `Err(reason)`
+    /// rejects the call with that reason and the tool never runs.
+    pub fn with_tool_guards(mut self, guards: Vec<crate::tools::ToolGuard>) -> Self {
+        self.tool_guards = Some(Arc::new(guards));
         self
     }
 

@@ -170,6 +170,12 @@ pub struct ToolContext {
     pub audit_log: Arc<Mutex<AuditLog>>,
 }
 
+/// A pre-execution tool-call guard (VERDICT-CHANGE-1): given
+/// `(tool_name, args, ctx)`, returns `Ok(())` to allow the call or
+/// `Err(reason)` to reject it before the tool runs. Registered on
+/// `PipelineRunner::tool_guards` via `PipelineRunner::with_tool_guards`.
+pub type ToolGuard = Box<dyn Fn(&str, &Value, &ToolContext) -> Result<(), String> + Send + Sync>;
+
 /// Core tool trait
 #[async_trait]
 pub trait Tool: Send + Sync {
