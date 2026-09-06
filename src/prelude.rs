@@ -69,7 +69,7 @@ pub use crate::pipeline::{
 pub use crate::registry::{AgentRegistry, SkillRegistry, ToolRegistry};
 pub use crate::runner::{
     LogEntry, LogLevel, OutputEvent, OutputSink, PipelineError, PipelineResult, PipelineRunner,
-    SuspendedState,
+    RoundControl, RoundObserver, SuspendedState,
 };
 pub use crate::skills::builtin::{
     api_design, code_review, refactoring, rust_debugging, test_writing,

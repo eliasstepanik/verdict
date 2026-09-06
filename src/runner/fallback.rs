@@ -143,6 +143,7 @@ impl PipelineRunner {
             memory: self.memory.clone(),
             rate_limiter: self.rate_limiter.clone(),
             tool_guards: self.tool_guards.clone(),
+            round_observer: self.round_observer.clone(),
         };
 
         // Run through the depth/budget-aware entry point — the same one

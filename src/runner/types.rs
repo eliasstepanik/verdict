@@ -129,3 +129,30 @@ pub trait OutputSink: Send + Sync {
     /// Emit an output event. Fire-and-forget — caller does not await completion.
     async fn emit(&self, event: OutputEvent);
 }
+
+/// Instruction returned by a `RoundObserver` after inspecting a completed round
+/// of a `ToolUseLoop` (VERDICT-CHANGE-2).
+#[derive(Debug, Clone)]
+pub enum RoundControl {
+    /// Let the loop proceed to the next round as normal.
+    Continue,
+    /// Break out of the loop immediately, recording `reason`.
+    Abort { reason: String },
+}
+
+/// A per-round observer polled by `handle_tool_use_loop` between rounds
+/// (VERDICT-CHANGE-2). Registered on `PipelineRunner::round_observer` via
+/// `PipelineRunner::with_round_observer`.
+#[async_trait::async_trait]
+pub trait RoundObserver: Send + Sync {
+    /// Called at the top of each round, after the budget increment, before the
+    /// next LLM call. Receives the round index and a read-only view of the
+    /// conversation so far. May return `Abort` to break the loop, or `Continue`.
+    async fn on_round(&self, round: usize, history: &crate::llm::MessageHistory) -> RoundControl;
+
+    /// Optional system nudge to inject into the NEXT round's context.
+    /// Default: `None`.
+    fn pending_nudge(&self) -> Option<String> {
+        None
+    }
+}
