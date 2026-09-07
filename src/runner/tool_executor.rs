@@ -9,12 +9,12 @@ use std::sync::Arc;
 use tracing::{trace, warn};
 
 /// Extract the actual shell command string from tool args.
-/// For shell.* tools, builds a command string that combines the command + args.
-/// For tools like shell.cargo_test, shell.cargo_check, returns just the command name.
+/// For shell_* tools, builds a command string that combines the command + args.
+/// For tools like shell_cargo_test, shell_cargo_check, returns just the command name.
 pub(crate) fn extract_shell_command_string(tool_name: &str, args: &Value) -> Result<String, String> {
     match tool_name {
-        "shell.run" | "shell.run_command" => {
-            // Both shell.run and shell.run_command have {"command": "...", "args": ["...", ...]}
+        "shell_run" | "shell_run_command" => {
+            // Both shell_run and shell_run_command have {"command": "...", "args": ["...", ...]}
             if let Some(cmd) = args.get("command").and_then(|v| v.as_str()) {
                 let cmd_args: Vec<String> = args
                     .get("args")
@@ -35,13 +35,13 @@ pub(crate) fn extract_shell_command_string(tool_name: &str, args: &Value) -> Res
                 Err("missing 'command' field".to_string())
             }
         }
-        "shell.cargo_test" => Ok("cargo test".to_string()),
-        "shell.cargo_check" => Ok("cargo check".to_string()),
-        "shell.cargo_build" => Ok("cargo build".to_string()),
+        "shell_cargo_test" => Ok("cargo test".to_string()),
+        "shell_cargo_check" => Ok("cargo check".to_string()),
+        "shell_cargo_build" => Ok("cargo build".to_string()),
         _ => {
-            // For other shell.* tools, try to extract a reasonable command string
-            // Fall back to the tool name without "shell." prefix
-            Ok(tool_name.strip_prefix("shell.").unwrap_or(tool_name).to_string())
+            // For other shell_* tools, try to extract a reasonable command string
+            // Fall back to the tool name without "shell_" prefix
+            Ok(tool_name.strip_prefix("shell_").unwrap_or(tool_name).to_string())
         }
     }
 }
@@ -99,7 +99,7 @@ impl PipelineRunner {
         ctx.tools_used.push(tool_name.to_string());
 
         // Step 2.6: For shell tools, extract and record the actual command
-        if tool_name.starts_with("shell.") {
+        if tool_name.starts_with("shell_") {
             if let Ok(cmd_str) = extract_shell_command_string(tool_name, &args) {
                 ctx.commands_executed.push((tool_name.to_string(), cmd_str));
             }

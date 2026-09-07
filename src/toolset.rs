@@ -63,19 +63,19 @@ impl ToolSet {
                 // Allow only read and search operations
                 matches!(
                     tool_name,
-                    "fs.read" | "fs.list" | "search.files" | "search.grep"
+                    "fs_read" | "fs_list" | "search_files" | "search_grep"
                 )
             }
             ToolSet::ReadWrite => {
-                // ReadOnly tools + fs.write + fs.delete
+                // ReadOnly tools + fs_write + fs_delete
                 matches!(
                     tool_name,
-                    "fs.read"
-                        | "fs.list"
-                        | "search.files"
-                        | "search.grep"
-                        | "fs.write"
-                        | "fs.delete"
+                    "fs_read"
+                        | "fs_list"
+                        | "search_files"
+                        | "search_grep"
+                        | "fs_write"
+                        | "fs_delete"
                 )
             }
             ToolSet::Full => true,
@@ -114,19 +114,19 @@ impl ToolSet {
                 // Allow only read and search operations
                 matches!(
                     tool_name,
-                    "fs.read" | "fs.list" | "search.files" | "search.grep"
+                    "fs_read" | "fs_list" | "search_files" | "search_grep"
                 )
             }
             ToolSet::ReadWrite => {
-                // ReadOnly tools + fs.write + fs.delete
+                // ReadOnly tools + fs_write + fs_delete
                 matches!(
                     tool_name,
-                    "fs.read"
-                        | "fs.list"
-                        | "search.files"
-                        | "search.grep"
-                        | "fs.write"
-                        | "fs.delete"
+                    "fs_read"
+                        | "fs_list"
+                        | "search_files"
+                        | "search_grep"
+                        | "fs_write"
+                        | "fs_delete"
                 )
             }
             ToolSet::Full => true,
@@ -157,36 +157,36 @@ mod tests {
     #[test]
     fn test_readonly_allows_read_tools() {
         let toolset = ToolSet::ReadOnly;
-        assert!(toolset.contains("fs.read"));
-        assert!(toolset.contains("fs.list"));
-        assert!(toolset.contains("search.files"));
-        assert!(toolset.contains("search.grep"));
+        assert!(toolset.contains("fs_read"));
+        assert!(toolset.contains("fs_list"));
+        assert!(toolset.contains("search_files"));
+        assert!(toolset.contains("search_grep"));
     }
 
     #[test]
     fn test_readonly_denies_write_tools() {
         let toolset = ToolSet::ReadOnly;
-        assert!(!toolset.contains("fs.write"));
-        assert!(!toolset.contains("fs.delete"));
-        assert!(!toolset.contains("shell.run"));
+        assert!(!toolset.contains("fs_write"));
+        assert!(!toolset.contains("fs_delete"));
+        assert!(!toolset.contains("shell_run"));
     }
 
     #[test]
     fn test_readwrite_allows_read_and_write_tools() {
         let toolset = ToolSet::ReadWrite;
-        assert!(toolset.contains("fs.read"));
-        assert!(toolset.contains("fs.list"));
-        assert!(toolset.contains("search.files"));
-        assert!(toolset.contains("search.grep"));
-        assert!(toolset.contains("fs.write"));
-        assert!(toolset.contains("fs.delete"));
+        assert!(toolset.contains("fs_read"));
+        assert!(toolset.contains("fs_list"));
+        assert!(toolset.contains("search_files"));
+        assert!(toolset.contains("search_grep"));
+        assert!(toolset.contains("fs_write"));
+        assert!(toolset.contains("fs_delete"));
     }
 
     #[test]
     fn test_readwrite_denies_shell_and_agent_tools() {
         let toolset = ToolSet::ReadWrite;
-        assert!(!toolset.contains("shell.run"));
-        assert!(!toolset.contains("shell.cargo_test"));
+        assert!(!toolset.contains("shell_run"));
+        assert!(!toolset.contains("shell_cargo_test"));
         assert!(!toolset.contains("call_agent"));
     }
 
@@ -195,16 +195,16 @@ mod tests {
         let registry = SkillRegistry::with_builtins();
         let toolset = ToolSet::FromSkill("rust_debugging".to_string());
 
-        // rust_debugging allows: shell.cargo_check, shell.cargo_test, fs.read, fs.write
-        assert!(toolset.contains_with_skill_registry("fs.read", &registry));
-        assert!(toolset.contains_with_skill_registry("fs.write", &registry));
-        assert!(toolset.contains_with_skill_registry("shell.cargo_check", &registry));
-        assert!(toolset.contains_with_skill_registry("shell.cargo_test", &registry));
+        // rust_debugging allows: shell_cargo_check, shell_cargo_test, fs_read, fs_write
+        assert!(toolset.contains_with_skill_registry("fs_read", &registry));
+        assert!(toolset.contains_with_skill_registry("fs_write", &registry));
+        assert!(toolset.contains_with_skill_registry("shell_cargo_check", &registry));
+        assert!(toolset.contains_with_skill_registry("shell_cargo_test", &registry));
 
         // rust_debugging does not allow these
-        assert!(!toolset.contains_with_skill_registry("shell.run", &registry));
-        assert!(!toolset.contains_with_skill_registry("fs.delete", &registry));
-        assert!(!toolset.contains_with_skill_registry("search.files", &registry));
+        assert!(!toolset.contains_with_skill_registry("shell_run", &registry));
+        assert!(!toolset.contains_with_skill_registry("fs_delete", &registry));
+        assert!(!toolset.contains_with_skill_registry("search_files", &registry));
     }
 
     #[test]
@@ -213,74 +213,74 @@ mod tests {
         let toolset = ToolSet::FromSkill("nonexistent_skill".to_string());
 
         // Unknown skill denies everything
-        assert!(!toolset.contains_with_skill_registry("fs.read", &registry));
-        assert!(!toolset.contains_with_skill_registry("fs.write", &registry));
-        assert!(!toolset.contains_with_skill_registry("shell.run", &registry));
+        assert!(!toolset.contains_with_skill_registry("fs_read", &registry));
+        assert!(!toolset.contains_with_skill_registry("fs_write", &registry));
+        assert!(!toolset.contains_with_skill_registry("shell_run", &registry));
     }
 
     #[test]
     fn test_from_skill_fallback_to_contains_returns_false() {
         let toolset = ToolSet::FromSkill("rust_debugging".to_string());
         // The basic contains() method returns false for FromSkill since it doesn't have registry access
-        assert!(!toolset.contains("fs.read"));
+        assert!(!toolset.contains("fs_read"));
     }
 
     #[test]
     fn test_allow_list() {
-        let toolset = ToolSet::Allow(vec!["fs.read".to_string(), "shell.run".to_string()]);
-        assert!(toolset.contains("fs.read"));
-        assert!(toolset.contains("shell.run"));
-        assert!(!toolset.contains("fs.write"));
-        assert!(!toolset.contains("fs.list"));
+        let toolset = ToolSet::Allow(vec!["fs_read".to_string(), "shell_run".to_string()]);
+        assert!(toolset.contains("fs_read"));
+        assert!(toolset.contains("shell_run"));
+        assert!(!toolset.contains("fs_write"));
+        assert!(!toolset.contains("fs_list"));
     }
 
     #[test]
     fn test_deny_list() {
-        let toolset = ToolSet::Deny(vec!["shell.run".to_string(), "fs.delete".to_string()]);
-        assert!(toolset.contains("fs.read"));
-        assert!(toolset.contains("fs.write"));
-        assert!(!toolset.contains("shell.run"));
-        assert!(!toolset.contains("fs.delete"));
+        let toolset = ToolSet::Deny(vec!["shell_run".to_string(), "fs_delete".to_string()]);
+        assert!(toolset.contains("fs_read"));
+        assert!(toolset.contains("fs_write"));
+        assert!(!toolset.contains("shell_run"));
+        assert!(!toolset.contains("fs_delete"));
     }
 
     #[test]
     fn test_intersection() {
         let left = ToolSet::ReadOnly;
-        let right = ToolSet::Allow(vec!["fs.read".to_string(), "fs.write".to_string()]);
+        let right = ToolSet::Allow(vec!["fs_read".to_string(), "fs_write".to_string()]);
         let toolset = ToolSet::Intersection(Box::new(left), Box::new(right));
 
         // Intersection: tool must be in both
-        assert!(toolset.contains("fs.read")); // in ReadOnly and in Allow list
-        assert!(!toolset.contains("fs.write")); // in Allow but not in ReadOnly
-        assert!(!toolset.contains("fs.list")); // in ReadOnly but not in Allow list
+        assert!(toolset.contains("fs_read")); // in ReadOnly and in Allow list
+        assert!(!toolset.contains("fs_write")); // in Allow but not in ReadOnly
+        assert!(!toolset.contains("fs_list")); // in ReadOnly but not in Allow list
     }
 
     #[test]
     fn test_union() {
-        let left = ToolSet::Allow(vec!["fs.read".to_string()]);
-        let right = ToolSet::Allow(vec!["fs.write".to_string()]);
+        let left = ToolSet::Allow(vec!["fs_read".to_string()]);
+        let right = ToolSet::Allow(vec!["fs_write".to_string()]);
         let toolset = ToolSet::Union(Box::new(left), Box::new(right));
 
         // Union: tool can be in either
-        assert!(toolset.contains("fs.read"));
-        assert!(toolset.contains("fs.write"));
-        assert!(!toolset.contains("fs.delete"));
+        assert!(toolset.contains("fs_read"));
+        assert!(toolset.contains("fs_write"));
+        assert!(!toolset.contains("fs_delete"));
     }
 
     #[test]
     fn test_full_allows_everything() {
         let toolset = ToolSet::Full;
-        assert!(toolset.contains("fs.read"));
-        assert!(toolset.contains("fs.write"));
-        assert!(toolset.contains("shell.run"));
+        assert!(toolset.contains("fs_read"));
+        assert!(toolset.contains("fs_write"));
+        assert!(toolset.contains("shell_run"));
         assert!(toolset.contains("call_agent"));
     }
 
     #[test]
     fn test_none_denies_everything() {
         let toolset = ToolSet::None;
-        assert!(!toolset.contains("fs.read"));
-        assert!(!toolset.contains("fs.write"));
-        assert!(!toolset.contains("shell.run"));
+        assert!(!toolset.contains("fs_read"));
+        assert!(!toolset.contains("fs_write"));
+        assert!(!toolset.contains("shell_run"));
     }
 }

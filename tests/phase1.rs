@@ -876,41 +876,41 @@ async fn test_audit_log_to_json() {
 async fn test_toolset_contains_full() {
     let toolset = ToolSet::Full;
     assert!(toolset.contains("any_tool"));
-    assert!(toolset.contains("fs.read"));
+    assert!(toolset.contains("fs_read"));
 }
 
 #[tokio::test]
 async fn test_toolset_contains_allow() {
-    let toolset = ToolSet::Allow(vec!["fs.read".into(), "fs.write".into()]);
-    assert!(toolset.contains("fs.read"));
-    assert!(toolset.contains("fs.write"));
+    let toolset = ToolSet::Allow(vec!["fs_read".into(), "fs_write".into()]);
+    assert!(toolset.contains("fs_read"));
+    assert!(toolset.contains("fs_write"));
     assert!(!toolset.contains("shell.execute"));
 }
 
 #[tokio::test]
 async fn test_toolset_contains_deny() {
     let toolset = ToolSet::Deny(vec!["shell.execute".into()]);
-    assert!(toolset.contains("fs.read"));
+    assert!(toolset.contains("fs_read"));
     assert!(!toolset.contains("shell.execute"));
 }
 
 #[tokio::test]
 async fn test_toolset_intersection() {
-    let allow_read = ToolSet::Allow(vec!["fs.read".into()]);
+    let allow_read = ToolSet::Allow(vec!["fs_read".into()]);
     let allow_all = ToolSet::Full;
     let intersection = ToolSet::Intersection(Box::new(allow_read), Box::new(allow_all));
 
-    assert!(intersection.contains("fs.read"));
-    assert!(!intersection.contains("fs.write")); // Only in allow_all, not in allow_read
+    assert!(intersection.contains("fs_read"));
+    assert!(!intersection.contains("fs_write")); // Only in allow_all, not in allow_read
 }
 
 #[tokio::test]
 async fn test_toolset_union() {
-    let allow_read = ToolSet::Allow(vec!["fs.read".into()]);
-    let allow_write = ToolSet::Allow(vec!["fs.write".into()]);
+    let allow_read = ToolSet::Allow(vec!["fs_read".into()]);
+    let allow_write = ToolSet::Allow(vec!["fs_write".into()]);
     let union = ToolSet::Union(Box::new(allow_read), Box::new(allow_write));
 
-    assert!(union.contains("fs.read"));
-    assert!(union.contains("fs.write"));
+    assert!(union.contains("fs_read"));
+    assert!(union.contains("fs_write"));
     assert!(!union.contains("shell.execute"));
 }

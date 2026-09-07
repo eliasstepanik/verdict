@@ -452,7 +452,7 @@ async fn test_multiple_sequential_tool_steps_each_record_correct_output() {
     assert_eq!(completed, vec!["local.one", "local.two", "local.three"]);
 }
 
-// â”€â”€â”€ Test 10: ReadOnly step scope blocks fs.write â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// â”€â”€â”€ Test 10: ReadOnly step scope blocks fs_write â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 #[tokio::test]
 async fn test_readonly_step_scope_blocks_fs_write() {
@@ -464,7 +464,7 @@ async fn test_readonly_step_scope_blocks_fs_write() {
         name: "p".into(),
         steps: vec![tool_step(
             "w",
-            "fs.write",
+            "fs_write",
             json!({ "path": target.to_string_lossy(), "content": "should not appear" }),
             ToolSet::ReadOnly,
         )],
@@ -484,7 +484,7 @@ async fn test_readonly_step_scope_blocks_fs_write() {
             assert_eq!(step, "w");
             let m = error.to_string();
             assert!(
-                m.to_lowercase().contains("not allowed") || m.contains("fs.write"),
+                m.to_lowercase().contains("not allowed") || m.contains("fs_write"),
                 "error should mention 'not allowed': {m}"
             );
         }
@@ -492,11 +492,11 @@ async fn test_readonly_step_scope_blocks_fs_write() {
     }
     assert!(
         !target.exists(),
-        "fs.write must not have created the target file"
+        "fs_write must not have created the target file"
     );
 }
 
-// â”€â”€â”€ Test 11: Built-in fs.read reads Cargo.toml â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// â”€â”€â”€ Test 11: Built-in fs_read reads Cargo.toml â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 #[tokio::test]
 async fn test_builtin_fs_read_reads_cargo_toml_in_pipeline() {
@@ -511,7 +511,7 @@ async fn test_builtin_fs_read_reads_cargo_toml_in_pipeline() {
         name: "p".into(),
         steps: vec![tool_step(
             "read",
-            "fs.read",
+            "fs_read",
             json!({ "path": path.to_string_lossy() }),
             ToolSet::ReadOnly,
         )],
@@ -536,7 +536,7 @@ async fn test_builtin_fs_read_reads_cargo_toml_in_pipeline() {
         "Cargo.toml must contain 'verdict': {raw}"
     );
     assert!(r.audit_log.entries().iter().any(
-        |e| matches!(&e.event, AuditEvent::ToolCallCompleted { tool, .. } if tool == "fs.read")
+        |e| matches!(&e.event, AuditEvent::ToolCallCompleted { tool, .. } if tool == "fs_read")
     ));
 }
 

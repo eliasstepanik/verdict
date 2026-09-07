@@ -14,7 +14,7 @@
 use serde_json::json;
 use verdict::prelude::*;
 
-/// A step that really invokes `shell.run_command`.
+/// A step that really invokes `shell_run_command`.
 fn shell_step(name: &str, command: &str, parallel: bool, guard_out: Guard) -> AgentStep {
     shell_step_with_arg(name, command, "parallel_probe_arg", parallel, guard_out)
 }
@@ -32,7 +32,7 @@ fn shell_step_with_arg(
         name: name.into(),
         guard_in: Guard::None,
         action: StepAction::ToolCall {
-            tool: "shell.run_command".into(),
+            tool: "shell_run_command".into(),
             args: json!({ "command": command, "args": [arg] }),
         },
         guard_out,

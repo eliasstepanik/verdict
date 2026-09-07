@@ -6,19 +6,19 @@ fn test_extract_shell_run_command() {
         "command": "rm",
         "args": ["-rf", "/tmp"]
     });
-    let result = extract_shell_command_string("shell.run", &args);
+    let result = extract_shell_command_string("shell_run", &args);
     assert!(result.is_ok());
     assert_eq!(result.unwrap(), "rm -rf /tmp");
 }
 
 #[test]
 fn test_extract_shell_run_command_tool_run_command_variant() {
-    // Critical test: shell.run_command must extract the command the same way as shell.run
+    // Critical test: shell_run_command must extract the command the same way as shell_run
     let args = serde_json::json!({
         "command": "rm",
         "args": ["-rf", "/tmp"]
     });
-    let result = extract_shell_command_string("shell.run_command", &args);
+    let result = extract_shell_command_string("shell_run_command", &args);
     assert!(result.is_ok());
     assert_eq!(result.unwrap(), "rm -rf /tmp");
 }
@@ -26,7 +26,7 @@ fn test_extract_shell_run_command_tool_run_command_variant() {
 #[test]
 fn test_extract_shell_cargo_test() {
     let args = serde_json::json!({});
-    let result = extract_shell_command_string("shell.cargo_test", &args);
+    let result = extract_shell_command_string("shell_cargo_test", &args);
     assert!(result.is_ok());
     assert_eq!(result.unwrap(), "cargo test");
 }
@@ -34,9 +34,9 @@ fn test_extract_shell_cargo_test() {
 #[test]
 fn test_extract_shell_unknown_fallback() {
     let args = serde_json::json!({});
-    let result = extract_shell_command_string("shell.custom_tool", &args);
+    let result = extract_shell_command_string("shell_custom_tool", &args);
     assert!(result.is_ok());
-    // Should strip the "shell." prefix
+    // Should strip the "shell_" prefix
     assert_eq!(result.unwrap(), "custom_tool");
 }
 
@@ -45,7 +45,7 @@ fn test_extract_shell_run_command_with_no_args() {
     let args = serde_json::json!({
         "command": "cargo"
     });
-    let result = extract_shell_command_string("shell.run_command", &args);
+    let result = extract_shell_command_string("shell_run_command", &args);
     assert!(result.is_ok());
     assert_eq!(result.unwrap(), "cargo");
 }

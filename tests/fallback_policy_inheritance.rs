@@ -152,10 +152,10 @@ async fn fallback_inherits_and_accumulates_budget() {
             step(
                 "spend_again",
                 StepAction::ToolCall {
-                    tool: "fs.list".into(),
+                    tool: "fs_list".into(),
                     args: json!({ "path": "." }),
                 },
-                ToolSet::Allow(vec!["fs.list".into()]),
+                ToolSet::Allow(vec!["fs_list".into()]),
             ),
         ],
         FailureMode::Abort,
@@ -166,26 +166,26 @@ async fn fallback_inherits_and_accumulates_budget() {
     let bump = step(
         "bump",
         StepAction::ToolCall {
-            tool: "fs.list".into(),
+            tool: "fs_list".into(),
             args: json!({ "path": "." }),
         },
-        ToolSet::Allow(vec!["fs.list".into()]),
+        ToolSet::Allow(vec!["fs_list".into()]),
     );
 
-    // The failing step is scoped to permit `fs.list` because its fallback calls
-    // `fs.list`; the fallback inherits this step's scope. This test asserts budget
+    // The failing step is scoped to permit `fs_list` because its fallback calls
+    // `fs_list`; the fallback inherits this step's scope. This test asserts budget
     // continuity, not tool scoping (that is `delegation_tool_denial_fallback.rs`).
     let main = pipeline(
         "main",
         vec![
             bump,
-            failing_step_scoped("boom", ToolSet::Allow(vec!["fs.list".into()])),
+            failing_step_scoped("boom", ToolSet::Allow(vec!["fs_list".into()])),
         ],
         FailureMode::Fallback(Box::new(fallback)),
     );
 
     let mut policy = AgentPolicy::default();
-    policy.allowed_tools = ToolSet::Allow(vec!["fs.list".into()]);
+    policy.allowed_tools = ToolSet::Allow(vec!["fs_list".into()]);
     let a = agent(&main, policy);
 
     let result = PipelineRunner::new()
@@ -352,7 +352,7 @@ async fn network_policy_survives_fallback() {
 }
 
 /// Sibling check: `WorkspaceIsolation::TempDir` must survive the fallback boundary
-/// — a relative `fs.write` inside the fallback must not land in the real repo.
+/// — a relative `fs_write` inside the fallback must not land in the real repo.
 #[tokio::test]
 async fn tempdir_isolation_survives_fallback() {
     let marker = "fallback_isolation_probe.txt";
@@ -364,27 +364,27 @@ async fn tempdir_isolation_survives_fallback() {
         vec![step(
             "write",
             StepAction::ToolCall {
-                tool: "fs.write".into(),
+                tool: "fs_write".into(),
                 args: json!({ "path": marker, "content": "written by fallback" }),
             },
-            ToolSet::Allow(vec!["fs.write".into()]),
+            ToolSet::Allow(vec!["fs_write".into()]),
         )],
         FailureMode::Abort,
     );
 
-    // Scoped to permit `fs.write` because the fallback calls it and inherits this
+    // Scoped to permit `fs_write` because the fallback calls it and inherits this
     // step's scope. This test asserts TempDir isolation, not tool scoping.
     let main = pipeline(
         "main",
         vec![failing_step_scoped(
             "boom",
-            ToolSet::Allow(vec!["fs.write".into()]),
+            ToolSet::Allow(vec!["fs_write".into()]),
         )],
         FailureMode::Fallback(Box::new(fallback)),
     );
 
     let mut policy = AgentPolicy::default();
-    policy.allowed_tools = ToolSet::Allow(vec!["fs.write".into()]);
+    policy.allowed_tools = ToolSet::Allow(vec!["fs_write".into()]);
     policy.filesystem_policy.workspace_isolation = WorkspaceIsolation::TempDir;
     let a = agent(&main, policy);
 

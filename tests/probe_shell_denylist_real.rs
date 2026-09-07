@@ -2,8 +2,8 @@
 //!
 //! These are NOT fixture tests. Every case builds a genuine `Pipeline` +
 //! `Agent`, runs it through the real `PipelineRunner` with the real builtin
-//! `ToolRegistry`, and invokes the REAL registered `shell.run_command` /
-//! `shell.run` tools. `commands_executed` is populated by production code
+//! `ToolRegistry`, and invokes the REAL registered `shell_run_command` /
+//! `shell_run` tools. `commands_executed` is populated by production code
 //! only — never by the test.
 //!
 //! The previous round's unit tests all passed while the real pipeline was
@@ -87,7 +87,7 @@ fn abs_path_to(bin: &str) -> String {
 }
 
 /// PROBE 7: the exact bypass from last round.
-/// Real `shell.run_command` executing a denylisted command must be BLOCKED.
+/// Real `shell_run_command` executing a denylisted command must be BLOCKED.
 /// The canary is workspace-RELATIVE: an absolute /tmp path is rejected by the
 /// tool's workspace-containment check before guards ever run, which would make
 /// this probe pass for the wrong reason.
@@ -98,7 +98,7 @@ async fn probe_run_command_denylist_blocked_with_canary() {
     let _ = std::fs::remove_file(&canary_abs);
 
     let result = run_shell_step(
-        "shell.run_command",
+        "shell_run_command",
         "touch",
         vec![canary_rel.as_str()],
         Guard::ShellCommandDenylist(vec!["touch".to_string()]),
@@ -122,7 +122,7 @@ async fn probe_run_command_denylist_blocked_with_canary() {
             );
         }
         other => panic!(
-            "CRITICAL BYPASS or wrong-reason block: shell.run_command with denylisted \
+            "CRITICAL BYPASS or wrong-reason block: shell_run_command with denylisted \
              'touch' did not fail via ShellCommandDenylist. result={:?}",
             other
         ),
@@ -149,7 +149,7 @@ async fn probe_absolute_path_denylist_blocked() {
     println!("PROBE8 using abs path = {}", abs_ls);
 
     let result = run_shell_step(
-        "shell.run_command",
+        "shell_run_command",
         &abs_ls,
         vec![],
         Guard::ShellCommandDenylist(vec!["ls".to_string()]),
@@ -182,7 +182,7 @@ async fn probe_absolute_path_allowlist_permitted() {
     let abs_ls = abs_path_to("ls");
 
     let result = run_shell_step(
-        "shell.run_command",
+        "shell_run_command",
         &abs_ls,
         vec![],
         Guard::ShellCommandAllowlist(vec!["ls".to_string()]),
@@ -204,7 +204,7 @@ async fn probe_absolute_path_allowlist_permitted() {
 #[tokio::test]
 async fn probe_allowlist_prefix_does_not_permit() {
     let result = run_shell_step(
-        "shell.run_command",
+        "shell_run_command",
         "echo",
         vec!["hello"],
         Guard::ShellCommandAllowlist(vec!["ech".to_string()]),
@@ -224,7 +224,7 @@ async fn probe_allowlist_prefix_does_not_permit() {
 #[tokio::test]
 async fn probe_control_allowed_command_succeeds() {
     let result = run_shell_step(
-        "shell.run_command",
+        "shell_run_command",
         "echo",
         vec!["hello"],
         Guard::ShellCommandAllowlist(vec!["echo".to_string()]),
@@ -243,7 +243,7 @@ async fn probe_control_allowed_command_succeeds() {
 #[tokio::test]
 async fn probe_control_non_denylisted_passes() {
     let result = run_shell_step(
-        "shell.run_command",
+        "shell_run_command",
         "echo",
         vec!["safe"],
         Guard::ShellCommandDenylist(vec!["rm".to_string()]),
@@ -258,12 +258,12 @@ async fn probe_control_non_denylisted_passes() {
     );
 }
 
-/// PROBE 7b: same bypass check via `shell.run` (the arm that already worked),
+/// PROBE 7b: same bypass check via `shell_run` (the arm that already worked),
 /// to confirm parity between the two tool names.
 #[tokio::test]
 async fn probe_shell_run_denylist_blocked() {
     let result = run_shell_step(
-        "shell.run",
+        "shell_run",
         "echo",
         vec!["x"],
         Guard::ShellCommandDenylist(vec!["echo".to_string()]),
@@ -273,7 +273,7 @@ async fn probe_shell_run_denylist_blocked() {
     println!("PROBE7b result = {:?}", result);
     assert!(
         result.is_err(),
-        "BYPASS: shell.run with denylisted 'echo' not blocked. result={:?}",
+        "BYPASS: shell_run with denylisted 'echo' not blocked. result={:?}",
         result
     );
 }
@@ -291,7 +291,7 @@ fn _arc_anchor() -> Arc<u8> {
 #[tokio::test]
 async fn probe_residual_wrapper_bypass_characterization() {
     let result = run_shell_step(
-        "shell.run_command",
+        "shell_run_command",
         "sh",
         vec!["-c", "ls"],
         Guard::ShellCommandDenylist(vec!["ls".to_string()]),

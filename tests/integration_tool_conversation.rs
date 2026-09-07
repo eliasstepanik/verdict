@@ -8,7 +8,7 @@
 //! - StepAction::ToolUseLoop with StopCondition::TextOnly
 //! - Tool registry and scoping
 //! - Guard enforcement (NonEmptyOutput, NoSecretsInOutput)
-//! - Real filesystem tools (fs.list, fs.read) when available
+//! - Real filesystem tools (fs_list, fs_read) when available
 
 mod common;
 
@@ -99,7 +99,7 @@ fn make_agent(pipeline: Pipeline, agent_tools: ToolSet) -> Agent {
 #[tokio::test]
 async fn test_tool_use_loop_single_tool_call_then_text() {
     let script = vec![
-        ScriptedResponse::tool_call("fs.list", json!({ "path": "." })),
+        ScriptedResponse::tool_call("fs_list", json!({ "path": "." })),
         ScriptedResponse::text("Here are the files: Cargo.toml, src/"),
     ];
 
@@ -112,7 +112,7 @@ async fn test_tool_use_loop_single_tool_call_then_text() {
         "list_files",
         "You are a file explorer.",
         "List the files in the current directory.",
-        vec!["fs.list".to_string()],
+        vec!["fs_list".to_string()],
         4,
     );
 
@@ -188,8 +188,8 @@ async fn test_tool_use_loop_no_tools_called_returns_text() {
 #[tokio::test]
 async fn test_tool_use_loop_multiple_tool_calls_sequential() {
     let script = vec![
-        ScriptedResponse::tool_call("fs.list", json!({ "path": "." })),
-        ScriptedResponse::tool_call("fs.read", json!({ "path": "Cargo.toml" })),
+        ScriptedResponse::tool_call("fs_list", json!({ "path": "." })),
+        ScriptedResponse::tool_call("fs_read", json!({ "path": "Cargo.toml" })),
         ScriptedResponse::text("I read both. Here is the summary."),
     ];
 
@@ -201,7 +201,7 @@ async fn test_tool_use_loop_multiple_tool_calls_sequential() {
         "inspect",
         "You are investigating the workspace.",
         "List files and read Cargo.toml.",
-        vec!["fs.list".to_string(), "fs.read".to_string()],
+        vec!["fs_list".to_string(), "fs_read".to_string()],
         4,
     );
 
@@ -233,7 +233,7 @@ async fn test_tool_use_loop_multiple_tool_calls_sequential() {
 #[tokio::test]
 async fn test_tool_use_loop_synthesis_call_when_final_text_empty() {
     let script = vec![
-        ScriptedResponse::tool_call("fs.list", json!({ "path": "." })),
+        ScriptedResponse::tool_call("fs_list", json!({ "path": "." })),
         ScriptedResponse::text("Files found: main.rs"),
     ];
 
@@ -245,7 +245,7 @@ async fn test_tool_use_loop_synthesis_call_when_final_text_empty() {
         "analyze",
         "List files and summarize.",
         "What files are in the workspace?",
-        vec!["fs.list".to_string()],
+        vec!["fs_list".to_string()],
         4,
     );
 
@@ -278,7 +278,7 @@ async fn test_tool_use_loop_synthesis_call_when_final_text_empty() {
 async fn test_two_step_pipeline_understand_then_act() {
     let script = vec![
         ScriptedResponse::text("List files in current dir"),
-        ScriptedResponse::tool_call("fs.list", json!({ "path": "." })),
+        ScriptedResponse::tool_call("fs_list", json!({ "path": "." })),
         ScriptedResponse::text("Done: files listed"),
     ];
 
@@ -296,7 +296,7 @@ async fn test_two_step_pipeline_understand_then_act() {
         "act",
         "Execute the plan.",
         "Do it.",
-        vec!["fs.list".to_string()],
+        vec!["fs_list".to_string()],
         4,
     );
 
@@ -327,7 +327,7 @@ async fn test_two_step_pipeline_understand_then_act() {
 async fn test_pipeline_builder_dsl_with_tool_use() {
     let script = vec![
         ScriptedResponse::text("Plan: list files"),
-        ScriptedResponse::tool_call("fs.list", json!({ "path": "." })),
+        ScriptedResponse::tool_call("fs_list", json!({ "path": "." })),
         ScriptedResponse::text("Files listed successfully"),
     ];
 
@@ -340,7 +340,7 @@ async fn test_pipeline_builder_dsl_with_tool_use() {
         "execute",
         "Execute.",
         "Do it.",
-        vec!["fs.list".to_string()],
+        vec!["fs_list".to_string()],
         4,
     );
 
@@ -430,7 +430,7 @@ async fn test_guard_nosecretsinoutput_blocks_api_key() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════════
-// Test 9: Tool call fs.list real execution
+// Test 9: Tool call fs_list real execution
 // ═══════════════════════════════════════════════════════════════════════════════════════════════
 
 #[tokio::test]
@@ -441,12 +441,12 @@ async fn test_tool_call_fs_list_real_execution() {
         name: "list_workspace".into(),
         guard_in: Guard::None,
         action: StepAction::ToolCall {
-            tool: "fs.list".into(),
+            tool: "fs_list".into(),
             args: json!({ "path": "." }),
         },
         guard_out: Guard::NonEmptyOutput,
         verdict: Verdict::None,
-        tools: ToolSet::Allow(vec!["fs.list".into()]),
+        tools: ToolSet::Allow(vec!["fs_list".into()]),
         injection_protection: InjectionProtection::None,
         output_schema: None,
         dependencies: vec![],
@@ -473,7 +473,7 @@ async fn test_tool_call_fs_list_real_execution() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════════
-// Test 10: Tool call fs.read real execution
+// Test 10: Tool call fs_read real execution
 // ═══════════════════════════════════════════════════════════════════════════════════════════════
 
 #[tokio::test]
@@ -484,12 +484,12 @@ async fn test_tool_call_fs_read_real_execution() {
         name: "read_cargo".into(),
         guard_in: Guard::None,
         action: StepAction::ToolCall {
-            tool: "fs.read".into(),
+            tool: "fs_read".into(),
             args: json!({ "path": "Cargo.toml" }),
         },
         guard_out: Guard::NonEmptyOutput,
         verdict: Verdict::None,
-        tools: ToolSet::Allow(vec!["fs.read".into()]),
+        tools: ToolSet::Allow(vec!["fs_read".into()]),
         injection_protection: InjectionProtection::None,
         output_schema: None,
         dependencies: vec![],
@@ -685,7 +685,7 @@ async fn test_tool_use_loop_tracks_cost() {
     let script = vec![
         // First round: tool call with usage
         ScriptedResponse::with_usage(
-            "fs.list",
+            "fs_list",
             json!({ "path": "." }),
             100,  // prompt_tokens
             50,   // completion_tokens
@@ -707,7 +707,7 @@ async fn test_tool_use_loop_tracks_cost() {
         "track_cost",
         "You are a file explorer.",
         "List the files.",
-        vec!["fs.list".to_string()],
+        vec!["fs_list".to_string()],
         4,
     );
 
@@ -752,7 +752,7 @@ async fn test_tool_use_loop_tracks_cost() {
 // tool_registry.get() + tool.call() directly, bypassing both.
 // ═══════════════════════════════════════════════════════════════════════════════════════════════
 
-/// Differential test. The model asks for `fs.write` in both halves; only the step's
+/// Differential test. The model asks for `fs_write` in both halves; only the step's
 /// `allowed_tools` scope differs.
 ///   - in scope  -> the write really happens (proves dispatch is live, so the
 ///                  out-of-scope half cannot pass for the wrong reason)
@@ -765,7 +765,7 @@ async fn test_tool_use_loop_rejects_tool_outside_step_scope() {
 
         let script = vec![
             ScriptedResponse::tool_call(
-                "fs.write",
+                "fs_write",
                 json!({ "path": canary, "content": "pwned" }),
             ),
             ScriptedResponse::text("Finished."),
@@ -777,7 +777,7 @@ async fn test_tool_use_loop_rejects_tool_outside_step_scope() {
             "You are a file writer.",
             "Do the task.",
             // Advertised to the model in both halves; only the step scope below differs.
-            vec!["fs.list".to_string(), "fs.write".to_string()],
+            vec!["fs_list".to_string(), "fs_write".to_string()],
             4,
         );
         step.tools = ToolSet::Allow(scope);
@@ -802,27 +802,27 @@ async fn test_tool_use_loop_rejects_tool_outside_step_scope() {
 
     let pid = std::process::id();
 
-    // Control: fs.write IS in scope -> the tool must actually run.
+    // Control: fs_write IS in scope -> the tool must actually run.
     let in_scope = run_with_scope(
-        vec!["fs.list".to_string(), "fs.write".to_string()],
+        vec!["fs_list".to_string(), "fs_write".to_string()],
         &format!("scope_canary_allowed_{}.txt", pid),
     )
     .await;
     assert!(
         in_scope,
-        "control half failed: fs.write was in scope but never executed — the test \
+        "control half failed: fs_write was in scope but never executed — the test \
          cannot prove anything about the out-of-scope half"
     );
 
-    // Enforcement: fs.write is NOT in scope -> the tool must be rejected.
+    // Enforcement: fs_write is NOT in scope -> the tool must be rejected.
     let out_of_scope = run_with_scope(
-        vec!["fs.list".to_string()],
+        vec!["fs_list".to_string()],
         &format!("scope_canary_denied_{}.txt", pid),
     )
     .await;
     assert!(
         !out_of_scope,
-        "fs.write was outside the step's allowed_tools scope but STILL EXECUTED \
+        "fs_write was outside the step's allowed_tools scope but STILL EXECUTED \
          (canary file was created) — the ToolUseLoop tool-dispatch path is bypassing \
          the allowed_tools check"
     );
@@ -835,7 +835,7 @@ async fn test_tool_use_loop_rejects_tool_outside_step_scope() {
 async fn test_tool_use_loop_shell_denylist_catches_llm_driven_command() {
     let script = vec![
         ScriptedResponse::tool_call(
-            "shell.run_command",
+            "shell_run_command",
             json!({ "command": "touch", "args": ["denylist_probe.txt"] }),
         ),
         ScriptedResponse::text("Done."),
@@ -848,11 +848,11 @@ async fn test_tool_use_loop_shell_denylist_catches_llm_driven_command() {
         "shell_loop",
         "You are a shell operator.",
         "Run the command.",
-        vec!["shell.run_command".to_string()],
+        vec!["shell_run_command".to_string()],
         4,
     );
     // The tool itself IS allowed; only the *command* is denied.
-    step.tools = ToolSet::Allow(vec!["shell.run_command".to_string()]);
+    step.tools = ToolSet::Allow(vec!["shell_run_command".to_string()]);
     step.guard_out = Guard::ShellCommandDenylist(vec!["touch".to_string()]);
 
     let pipeline = Pipeline {
@@ -903,7 +903,7 @@ async fn test_tool_use_loop_xml_main_loop_rejects_tool_outside_scope() {
         // Model returns XML-format tool call (not JSON), triggering the XML parse path at line 1215
         let script = vec![
             ScriptedResponse::text(
-                "<invoke name=\"fs.write\">\
+                "<invoke name=\"fs_write\">\
                  <parameter name=\"path\">CANARY_PATH</parameter>\
                  <parameter name=\"content\">pwned</parameter>\
                  </invoke>"
@@ -917,7 +917,7 @@ async fn test_tool_use_loop_xml_main_loop_rejects_tool_outside_scope() {
             "xml_loop",
             "You are a file writer.",
             "Do the task.",
-            vec!["fs.list".to_string(), "fs.write".to_string()],
+            vec!["fs_list".to_string(), "fs_write".to_string()],
             4,
         );
         step.tools = ToolSet::Allow(scope);
@@ -942,27 +942,27 @@ async fn test_tool_use_loop_xml_main_loop_rejects_tool_outside_scope() {
 
     let pid = std::process::id();
 
-    // Control: fs.write IS in scope -> the tool must actually run.
+    // Control: fs_write IS in scope -> the tool must actually run.
     let in_scope = run_with_scope(
-        vec!["fs.list".to_string(), "fs.write".to_string()],
+        vec!["fs_list".to_string(), "fs_write".to_string()],
         &format!("xml_scope_allowed_{}.txt", pid),
     )
     .await;
     assert!(
         in_scope,
-        "control half failed: fs.write was in scope but never executed (XML path) — \
+        "control half failed: fs_write was in scope but never executed (XML path) — \
          the test cannot prove anything about the out-of-scope half"
     );
 
-    // Enforcement: fs.write is NOT in scope -> the tool must be rejected even in XML path.
+    // Enforcement: fs_write is NOT in scope -> the tool must be rejected even in XML path.
     let out_of_scope = run_with_scope(
-        vec!["fs.list".to_string()],
+        vec!["fs_list".to_string()],
         &format!("xml_scope_denied_{}.txt", pid),
     )
     .await;
     assert!(
         !out_of_scope,
-        "fs.write was outside step scope but STILL EXECUTED in XML path (line 1215) — \
+        "fs_write was outside step scope but STILL EXECUTED in XML path (line 1215) — \
          dispatch does not route through execute_llm_tool_call"
     );
 }
@@ -980,13 +980,13 @@ async fn test_tool_use_loop_synthesis_json_rejects_tool_outside_scope() {
         let canary_abs = std::env::current_dir().unwrap().join(canary);
         let _ = std::fs::remove_file(&canary_abs);
 
-        // Round 0: model returns tool call (fs.list), which is allowed, so it executes
+        // Round 0: model returns tool call (fs_list), which is allowed, so it executes
         // Main loop ends (max_rounds=1). answered_with_text=false, so synthesis runs.
-        // In synthesis, model returns JSON tool call (fs.write) to be executed.
+        // In synthesis, model returns JSON tool call (fs_write) to be executed.
         let script = vec![
-            ScriptedResponse::tool_call("fs.list", json!({ "path": "." })),
+            ScriptedResponse::tool_call("fs_list", json!({ "path": "." })),
             // Synthesis calls LLM, which returns JSON tool call
-            ScriptedResponse::tool_call("fs.write", json!({ "path": canary, "content": "pwned" })),
+            ScriptedResponse::tool_call("fs_write", json!({ "path": canary, "content": "pwned" })),
             ScriptedResponse::text("Done."),
         ];
         let llm_client = LlmClient::new(Arc::new(ScriptedMockLlmProvider::new(script)));
@@ -995,7 +995,7 @@ async fn test_tool_use_loop_synthesis_json_rejects_tool_outside_scope() {
             "syn_loop",
             "Call a tool first, then write to a file.",
             "Do it now.",
-            vec!["fs.list".to_string(), "fs.write".to_string()],
+            vec!["fs_list".to_string(), "fs_write".to_string()],
             1, // max_rounds = 1, so main loop stops without text answer, triggering synthesis
         );
         step.tools = ToolSet::Allow(scope);
@@ -1020,27 +1020,27 @@ async fn test_tool_use_loop_synthesis_json_rejects_tool_outside_scope() {
 
     let pid = std::process::id();
 
-    // Control: fs.write IS in scope -> synthesis should execute it.
+    // Control: fs_write IS in scope -> synthesis should execute it.
     let in_scope = run_with_scope(
-        vec!["fs.list".to_string(), "fs.write".to_string()],
+        vec!["fs_list".to_string(), "fs_write".to_string()],
         &format!("syn_json_allowed_{}.txt", pid),
     )
     .await;
     assert!(
         in_scope,
-        "control half failed: fs.write was in scope but synthesis never executed it — \
+        "control half failed: fs_write was in scope but synthesis never executed it — \
          the test cannot prove anything about the out-of-scope half"
     );
 
-    // Enforcement: fs.write is NOT in scope -> synthesis must reject it.
+    // Enforcement: fs_write is NOT in scope -> synthesis must reject it.
     let out_of_scope = run_with_scope(
-        vec!["fs.list".to_string()],
+        vec!["fs_list".to_string()],
         &format!("syn_json_denied_{}.txt", pid),
     )
     .await;
     assert!(
         !out_of_scope,
-        "fs.write was outside step scope but STILL EXECUTED in synthesis JSON path (line 1318) — \
+        "fs_write was outside step scope but STILL EXECUTED in synthesis JSON path (line 1318) — \
          dispatch does not route through execute_llm_tool_call"
     );
 }
@@ -1058,15 +1058,15 @@ async fn test_tool_use_loop_synthesis_xml_rejects_tool_outside_scope() {
         let canary_abs = std::env::current_dir().unwrap().join(canary);
         let _ = std::fs::remove_file(&canary_abs);
 
-        // Round 0: model calls fs.list (allowed in both scopes), no text answer
+        // Round 0: model calls fs_list (allowed in both scopes), no text answer
         // Main loop ends (max_rounds=1). answered_with_text=false, so synthesis runs.
-        // Synthesis response with XML tool call (fs.write)
+        // Synthesis response with XML tool call (fs_write)
         let script = vec![
-            ScriptedResponse::tool_call("fs.list", json!({ "path": "." })),
+            ScriptedResponse::tool_call("fs_list", json!({ "path": "." })),
             // Synthesis response with XML tool call
             ScriptedResponse::text(
                 "I will write to the file now:\n\
-                 <invoke name=\"fs.write\">\
+                 <invoke name=\"fs_write\">\
                  <parameter name=\"path\">CANARY_PATH</parameter>\
                  <parameter name=\"content\">pwned</parameter>\
                  </invoke>"
@@ -1080,7 +1080,7 @@ async fn test_tool_use_loop_synthesis_xml_rejects_tool_outside_scope() {
             "syn_xml_loop",
             "Call a tool first, then write to a file.",
             "Do it now.",
-            vec!["fs.list".to_string(), "fs.write".to_string()],
+            vec!["fs_list".to_string(), "fs_write".to_string()],
             1, // max_rounds = 1, triggers synthesis
         );
         step.tools = ToolSet::Allow(scope);
@@ -1105,27 +1105,27 @@ async fn test_tool_use_loop_synthesis_xml_rejects_tool_outside_scope() {
 
     let pid = std::process::id();
 
-    // Control: fs.write IS in scope -> synthesis should execute it.
+    // Control: fs_write IS in scope -> synthesis should execute it.
     let in_scope = run_with_scope(
-        vec!["fs.list".to_string(), "fs.write".to_string()],
+        vec!["fs_list".to_string(), "fs_write".to_string()],
         &format!("syn_xml_allowed_{}.txt", pid),
     )
     .await;
     assert!(
         in_scope,
-        "control half failed: fs.write was in scope but synthesis never executed it (XML) — \
+        "control half failed: fs_write was in scope but synthesis never executed it (XML) — \
          the test cannot prove anything about the out-of-scope half"
     );
 
-    // Enforcement: fs.write is NOT in scope -> synthesis must reject it.
+    // Enforcement: fs_write is NOT in scope -> synthesis must reject it.
     let out_of_scope = run_with_scope(
-        vec!["fs.list".to_string()],
+        vec!["fs_list".to_string()],
         &format!("syn_xml_denied_{}.txt", pid),
     )
     .await;
     assert!(
         !out_of_scope,
-        "fs.write was outside step scope but STILL EXECUTED in synthesis XML path (line 1380) — \
+        "fs_write was outside step scope but STILL EXECUTED in synthesis XML path (line 1380) — \
          dispatch does not route through execute_llm_tool_call"
     );
 }
@@ -1147,7 +1147,7 @@ async fn test_synthesis_loop_propagates_llm_errors() {
     // Synthesis LLM call fails with a rate-limit error.
     let script = vec![
         // Main loop: tool call only, no final text → synthesis will run
-        ScriptedResponse::tool_call("fs.list", json!({ "path": "." })),
+        ScriptedResponse::tool_call("fs_list", json!({ "path": "." })),
         // Synthesis call: LLM provider fails with rate-limit
         ScriptedResponse::error(LlmError::RateLimited),
     ];
@@ -1158,7 +1158,7 @@ async fn test_synthesis_loop_propagates_llm_errors() {
         "syn_error_prop",
         "Synthesize a completion.",
         "Please complete the task.",
-        vec!["fs.list".to_string()],
+        vec!["fs_list".to_string()],
         1, // max_rounds = 1 (main loop only, then synthesis)
     );
 
@@ -1204,7 +1204,7 @@ async fn test_synthesis_loop_propagates_llm_errors() {
 async fn test_synthesis_loop_propagates_network_errors() {
     let script = vec![
         // Main loop: tool call only (no text) → synthesis will run
-        ScriptedResponse::tool_call("fs.list", json!({ "path": "." })),
+        ScriptedResponse::tool_call("fs_list", json!({ "path": "." })),
         // Synthesis call: network failure
         ScriptedResponse::error(LlmError::NetworkError("connection timeout".into())),
     ];
@@ -1215,7 +1215,7 @@ async fn test_synthesis_loop_propagates_network_errors() {
         "syn_net_error",
         "Synthesize.",
         "Complete.",
-        vec!["fs.list".to_string()],
+        vec!["fs_list".to_string()],
         1,
     );
 

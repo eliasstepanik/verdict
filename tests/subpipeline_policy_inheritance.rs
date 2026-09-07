@@ -3,7 +3,7 @@
 //!
 //! The handler used to build a fresh `AgentPolicy::default()` (copying only
 //! `allowed_tools`) and call the plain `run()` entry point. That silently reset
-//! `filesystem_policy` to a `current_dir()`-based root — so an inner `fs.write`
+//! `filesystem_policy` to a `current_dir()`-based root — so an inner `fs_write`
 //! escaped `WorkspaceIsolation::TempDir` and landed in the real repository —
 //! reset `network_policy` to `DenyAll`, and reset `delegation_depth` to 0,
 //! letting a SubPipeline wrapper bypass `max_delegation_depth` entirely.
@@ -55,7 +55,7 @@ fn agent(p: &Pipeline, policy: AgentPolicy) -> Agent {
 
 /// C2: `WorkspaceIsolation::TempDir` must survive the SubPipeline boundary.
 ///
-/// The inner step writes via `fs.write` with a relative path. If isolation is
+/// The inner step writes via `fs_write` with a relative path. If isolation is
 /// inherited the file lands under the temp workspace; if the child rebuilt a
 /// default policy it lands in the process's real current directory (the repo).
 #[tokio::test]
@@ -71,10 +71,10 @@ async fn tempdir_isolation_survives_subpipeline() {
         vec![step(
             "write",
             StepAction::ToolCall {
-                tool: "fs.write".into(),
+                tool: "fs_write".into(),
                 args: json!({ "path": marker, "content": "written by sub-pipeline" }),
             },
-            ToolSet::Allow(vec!["fs.write".into()]),
+            ToolSet::Allow(vec!["fs_write".into()]),
         )],
     );
 
@@ -83,12 +83,12 @@ async fn tempdir_isolation_survives_subpipeline() {
         vec![step(
             "sub",
             StepAction::SubPipeline(Box::new(inner)),
-            ToolSet::Allow(vec!["fs.write".into()]),
+            ToolSet::Allow(vec!["fs_write".into()]),
         )],
     );
 
     let mut policy = AgentPolicy::default();
-    policy.allowed_tools = ToolSet::Allow(vec!["fs.write".into()]);
+    policy.allowed_tools = ToolSet::Allow(vec!["fs_write".into()]);
     policy.filesystem_policy.workspace_isolation = WorkspaceIsolation::TempDir;
 
     let a = agent(&outer, policy);
@@ -292,10 +292,10 @@ async fn budget_is_inherited_through_subpipeline() {
     let bump = step(
         "bump",
         StepAction::ToolCall {
-            tool: "fs.list".into(),
+            tool: "fs_list".into(),
             args: json!({ "path": "." }),
         },
-        ToolSet::Allow(vec!["fs.list".into()]),
+        ToolSet::Allow(vec!["fs_list".into()]),
     );
 
     let outer = pipeline(
@@ -311,7 +311,7 @@ async fn budget_is_inherited_through_subpipeline() {
     );
 
     let mut policy = AgentPolicy::default();
-    policy.allowed_tools = ToolSet::Allow(vec!["fs.list".into()]);
+    policy.allowed_tools = ToolSet::Allow(vec!["fs_list".into()]);
     let a = agent(&outer, policy);
     PipelineRunner::new()
         .run(&outer, &a, json!({}))

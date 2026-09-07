@@ -52,7 +52,7 @@ pub struct ReadFileTool;
 #[async_trait]
 impl Tool for ReadFileTool {
     fn name(&self) -> &str {
-        "fs.read"
+        "fs_read"
     }
 
     fn description(&self) -> &str {
@@ -120,7 +120,7 @@ pub struct WriteFileTool;
 #[async_trait]
 impl Tool for WriteFileTool {
     fn name(&self) -> &str {
-        "fs.write"
+        "fs_write"
     }
 
     fn description(&self) -> &str {
@@ -207,7 +207,7 @@ pub struct ListDirTool;
 #[async_trait]
 impl Tool for ListDirTool {
     fn name(&self) -> &str {
-        "fs.list"
+        "fs_list"
     }
 
     fn description(&self) -> &str {
@@ -297,7 +297,7 @@ pub struct DeleteFileTool;
 #[async_trait]
 impl Tool for DeleteFileTool {
     fn name(&self) -> &str {
-        "fs.delete"
+        "fs_delete"
     }
 
     fn description(&self) -> &str {

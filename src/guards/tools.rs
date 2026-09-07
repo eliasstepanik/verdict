@@ -267,9 +267,9 @@ mod tests {
     fn test_shell_denylist_tool_actually_executed() {
         let mut ctx = make_test_context();
         ctx.output = Some(StepOutput::new("some output".to_string()));
-        ctx.tools_used = vec!["shell.run".to_string()];
+        ctx.tools_used = vec!["shell_run".to_string()];
         // The actual command executed is "rm -rf /"
-        ctx.commands_executed = vec![("shell.run".to_string(), "rm -rf /".to_string())];
+        ctx.commands_executed = vec![("shell_run".to_string(), "rm -rf /".to_string())];
 
         let cmds = vec!["rm".to_string(), "dd".to_string()];
         let guard = super::super::Guard::ShellCommandDenylist(cmds.clone());
@@ -290,9 +290,9 @@ mod tests {
     fn test_shell_denylist_allowed_command_executed() {
         let mut ctx = make_test_context();
         ctx.output = Some(StepOutput::new("git clone result".to_string()));
-        ctx.tools_used = vec!["shell.run".to_string()];
+        ctx.tools_used = vec!["shell_run".to_string()];
         // The actual command executed is "git clone <url>"
-        ctx.commands_executed = vec![("shell.run".to_string(), "git clone https://github.com/example/repo".to_string())];
+        ctx.commands_executed = vec![("shell_run".to_string(), "git clone https://github.com/example/repo".to_string())];
 
         let cmds = vec!["rm".to_string(), "dd".to_string()];
         let guard = super::super::Guard::ShellCommandDenylist(cmds.clone());
@@ -308,9 +308,9 @@ mod tests {
         let mut ctx = make_test_context();
         // Output contains "rm file" but the actual command executed is "git clone"
         ctx.output = Some(StepOutput::new("git clone result\nrm file (simulated output)".to_string()));
-        ctx.tools_used = vec!["shell.run".to_string()];
+        ctx.tools_used = vec!["shell_run".to_string()];
         // The actual command executed was git, not rm
-        ctx.commands_executed = vec![("shell.run".to_string(), "git clone https://github.com/example/repo".to_string())];
+        ctx.commands_executed = vec![("shell_run".to_string(), "git clone https://github.com/example/repo".to_string())];
 
         let allowed = vec!["git".to_string()];
         let guard = super::super::Guard::ShellCommandAllowlist(allowed.clone());
@@ -325,9 +325,9 @@ mod tests {
     fn test_shell_allowlist_forbidden_command_executed() {
         let mut ctx = make_test_context();
         ctx.output = Some(StepOutput::new("some output".to_string()));
-        ctx.tools_used = vec!["shell.run".to_string()];
+        ctx.tools_used = vec!["shell_run".to_string()];
         // Actual command executed is "curl", which is not in the allowlist
-        ctx.commands_executed = vec![("shell.run".to_string(), "curl http://evil.com".to_string())];
+        ctx.commands_executed = vec![("shell_run".to_string(), "curl http://evil.com".to_string())];
 
         let allowed = vec!["git".to_string(), "cargo".to_string()];
         let guard = super::super::Guard::ShellCommandAllowlist(allowed.clone());
@@ -348,10 +348,10 @@ mod tests {
     fn test_shell_allowlist_multiple_commands() {
         let mut ctx = make_test_context();
         ctx.output = Some(StepOutput::new("git and cargo executed".to_string()));
-        ctx.tools_used = vec!["shell.run".to_string(), "shell.cargo_test".to_string()];
+        ctx.tools_used = vec!["shell_run".to_string(), "shell_cargo_test".to_string()];
         ctx.commands_executed = vec![
-            ("shell.run".to_string(), "git clone https://github.com/example/repo".to_string()),
-            ("shell.cargo_test".to_string(), "cargo test".to_string()),
+            ("shell_run".to_string(), "git clone https://github.com/example/repo".to_string()),
+            ("shell_cargo_test".to_string(), "cargo test".to_string()),
         ];
 
         let allowed = vec!["git".to_string(), "cargo".to_string()];
@@ -367,10 +367,10 @@ mod tests {
     fn test_shell_allowlist_one_command_not_allowed() {
         let mut ctx = make_test_context();
         ctx.output = Some(StepOutput::new("git and rm executed".to_string()));
-        ctx.tools_used = vec!["shell.run".to_string(), "shell.run".to_string()];
+        ctx.tools_used = vec!["shell_run".to_string(), "shell_run".to_string()];
         ctx.commands_executed = vec![
-            ("shell.run".to_string(), "git clone https://github.com/example/repo".to_string()),
-            ("shell.run".to_string(), "rm -rf /tmp".to_string()),
+            ("shell_run".to_string(), "git clone https://github.com/example/repo".to_string()),
+            ("shell_run".to_string(), "rm -rf /tmp".to_string()),
         ];
 
         let allowed = vec!["git".to_string()];
@@ -408,8 +408,8 @@ mod tests {
     #[test]
     fn test_shell_allowlist_cargo_test_exact_match() {
         let mut ctx = make_test_context();
-        ctx.tools_used = vec!["shell.cargo_test".to_string()];
-        ctx.commands_executed = vec![("shell.cargo_test".to_string(), "cargo test".to_string())];
+        ctx.tools_used = vec!["shell_cargo_test".to_string()];
+        ctx.commands_executed = vec![("shell_cargo_test".to_string(), "cargo test".to_string())];
 
         let allowed = vec!["cargo test".to_string()];
         let guard = super::super::Guard::ShellCommandAllowlist(allowed.clone());
@@ -423,10 +423,10 @@ mod tests {
     #[test]
     fn test_shell_denylist_no_substring_bypass() {
         let mut ctx = make_test_context();
-        ctx.tools_used = vec!["shell.run".to_string()];
+        ctx.tools_used = vec!["shell_run".to_string()];
         // The command is "cargo test" but denylist has "go_te" (substring of cargo_test)
         // This should NOT match because we use word-boundary matching
-        ctx.commands_executed = vec![("shell.run".to_string(), "cargo test".to_string())];
+        ctx.commands_executed = vec![("shell_run".to_string(), "cargo test".to_string())];
 
         let cmds = vec!["go_te".to_string()];
         let guard = super::super::Guard::ShellCommandDenylist(cmds.clone());
@@ -440,10 +440,10 @@ mod tests {
      #[test]
      fn test_shell_denylist_critical_rm_bypass() {
          let mut ctx = make_test_context();
-         ctx.tools_used = vec!["shell.run".to_string()];
+         ctx.tools_used = vec!["shell_run".to_string()];
          // Critical test: denylist has "rm" and command is "rm -rf /"
          // This MUST be blocked or the denylist is a no-op
-         ctx.commands_executed = vec![("shell.run".to_string(), "rm -rf /".to_string())];
+         ctx.commands_executed = vec![("shell_run".to_string(), "rm -rf /".to_string())];
 
          let cmds = vec!["rm".to_string()];
          let guard = super::super::Guard::ShellCommandDenylist(cmds.clone());
@@ -465,9 +465,9 @@ mod tests {
      #[test]
      fn test_shell_run_command_denylist_blocked() {
          let mut ctx = make_test_context();
-         ctx.tools_used = vec!["shell.run_command".to_string()];
+         ctx.tools_used = vec!["shell_run_command".to_string()];
          // Critical: shell.run_command with denylisted command must be blocked
-         ctx.commands_executed = vec![("shell.run_command".to_string(), "rm -rf /tmp".to_string())];
+         ctx.commands_executed = vec![("shell_run_command".to_string(), "rm -rf /tmp".to_string())];
 
          let cmds = vec!["rm".to_string()];
          let guard = super::super::Guard::ShellCommandDenylist(cmds.clone());
@@ -487,8 +487,8 @@ mod tests {
      #[test]
      fn test_shell_run_command_allowlist_permitted() {
          let mut ctx = make_test_context();
-         ctx.tools_used = vec!["shell.run_command".to_string()];
-         ctx.commands_executed = vec![("shell.run_command".to_string(), "git clone https://example.com/repo".to_string())];
+         ctx.tools_used = vec!["shell_run_command".to_string()];
+         ctx.commands_executed = vec![("shell_run_command".to_string(), "git clone https://example.com/repo".to_string())];
 
          let allowed = vec!["git".to_string()];
          let guard = super::super::Guard::ShellCommandAllowlist(allowed.clone());
@@ -504,9 +504,9 @@ mod tests {
      #[test]
      fn test_denylist_absolute_path_rm() {
          let mut ctx = make_test_context();
-         ctx.tools_used = vec!["shell.run".to_string()];
+         ctx.tools_used = vec!["shell_run".to_string()];
          // Command uses absolute path: /usr/bin/rm
-         ctx.commands_executed = vec![("shell.run".to_string(), "/usr/bin/rm -rf /tmp".to_string())];
+         ctx.commands_executed = vec![("shell_run".to_string(), "/usr/bin/rm -rf /tmp".to_string())];
 
          let cmds = vec!["rm".to_string()];
          let guard = super::super::Guard::ShellCommandDenylist(cmds.clone());
@@ -526,9 +526,9 @@ mod tests {
      #[test]
      fn test_allowlist_absolute_path_cargo() {
          let mut ctx = make_test_context();
-         ctx.tools_used = vec!["shell.run".to_string()];
+         ctx.tools_used = vec!["shell_run".to_string()];
          // Command uses absolute path: /home/user/.cargo/bin/cargo
-         ctx.commands_executed = vec![("shell.run".to_string(), "/home/user/.cargo/bin/cargo build".to_string())];
+         ctx.commands_executed = vec![("shell_run".to_string(), "/home/user/.cargo/bin/cargo build".to_string())];
 
          let allowed = vec!["cargo".to_string()];
          let guard = super::super::Guard::ShellCommandAllowlist(allowed.clone());
@@ -544,9 +544,9 @@ mod tests {
      #[test]
      fn test_allowlist_exact_match_not_prefix() {
          let mut ctx = make_test_context();
-         ctx.tools_used = vec!["shell.run".to_string()];
+         ctx.tools_used = vec!["shell_run".to_string()];
          // Command executed is "echo hello"
-         ctx.commands_executed = vec![("shell.run".to_string(), "echo hello".to_string())];
+         ctx.commands_executed = vec![("shell_run".to_string(), "echo hello".to_string())];
 
          // Allowlist has "ech" (prefix of "echo")
          let allowed = vec!["ech".to_string()];
@@ -562,8 +562,8 @@ mod tests {
      #[test]
      fn test_allowlist_exact_match_echo_ok() {
          let mut ctx = make_test_context();
-         ctx.tools_used = vec!["shell.run".to_string()];
-         ctx.commands_executed = vec![("shell.run".to_string(), "echo hello".to_string())];
+         ctx.tools_used = vec!["shell_run".to_string()];
+         ctx.commands_executed = vec![("shell_run".to_string(), "echo hello".to_string())];
 
          // Allowlist has "echo" (exact match)
          let allowed = vec!["echo".to_string()];
@@ -578,9 +578,9 @@ mod tests {
      #[test]
      fn test_denylist_exact_match_not_substring() {
          let mut ctx = make_test_context();
-         ctx.tools_used = vec!["shell.run".to_string()];
+         ctx.tools_used = vec!["shell_run".to_string()];
          // Command executed is "echo hello" (contains "echo")
-         ctx.commands_executed = vec![("shell.run".to_string(), "echo hello".to_string())];
+         ctx.commands_executed = vec![("shell_run".to_string(), "echo hello".to_string())];
 
          // Denylist has "ho" (substring of "echo")
          let cmds = vec!["ho".to_string()];
@@ -596,8 +596,8 @@ mod tests {
      #[test]
      fn test_denylist_exact_match_echo_blocked() {
          let mut ctx = make_test_context();
-         ctx.tools_used = vec!["shell.run".to_string()];
-         ctx.commands_executed = vec![("shell.run".to_string(), "echo hello".to_string())];
+         ctx.tools_used = vec!["shell_run".to_string()];
+         ctx.commands_executed = vec![("shell_run".to_string(), "echo hello".to_string())];
 
          // Denylist has "echo" (exact match)
          let cmds = vec!["echo".to_string()];

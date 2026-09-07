@@ -23,10 +23,10 @@ pub fn refactoring() -> Skill {
 9. Document non-obvious logic with inline comments."#
             .to_string(),
         allowed_tools: ToolSet::Allow(vec![
-            "fs.read".to_string(),
-            "fs.write".to_string(),
-            "shell.cargo_check".to_string(),
-            "shell.cargo_test".to_string(),
+            "fs_read".to_string(),
+            "fs_write".to_string(),
+            "shell_cargo_check".to_string(),
+            "shell_cargo_test".to_string(),
         ]),
         required_guards: vec![Guard::Compiles, Guard::TestsPass],
         pipeline: None,

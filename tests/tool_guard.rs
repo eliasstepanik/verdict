@@ -55,10 +55,10 @@ fn probe_pipeline_and_agent(step: AgentStep) -> (Pipeline, Agent) {
     (pipeline, agent)
 }
 
-/// A test guard: rejects `shell.run` outright, allows everything else.
+/// A test guard: rejects `shell_run` outright, allows everything else.
 fn deny_shell_run_guard() -> ToolGuard {
     Box::new(|tool_name, _args, _ctx| {
-        if tool_name == "shell.run" {
+        if tool_name == "shell_run" {
             Err("blocked by test guard".to_string())
         } else {
             Ok(())
@@ -74,7 +74,7 @@ async fn test_tool_guard_rejects_call_before_execution() {
     let canary_abs = std::env::current_dir().unwrap().join(&canary_rel);
     let _ = std::fs::remove_file(&canary_abs);
 
-    let step = shell_step("shell.run", "touch", vec![canary_rel.as_str()]);
+    let step = shell_step("shell_run", "touch", vec![canary_rel.as_str()]);
     let (pipeline, agent) = probe_pipeline_and_agent(step);
 
     let mut runner = PipelineRunner::new().with_tool_guards(vec![deny_shell_run_guard()]);
@@ -117,7 +117,7 @@ async fn test_no_guard_configured_behaves_as_before() {
     let canary_abs = std::env::current_dir().unwrap().join(&canary_rel);
     let _ = std::fs::remove_file(&canary_abs);
 
-    let step = shell_step("shell.run", "touch", vec![canary_rel.as_str()]);
+    let step = shell_step("shell_run", "touch", vec![canary_rel.as_str()]);
     let (pipeline, agent) = probe_pipeline_and_agent(step);
 
     // No .with_tool_guards(..) call at all — tool_guards stays None.
@@ -134,6 +134,6 @@ async fn test_no_guard_configured_behaves_as_before() {
     );
     assert!(
         canary_created,
-        "unguarded shell.run should have actually executed and created the canary file"
+        "unguarded shell_run should have actually executed and created the canary file"
     );
 }
