@@ -128,9 +128,9 @@ async fn test_guard_shell_command_allowlist_rejects_unlisted() {
         Default::default(),
     );
     
-    // Simulate a shell command "rm -rf /tmp" being executed via shell.run
-    ctx.tools_used = vec!["shell.run".to_string()];
-    ctx.commands_executed = vec![("shell.run".to_string(), "rm -rf /tmp".to_string())];
+    // Simulate a shell command "rm -rf /tmp" being executed via shell_run
+    ctx.tools_used = vec!["shell_run".to_string()];
+    ctx.commands_executed = vec![("shell_run".to_string(), "rm -rf /tmp".to_string())];
     
     let guard = Guard::ShellCommandAllowlist(vec!["cargo".to_string()]);
     

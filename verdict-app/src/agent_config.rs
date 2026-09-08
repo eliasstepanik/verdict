@@ -276,7 +276,7 @@ description = "Test"
         let toolset = spec.into_toolset();
         assert!(matches!(toolset, ToolSet::Full));
 
-        let spec = ToolSetSpec::Allow(vec!["fs.read".into(), "fs.write".into()]);
+        let spec = ToolSetSpec::Allow(vec!["fs_read".into(), "fs_write".into()]);
         let toolset = spec.into_toolset();
         assert!(matches!(toolset, ToolSet::Allow(_)));
     }

@@ -26,7 +26,7 @@ async fn test_a1_tool_approval_registration() {
 
     // Verify it requires approval
     assert!(registry.requires_approval("local.test_tool"));
-    assert!(!registry.requires_approval("fs.read"));
+    assert!(!registry.requires_approval("fs_read"));
 }
 
 // A2 â€” Delegation Hooks (types exist, wiring deferred to runner)

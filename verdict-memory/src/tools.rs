@@ -21,7 +21,7 @@ impl MemoryGetThreadTool {
 #[async_trait]
 impl Tool for MemoryGetThreadTool {
     fn name(&self) -> &str {
-        "memory.get_thread"
+        "memory_get_thread"
     }
 
     fn description(&self) -> &str {
@@ -89,7 +89,7 @@ impl MemorySearchTool {
 #[async_trait]
 impl Tool for MemorySearchTool {
     fn name(&self) -> &str {
-        "memory.search"
+        "memory_search"
     }
 
     fn description(&self) -> &str {
@@ -171,7 +171,7 @@ impl MemorySetWorkingTool {
 #[async_trait]
 impl Tool for MemorySetWorkingTool {
     fn name(&self) -> &str {
-        "memory.set_working"
+        "memory_set_working"
     }
 
     fn description(&self) -> &str {
@@ -245,7 +245,7 @@ impl MemoryGetWorkingTool {
 #[async_trait]
 impl Tool for MemoryGetWorkingTool {
     fn name(&self) -> &str {
-        "memory.get_working"
+        "memory_get_working"
     }
 
     fn description(&self) -> &str {
@@ -307,7 +307,7 @@ impl MemorySaveMessageTool {
 #[async_trait]
 impl Tool for MemorySaveMessageTool {
     fn name(&self) -> &str {
-        "memory.save_message"
+        "memory_save_message"
     }
 
     fn description(&self) -> &str {

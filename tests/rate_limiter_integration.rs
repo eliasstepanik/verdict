@@ -467,7 +467,7 @@ async fn test_disallowed_tool_beats_rate_limit() {
             name: "call_disallowed".into(),
             guard_in: Guard::None,
             action: StepAction::ToolCall {
-                tool: "fs.write".into(),
+                tool: "fs_write".into(),
                 args: json!({ "path": "/test", "content": "test" }),
             },
             guard_out: Guard::None,
@@ -628,8 +628,8 @@ async fn test_no_rate_limiter_backward_compat() {
     }
 }
 
-// ─── RESTORED TEST 4: Rate limit on tool-executor shell.run calls ────────────────
-// Verifies that shell.run tool-call rate limiting works: 3x shell.run calls with 2/min limit
+// ─── RESTORED TEST 4: Rate limit on tool-executor shell_run calls ────────────────
+// Verifies that shell_run tool-call rate limiting works: 3x shell_run calls with 2/min limit
 // must fail on the 3rd call (tool_executor.rs rate-limit gate). This is separate from
 // LLM-path rate limiting and tests the tool-call concern specifically.
 #[tokio::test]
@@ -641,7 +641,7 @@ async fn test_rate_limit_on_tool_calls() {
                 name: "tool_call_1".into(),
                 guard_in: Guard::None,
                 action: StepAction::ToolCall {
-                    tool: "shell.run".into(),
+                    tool: "shell_run".into(),
                     args: json!({ "command": "echo", "args": ["test1"] }),
                 },
                 guard_out: Guard::None,
@@ -658,7 +658,7 @@ async fn test_rate_limit_on_tool_calls() {
                 name: "tool_call_2".into(),
                 guard_in: Guard::None,
                 action: StepAction::ToolCall {
-                    tool: "shell.run".into(),
+                    tool: "shell_run".into(),
                     args: json!({ "command": "echo", "args": ["test2"] }),
                 },
                 guard_out: Guard::None,
@@ -675,7 +675,7 @@ async fn test_rate_limit_on_tool_calls() {
                 name: "tool_call_3".into(),
                 guard_in: Guard::None,
                 action: StepAction::ToolCall {
-                    tool: "shell.run".into(),
+                    tool: "shell_run".into(),
                     args: json!({ "command": "echo", "args": ["test3"] }),
                 },
                 guard_out: Guard::None,
@@ -866,13 +866,13 @@ async fn test_rate_limit_tool_use_loop_main_gate() {
                         model: String::new(),
                         provider: "test".into(),
                     },
-                    tools: vec!["shell.run".into()],
+                    tools: vec!["shell_run".into()],
                     max_rounds: 1usize,
                     stop_condition: StopCondition::TextOnly,
                 },
                 guard_out: Guard::None,
                 verdict: Verdict::None,
-                tools: ToolSet::Allow(vec!["shell.run".into()]),
+                tools: ToolSet::Allow(vec!["shell_run".into()]),
                 injection_protection: InjectionProtection::None,
                 output_schema: None,
                 dependencies: vec![],
@@ -890,13 +890,13 @@ async fn test_rate_limit_tool_use_loop_main_gate() {
                         model: String::new(),
                         provider: "test".into(),
                     },
-                    tools: vec!["shell.run".into()],
+                    tools: vec!["shell_run".into()],
                     max_rounds: 1usize,
                     stop_condition: StopCondition::TextOnly,
                 },
                 guard_out: Guard::None,
                 verdict: Verdict::None,
-                tools: ToolSet::Allow(vec!["shell.run".into()]),
+                tools: ToolSet::Allow(vec!["shell_run".into()]),
                 injection_protection: InjectionProtection::None,
                 output_schema: None,
                 dependencies: vec![],
@@ -914,13 +914,13 @@ async fn test_rate_limit_tool_use_loop_main_gate() {
                         model: String::new(),
                         provider: "test".into(),
                     },
-                    tools: vec!["shell.run".into()],
+                    tools: vec!["shell_run".into()],
                     max_rounds: 1usize,
                     stop_condition: StopCondition::TextOnly,
                 },
                 guard_out: Guard::None,
                 verdict: Verdict::None,
-                tools: ToolSet::Allow(vec!["shell.run".into()]),
+                tools: ToolSet::Allow(vec!["shell_run".into()]),
                 injection_protection: InjectionProtection::None,
                 output_schema: None,
                 dependencies: vec![],
@@ -994,13 +994,13 @@ async fn test_rate_limit_tool_use_loop_synthesis_gate() {
                         model: String::new(),
                         provider: "test".into(),
                     },
-                    tools: vec!["shell.run".into()],
+                    tools: vec!["shell_run".into()],
                     max_rounds: 1usize,
                     stop_condition: StopCondition::TextOnly,
                 },
                 guard_out: Guard::None,
                 verdict: Verdict::None,
-                tools: ToolSet::Allow(vec!["shell.run".into()]),
+                tools: ToolSet::Allow(vec!["shell_run".into()]),
                 injection_protection: InjectionProtection::None,
                 output_schema: None,
                 dependencies: vec![],
@@ -1027,7 +1027,7 @@ async fn test_rate_limit_tool_use_loop_synthesis_gate() {
     // Script: 1st response has a tool call (no final text) — this exhausts budget but doesn't trigger synthesis yet.
     // 2nd response would be synthesis retry — but rate limit will trigger first.
     let mock_provider = Arc::new(ScriptedMockLlmProvider::new(vec![
-        ScriptedResponse::tool_call("shell.run", json!({ "command": "echo", "args": ["test"] })),
+        ScriptedResponse::tool_call("shell_run", json!({ "command": "echo", "args": ["test"] })),
     ]));
     runner.llm_client = Some(Arc::new(verdict::llm::LlmClient::new(mock_provider)));
 
@@ -1076,7 +1076,7 @@ async fn test_tool_executor_poison_recovery_genuine() {
                 name: "tool_call_1".into(),
                 guard_in: Guard::None,
                 action: StepAction::ToolCall {
-                    tool: "shell.run".into(),
+                    tool: "shell_run".into(),
                     args: json!({ "command": "echo", "args": ["test"] }),
                 },
                 guard_out: Guard::None,

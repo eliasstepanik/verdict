@@ -49,7 +49,7 @@ fn test_budget_tracker_builder() {
 
 #[test]
 fn test_toolset_explicit_names() {
-    let ts = ToolSet::Allow(vec!["fs.read".into(), "fs.write".into()]);
+    let ts = ToolSet::Allow(vec!["fs_read".into(), "fs_write".into()]);
     let names = ts.explicit_names();
     assert!(names.is_some());
     assert_eq!(names.unwrap().len(), 2);
@@ -57,7 +57,7 @@ fn test_toolset_explicit_names() {
 
 #[test]
 fn test_toolset_deny_explicit_names() {
-    let ts = ToolSet::Deny(vec!["fs.write".into()]);
+    let ts = ToolSet::Deny(vec!["fs_write".into()]);
     let names = ts.explicit_names();
     assert!(names.is_some());
     assert_eq!(names.unwrap().len(), 1);
@@ -84,14 +84,14 @@ fn test_tool_registry_list() {
     let registry = ToolRegistry::with_builtins();
     let tools = registry.list();
     // Should contain at least some built-in tools
-    assert!(tools.contains(&"fs.read".to_string()));
+    assert!(tools.contains(&"fs_read".to_string()));
 }
 
 #[test]
 fn test_tool_registry_with_builtins() {
     let registry = ToolRegistry::with_builtins();
-    assert!(registry.get("fs.read").is_some());
-    assert!(registry.get("shell.run").is_some());
+    assert!(registry.get("fs_read").is_some());
+    assert!(registry.get("shell_run").is_some());
 }
 
 #[test]

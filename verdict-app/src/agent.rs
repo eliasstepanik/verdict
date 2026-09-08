@@ -10,14 +10,14 @@ use verdict::prelude::*;
 pub fn build_assistant_agent(config: &AppConfig, agent_name: &str) -> Agent {
     let system = config.effective_system_prompt();
     let tools = vec![
-        "fs.read".to_string(),
-        "fs.list".to_string(),
-        "fs.write".to_string(),
-        "search.files".to_string(),
-        "search.grep".to_string(),
-        "shell.run".to_string(),
-        "shell.cargo_check".to_string(),
-        "shell.cargo_test".to_string(),
+        "fs_read".to_string(),
+        "fs_list".to_string(),
+        "fs_write".to_string(),
+        "search_files".to_string(),
+        "search_grep".to_string(),
+        "shell_run".to_string(),
+        "shell_cargo_check".to_string(),
+        "shell_cargo_test".to_string(),
     ];
     Agent {
         name: agent_name.to_string(),
@@ -174,9 +174,9 @@ pub fn build_memory_agent(config: &AppConfig, agent_name: &str) -> Agent {
                         provider: String::new(),
                     },
                     tools: vec![
-                        "fs.read".to_string(),
-                        "fs.list".to_string(),
-                        "fs.write".to_string(),
+                        "fs_read".to_string(),
+                        "fs_list".to_string(),
+                        "fs_write".to_string(),
                     ],
                     max_rounds: 8,
                     stop_condition: StopCondition::TextOnly,
@@ -184,9 +184,9 @@ pub fn build_memory_agent(config: &AppConfig, agent_name: &str) -> Agent {
                 guard_out: Guard::NonEmptyOutput,
                 verdict: Verdict::Automated(Guard::NonEmptyOutput),
                 tools: ToolSet::Allow(vec![
-                    "fs.read".to_string(),
-                    "fs.list".to_string(),
-                    "fs.write".to_string(),
+                    "fs_read".to_string(),
+                    "fs_list".to_string(),
+                    "fs_write".to_string(),
                 ]),
                 injection_protection: InjectionProtection::Strict,
                 output_schema: None,
@@ -198,9 +198,9 @@ pub fn build_memory_agent(config: &AppConfig, agent_name: &str) -> Agent {
             })
             .build(),
         tools: ToolSet::Allow(vec![
-            "fs.read".to_string(),
-            "fs.list".to_string(),
-            "fs.write".to_string(),
+            "fs_read".to_string(),
+            "fs_list".to_string(),
+            "fs_write".to_string(),
         ]),
         skills: SkillSet {
             skills: vec!["rust_debugging".to_string()],

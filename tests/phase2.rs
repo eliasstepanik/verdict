@@ -65,16 +65,16 @@ async fn test_tool_registry_with_builtins() {
     let list = registry.list();
 
     // Should have at least the standard built-in tools
-    assert!(list.contains(&"fs.read".to_string()));
-    assert!(list.contains(&"fs.write".to_string()));
-    assert!(list.contains(&"fs.list".to_string()));
-    assert!(list.contains(&"fs.delete".to_string()));
-    assert!(list.contains(&"shell.cargo_check".to_string()));
-    assert!(list.contains(&"shell.cargo_test".to_string()));
-    assert!(list.contains(&"shell.cargo_fmt".to_string()));
-    assert!(list.contains(&"shell.run_command".to_string()));
-    assert!(list.contains(&"search.files".to_string()));
-    assert!(list.contains(&"search.grep".to_string()));
+    assert!(list.contains(&"fs_read".to_string()));
+    assert!(list.contains(&"fs_write".to_string()));
+    assert!(list.contains(&"fs_list".to_string()));
+    assert!(list.contains(&"fs_delete".to_string()));
+    assert!(list.contains(&"shell_cargo_check".to_string()));
+    assert!(list.contains(&"shell_cargo_test".to_string()));
+    assert!(list.contains(&"shell_cargo_fmt".to_string()));
+    assert!(list.contains(&"shell_run_command".to_string()));
+    assert!(list.contains(&"search_files".to_string()));
+    assert!(list.contains(&"search_grep".to_string()));
 
     // Count should be at least 10
     assert!(list.len() >= 10);
@@ -123,7 +123,7 @@ async fn test_function_tool_creation_and_call() {
 #[tokio::test]
 async fn test_fs_read_cargo_toml() {
     let registry = ToolRegistry::with_builtins();
-    let fs_read = registry.get("fs.read").expect("fs.read not found");
+    let fs_read = registry.get("fs_read").expect("fs_read not found");
 
     let mut fs_policy = FilesystemPolicy::default();
     fs_policy.workspace_root = workspace_root();
@@ -145,7 +145,7 @@ async fn test_fs_read_cargo_toml() {
 #[tokio::test]
 async fn test_fs_read_rejects_path_escape() {
     let registry = ToolRegistry::with_builtins();
-    let fs_read = registry.get("fs.read").expect("fs.read not found");
+    let fs_read = registry.get("fs_read").expect("fs_read not found");
 
     let mut fs_policy = FilesystemPolicy::default();
     // Use a temp directory as workspace_root, not the project root
@@ -165,15 +165,15 @@ async fn test_fs_read_rejects_path_escape() {
     // Should fail because /etc/passwd is outside workspace_root
     assert!(
         result.is_err(),
-        "fs.read should reject paths outside workspace_root"
+        "fs_read should reject paths outside workspace_root"
     );
 }
 
 #[tokio::test]
 async fn test_fs_write_and_read_roundtrip() {
     let registry = ToolRegistry::with_builtins();
-    let fs_write = registry.get("fs.write").expect("fs.write not found");
-    let fs_read = registry.get("fs.read").expect("fs.read not found");
+    let fs_write = registry.get("fs_write").expect("fs_write not found");
+    let fs_read = registry.get("fs_read").expect("fs_read not found");
 
     let temp_dir = std::env::temp_dir();
     let temp_filename = unique_temp_file("roundtrip");
@@ -212,7 +212,7 @@ async fn test_fs_write_and_read_roundtrip() {
 #[tokio::test]
 async fn test_fs_list_directory() {
     let registry = ToolRegistry::with_builtins();
-    let fs_list = registry.get("fs.list").expect("fs.list not found");
+    let fs_list = registry.get("fs_list").expect("fs_list not found");
 
     let mut fs_policy = FilesystemPolicy::default();
     fs_policy.workspace_root = workspace_root();
@@ -242,7 +242,7 @@ async fn test_fs_list_directory() {
 #[tokio::test]
 async fn test_search_grep_in_cargo_toml() {
     let registry = ToolRegistry::with_builtins();
-    let grep = registry.get("search.grep").expect("search.grep not found");
+    let grep = registry.get("search_grep").expect("search_grep not found");
 
     let mut fs_policy = FilesystemPolicy::default();
     fs_policy.workspace_root = workspace_root();
@@ -279,14 +279,14 @@ async fn test_toolset_readonly_enforcement() {
     let readonly = ToolSet::ReadOnly;
 
     // Should allow read tools
-    assert!(readonly.contains("fs.read"));
-    assert!(readonly.contains("fs.list"));
-    assert!(readonly.contains("search.files"));
-    assert!(readonly.contains("search.grep"));
+    assert!(readonly.contains("fs_read"));
+    assert!(readonly.contains("fs_list"));
+    assert!(readonly.contains("search_files"));
+    assert!(readonly.contains("search_grep"));
 
     // Should NOT allow write tools
-    assert!(!readonly.contains("fs.write"));
-    assert!(!readonly.contains("fs.delete"));
+    assert!(!readonly.contains("fs_write"));
+    assert!(!readonly.contains("fs_delete"));
 }
 
 #[tokio::test]

@@ -13,7 +13,7 @@ pub struct SearchFilesTool;
 #[async_trait]
 impl Tool for SearchFilesTool {
     fn name(&self) -> &str {
-        "search.files"
+        "search_files"
     }
 
     fn description(&self) -> &str {
@@ -112,7 +112,7 @@ pub struct GrepTool;
 #[async_trait]
 impl Tool for GrepTool {
     fn name(&self) -> &str {
-        "search.grep"
+        "search_grep"
     }
 
     fn description(&self) -> &str {

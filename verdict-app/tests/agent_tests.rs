@@ -36,8 +36,8 @@ fn test_act_step_tools_and_protection() {
     match (&step.tools, &agent.tools) {
         (ToolSet::Allow(step_tools), ToolSet::Allow(agent_tools)) => {
             assert_eq!(step_tools, agent_tools);
-            assert!(step_tools.contains(&"fs.read".to_string()));
-            assert!(step_tools.contains(&"shell.run".to_string()));
+            assert!(step_tools.contains(&"fs_read".to_string()));
+            assert!(step_tools.contains(&"shell_run".to_string()));
         }
         _ => panic!("Expected ToolSet::Allow on both step and agent"),
     }
@@ -65,9 +65,9 @@ fn test_act_step_uses_tool_use_loop() {
             assert!(!system.is_empty());
             assert!(user.contains("{input}"));
             assert_eq!(*max_rounds, 10);
-            assert!(tools.contains(&"fs.read".to_string()));
-            assert!(tools.contains(&"shell.run".to_string()));
-            assert!(tools.contains(&"shell.cargo_test".to_string()));
+            assert!(tools.contains(&"fs_read".to_string()));
+            assert!(tools.contains(&"shell_run".to_string()));
+            assert!(tools.contains(&"shell_cargo_test".to_string()));
             assert!(matches!(stop_condition, StopCondition::TextOnly));
 
             // The loop's own tool list must match the step's tool scope.
@@ -82,7 +82,7 @@ fn test_act_step_uses_tool_use_loop() {
 
 // Security fix: verified that build_assistant_agent's act step now enforces
 // output guards and injection protection, matching the pattern used by other
-// builders that hold dangerous tools (fs.write, shell.run).
+// builders that hold dangerous tools (fs_write, shell_run).
 #[test]
 fn test_act_step_guard_out_checks_secrets() {
     let config = AppConfig::default();
@@ -113,12 +113,12 @@ fn test_agent_toolset_is_restricted() {
     match &agent.tools {
         ToolSet::Allow(names) => {
             assert_eq!(names.len(), 8);
-            assert!(names.contains(&"fs.read".to_string()));
-            assert!(names.contains(&"fs.write".to_string()));
-            assert!(names.contains(&"search.grep".to_string()));
-            assert!(names.contains(&"shell.run".to_string()));
-            assert!(names.contains(&"shell.cargo_check".to_string()));
-            assert!(names.contains(&"shell.cargo_test".to_string()));
+            assert!(names.contains(&"fs_read".to_string()));
+            assert!(names.contains(&"fs_write".to_string()));
+            assert!(names.contains(&"search_grep".to_string()));
+            assert!(names.contains(&"shell_run".to_string()));
+            assert!(names.contains(&"shell_cargo_check".to_string()));
+            assert!(names.contains(&"shell_cargo_test".to_string()));
         }
         _ => panic!("Expected ToolSet::Allow"),
     }

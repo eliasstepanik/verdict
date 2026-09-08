@@ -77,7 +77,7 @@ fn make_pipeline(step: AgentStep) -> Pipeline {
 /// enough `n` and a small `max_rounds`/abort-round the test never reaches it.
 fn infinite_tool_call_script(n: usize) -> Vec<ScriptedResponse> {
     (0..n)
-        .map(|_| ScriptedResponse::tool_call("fs.list", json!({ "path": "." })))
+        .map(|_| ScriptedResponse::tool_call("fs_list", json!({ "path": "." })))
         .collect()
 }
 
@@ -118,8 +118,12 @@ async fn test_round_observer_aborts_loop_before_max_rounds() {
     // (`!tool_schemas.is_empty() && !answered_with_text` gates synthesis).
     // This isolates the assertion to the abort path itself rather than
     // conflating it with the separate (pre-existing, unmodified) synthesis
-    // behavior. Execution permission for `fs.list` still comes from the
+    // behavior. Execution permission for `fs_list` still comes from the
     // AgentStep's own `tools: ToolSet::Full` scope, independent of this list.
+    //
+    // Uses "fs_list" (post-ADR-083 underscore form) since ScriptedResponse::tool_call
+    // must match a name the real ToolRegistry resolves, so the abort race is against
+    // a genuine successful tool call each round — not a tool-lookup failure.
     let script = infinite_tool_call_script(20);
     let mock_provider = ScriptedMockLlmProvider::new(script);
     let llm_client = LlmClient::new(Arc::new(mock_provider));
@@ -165,7 +169,7 @@ async fn test_round_observer_aborts_loop_before_max_rounds() {
 async fn test_no_round_observer_configured_behaves_as_before() {
     // Natural stop: tool call, then text (Pattern stop condition met on round 2).
     let script = vec![
-        ScriptedResponse::tool_call("fs.list", json!({ "path": "." })),
+        ScriptedResponse::tool_call("fs_list", json!({ "path": "." })),
         ScriptedResponse::text("All done. <TASK_COMPLETE>"),
     ];
     let mock_provider = ScriptedMockLlmProvider::new(script);
@@ -174,7 +178,7 @@ async fn test_no_round_observer_configured_behaves_as_before() {
 
     let step = tool_use_loop_step(
         "no_observer",
-        vec!["fs.list".to_string()],
+        vec!["fs_list".to_string()],
         10,
         StopCondition::Pattern("<TASK_COMPLETE>".to_string()),
     );
@@ -213,7 +217,7 @@ async fn test_no_round_observer_runs_to_max_rounds_unaffected() {
 
     let step = tool_use_loop_step(
         "spin_no_observer",
-        vec!["fs.list".to_string()],
+        vec!["fs_list".to_string()],
         5,
         StopCondition::MaxRounds,
     );
@@ -264,8 +268,8 @@ impl RoundObserver for OneShotNudgeObserver {
 #[tokio::test]
 async fn test_pending_nudge_reaches_next_round_llm_call() {
     let script = vec![
-        ScriptedResponse::tool_call("fs.list", json!({ "path": "." })), // round 0
-        ScriptedResponse::tool_call("fs.list", json!({ "path": "." })), // round 1
+        ScriptedResponse::tool_call("fs_list", json!({ "path": "." })), // round 0
+        ScriptedResponse::tool_call("fs_list", json!({ "path": "." })), // round 1
         ScriptedResponse::text("Done. <TASK_COMPLETE>"),                // round 2
     ];
     let mock_provider = ScriptedMockLlmProvider::new(script);
@@ -275,7 +279,7 @@ async fn test_pending_nudge_reaches_next_round_llm_call() {
 
     let step = tool_use_loop_step(
         "nudge_test",
-        vec!["fs.list".to_string()],
+        vec!["fs_list".to_string()],
         10,
         StopCondition::Pattern("<TASK_COMPLETE>".to_string()),
     );
@@ -348,7 +352,7 @@ async fn test_abort_skips_synthesis_pass_with_realistic_nonempty_tools() {
     // ToolUseLoop step looks like, and exactly the config the pre-fix code
     // mishandled (an empty `tools` list was the only way the shipped 4 tests
     // avoided tripping over this gap).
-    let step = tool_use_loop_step("spin_realistic", vec!["fs.list".to_string()], 20, StopCondition::MaxRounds);
+    let step = tool_use_loop_step("spin_realistic", vec!["fs_list".to_string()], 20, StopCondition::MaxRounds);
     let pipeline = make_pipeline(step);
     let agent = make_agent(pipeline.clone());
 

@@ -77,7 +77,7 @@ pub struct CargoCheckTool;
 #[async_trait]
 impl Tool for CargoCheckTool {
     fn name(&self) -> &str {
-        "shell.cargo_check"
+        "shell_cargo_check"
     }
 
     fn description(&self) -> &str {
@@ -183,7 +183,7 @@ pub struct CargoTestTool;
 #[async_trait]
 impl Tool for CargoTestTool {
     fn name(&self) -> &str {
-        "shell.cargo_test"
+        "shell_cargo_test"
     }
 
     fn description(&self) -> &str {
@@ -289,7 +289,7 @@ pub struct CargoFmtTool;
 #[async_trait]
 impl Tool for CargoFmtTool {
     fn name(&self) -> &str {
-        "shell.cargo_fmt"
+        "shell_cargo_fmt"
     }
 
     fn description(&self) -> &str {
@@ -340,7 +340,7 @@ pub struct RunCommandTool;
 #[async_trait]
 impl Tool for RunCommandTool {
     fn name(&self) -> &str {
-        "shell.run_command"
+        "shell_run_command"
     }
 
     fn description(&self) -> &str {
@@ -499,7 +499,7 @@ pub struct ShellRunTool;
 #[async_trait]
 impl Tool for ShellRunTool {
     fn name(&self) -> &str {
-        "shell.run"
+        "shell_run"
     }
 
     fn description(&self) -> &str {

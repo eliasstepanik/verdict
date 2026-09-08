@@ -422,14 +422,14 @@ async fn test_workspace_isolation_none_unchanged() {
 
     let mut runner = PipelineRunner::new();
     
-    // Create a pipeline that writes a file via fs.write tool
+    // Create a pipeline that writes a file via fs_write tool
     let pipeline = Pipeline {
         name: "test".into(),
         steps: vec![AgentStep {
             name: "write_test_file".into(),
             guard_in: Guard::None,
             action: StepAction::ToolCall {
-                tool: "fs.write".into(),
+                tool: "fs_write".into(),
                 args: json!({
                     "path": "test_file.txt",
                     "content": "test content"
@@ -516,7 +516,7 @@ async fn test_workspace_isolation_tempdir_creates_and_cleans_up() {
 
     let mut runner = PipelineRunner::new();
     
-    // Create a pipeline that writes a file via fs.write tool
+    // Create a pipeline that writes a file via fs_write tool
     // With TempDir isolation, this file should go to a temp directory, not original_workspace
     let pipeline = Pipeline {
         name: "test".into(),
@@ -524,7 +524,7 @@ async fn test_workspace_isolation_tempdir_creates_and_cleans_up() {
             name: "write_in_tempdir".into(),
             guard_in: Guard::None,
             action: StepAction::ToolCall {
-                tool: "fs.write".into(),
+                tool: "fs_write".into(),
                 args: json!({
                     "path": "tempdir_test_file.txt",
                     "content": "content from tempdir isolation"
@@ -611,7 +611,7 @@ async fn test_workspace_isolation_sandboxed_path_valid() {
             name: "write_to_sandbox".into(),
             guard_in: Guard::None,
             action: StepAction::ToolCall {
-                tool: "fs.write".into(),
+                tool: "fs_write".into(),
                 args: json!({
                     "path": "sandbox_file.txt",
                     "content": "written to sandbox"
@@ -764,7 +764,7 @@ async fn test_shell_command_rejects_absolute_paths() {
             name: "attempt_absolute_path_escape".into(),
             guard_in: Guard::None,
             action: StepAction::ToolCall {
-                tool: "shell.run".into(),
+                tool: "shell_run".into(),
                 args: json!({
                     "command": "touch",
                     "args": ["/tmp/escaped_file.txt"]
@@ -844,7 +844,7 @@ async fn test_shell_bash_c_escape_blocked() {
             name: "attempt_bash_c_escape".into(),
             guard_in: Guard::None,
             action: StepAction::ToolCall {
-                tool: "shell.run".into(),
+                tool: "shell_run".into(),
                 args: json!({
                     "command": "bash",
                     "args": ["-c", "echo pwned > /tmp/escaped"]

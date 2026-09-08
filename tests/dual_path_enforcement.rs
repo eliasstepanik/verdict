@@ -204,7 +204,7 @@ async fn tool_call_under_policy(parallel: bool, agent_tools: ToolSet) -> Result<
         name: "call".into(),
         guard_in: Guard::None,
         action: StepAction::ToolCall {
-            tool: "fs.list".into(),
+            tool: "fs_list".into(),
             args: json!({ "path": "." }),
         },
         guard_out: Guard::None,
@@ -243,7 +243,7 @@ async fn agent_policy_denial_enforced_on_both_paths() {
         let r = tool_call_under_policy(parallel, ToolSet::None).await;
         assert!(
             r.is_err(),
-            "agent policy ToolSet::None must reject fs.list even though the step \
+            "agent policy ToolSet::None must reject fs_list even though the step \
              scope is Full (parallel={parallel}), got {r:?}"
         );
     }
@@ -254,7 +254,7 @@ async fn agent_policy_allow_enforced_on_both_paths() {
     for parallel in [false, true] {
         let r = tool_call_under_policy(parallel, ToolSet::ReadOnly).await;
         assert!(
-            r.expect("agent policy ReadOnly must permit fs.list").success,
+            r.expect("agent policy ReadOnly must permit fs_list").success,
             "allowed tool must run (parallel={parallel})"
         );
     }
