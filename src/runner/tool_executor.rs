@@ -145,9 +145,14 @@ impl PipelineRunner {
                      (no approval_decision configured => denied by default)"
                 );
 
-                // Mirror the audit-logging pattern of the other failure paths
-                // in this function (Step 7's Err branch) so a denial is
-                // genuinely visible in PipelineResult.audit_log.
+                // Audit-logs the denial via the same mechanism used by other
+                // tool-call outcomes in this function (visible in
+                // PipelineResult.audit_log on the step-driven path via
+                // `handle_tool_call`'s Err branch; the LLM-loop path
+                // (`execute_llm_tool_call`) never re-appends to the real
+                // audit log, so its denial entries are subject to a
+                // separate, pre-existing clone-and-discard limitation — see
+                // notes/verdict-adr-088-gate-review.md).
                 audit_log.lock().ok().map(|mut log| {
                     log.append(AuditEntry {
                         timestamp: Utc::now(),

@@ -185,6 +185,11 @@ pub type ToolGuard = Box<dyn Fn(&str, &Value, &ToolContext) -> Result<(), String
 /// Only consulted for tools registered via `ToolRegistry::register_with_approval`.
 /// If no decision function is configured, the call is **denied by default**
 /// (fail-closed) — see `execute_tool_call`'s Step 3.5.
+///
+/// The closure must not panic — a panic propagates and aborts the pipeline
+/// task; it is never treated as approval (the tool is never executed in
+/// this case, but the pipeline run itself crashes rather than gracefully
+/// denying).
 pub type ApprovalDecision = Arc<dyn Fn(&str, &Value) -> bool + Send + Sync>;
 
 /// Core tool trait
