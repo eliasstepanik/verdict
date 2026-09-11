@@ -176,6 +176,17 @@ pub struct ToolContext {
 /// `PipelineRunner::tool_guards` via `PipelineRunner::with_tool_guards`.
 pub type ToolGuard = Box<dyn Fn(&str, &Value, &ToolContext) -> Result<(), String> + Send + Sync>;
 
+/// Decision function for approval-gated tools (ADR-088). Given
+/// `(tool_name, args)`, returns `true` to allow the call, `false` to deny it.
+/// Registered on `PipelineRunner::approval_decision` via
+/// `PipelineRunner::with_approval_decision`. Deliberately sync — matches
+/// `ToolGuard`'s existing signature shape and avoids new async plumbing.
+///
+/// Only consulted for tools registered via `ToolRegistry::register_with_approval`.
+/// If no decision function is configured, the call is **denied by default**
+/// (fail-closed) — see `execute_tool_call`'s Step 3.5.
+pub type ApprovalDecision = Arc<dyn Fn(&str, &Value) -> bool + Send + Sync>;
+
 /// Core tool trait
 #[async_trait]
 pub trait Tool: Send + Sync {

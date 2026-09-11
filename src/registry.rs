@@ -84,6 +84,13 @@ impl ToolRegistry {
         self.requires_approval.contains(name)
     }
 
+    /// Accessor for the full set of approval-required tool names (ADR-088).
+    /// Useful for host introspection (e.g. a UI listing which tools are
+    /// gated) without needing to probe `requires_approval` per-name.
+    pub fn approval_required_names(&self) -> &std::collections::HashSet<String> {
+        &self.requires_approval
+    }
+
     pub fn get(&self, name: &str) -> Option<Arc<dyn Tool>> {
         self.tools.get(name).cloned()
     }

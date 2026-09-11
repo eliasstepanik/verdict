@@ -119,6 +119,51 @@ impl PipelineRunner {
             }
         }
 
+        // Step 3.5: Approval gate (fail-closed, ADR-088). If this tool was
+        // registered via `register_with_approval`, it MAY NOT run unless the
+        // host's `approval_decision` returns true. No decision fn configured
+        // => DENY.
+        if self.tool_registry.requires_approval(tool_name) {
+            if let Some(sink) = &self.output_sink {
+                sink.emit(OutputEvent::ToolApprovalRequired {
+                    step: ctx.step_name.clone(),
+                    tool: tool_name.to_string(),
+                    args: args.clone(),
+                })
+                .await;
+            }
+
+            let approved = self
+                .approval_decision
+                .as_ref()
+                .map(|f| f(tool_name, args))
+                .unwrap_or(false);
+
+            if !approved {
+                let reason = format!(
+                    "tool '{tool_name}' requires approval and was denied \
+                     (no approval_decision configured => denied by default)"
+                );
+
+                // Mirror the audit-logging pattern of the other failure paths
+                // in this function (Step 7's Err branch) so a denial is
+                // genuinely visible in PipelineResult.audit_log.
+                audit_log.lock().ok().map(|mut log| {
+                    log.append(AuditEntry {
+                        timestamp: Utc::now(),
+                        pipeline_name: ctx.pipeline_name.clone(),
+                        step_name: ctx.step_name.clone(),
+                        event: AuditEvent::ToolCallFailed {
+                            tool: tool_name.to_string(),
+                            reason: reason.clone(),
+                        },
+                    });
+                });
+
+                return Err(StepError::ActionFailed { reason });
+            }
+        }
+
         // Step 4: Apply pre-execution tool-specific guards (VERDICT-CHANGE-1).
         // ToolContext isn't assembled until Step 6, so build a guard-purposed
         // context here from the same fields, using the same `audit_log`

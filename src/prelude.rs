@@ -77,7 +77,8 @@ pub use crate::skills::builtin::{
 pub use crate::skills::{Skill, SkillEval, SkillExample, SkillSet};
 pub use crate::tools::{DiagnosticEntry, DiagnosticSeverity, StructuredOutput};
 pub use crate::tools::{
-    FunctionTool, Tool, ToolChunk, ToolContext, ToolError, ToolGuard, ToolOutput, ToolSource,
+    ApprovalDecision, FunctionTool, Tool, ToolChunk, ToolContext, ToolError, ToolGuard, ToolOutput,
+    ToolSource,
 };
 pub use crate::toolset::ToolSet;
 

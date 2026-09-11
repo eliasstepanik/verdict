@@ -87,6 +87,11 @@ pub struct PipelineRunner {
     /// Per-round observer polled between rounds of a `ToolUseLoop`
     /// (VERDICT-CHANGE-2). Can abort the loop in-flight or inject a nudge.
     pub round_observer: Option<Arc<dyn crate::runner::RoundObserver>>,
+    /// Decision function for approval-gated tools (ADR-088). Consulted only
+    /// for tools registered via `ToolRegistry::register_with_approval`.
+    /// `None` (the default) means every approval-required call is DENIED —
+    /// fail-closed by default. Set via `with_approval_decision`.
+    pub approval_decision: Option<crate::tools::ApprovalDecision>,
 }
 
 impl PipelineRunner {
@@ -108,6 +113,7 @@ impl PipelineRunner {
             rate_limiter: None,
             tool_guards: None,
             round_observer: None,
+            approval_decision: None,
         }
     }
 
@@ -129,6 +135,7 @@ impl PipelineRunner {
             rate_limiter: None,
             tool_guards: None,
             round_observer: None,
+            approval_decision: None,
         }
     }
 
@@ -150,6 +157,7 @@ impl PipelineRunner {
             rate_limiter: None,
             tool_guards: None,
             round_observer: None,
+            approval_decision: None,
         }
     }
 
@@ -172,6 +180,7 @@ impl PipelineRunner {
             rate_limiter: None,
             tool_guards: None,
             round_observer: None,
+            approval_decision: None,
             auto_title_llm: None,
             memory: None,
         }
@@ -197,6 +206,7 @@ impl PipelineRunner {
             rate_limiter: None,
             tool_guards: None,
             round_observer: None,
+            approval_decision: None,
         }
     }
 
@@ -268,6 +278,15 @@ impl PipelineRunner {
     /// `RoundControl::Abort` or inject a nudge message via `pending_nudge`.
     pub fn with_round_observer(mut self, observer: Arc<dyn crate::runner::RoundObserver>) -> Self {
         self.round_observer = Some(observer);
+        self
+    }
+
+    /// Set the approval-decision function for approval-gated tools (ADR-088).
+    /// Without this, every tool registered via
+    /// `ToolRegistry::register_with_approval` is denied by default
+    /// (fail-closed) when called.
+    pub fn with_approval_decision(mut self, f: crate::tools::ApprovalDecision) -> Self {
+        self.approval_decision = Some(f);
         self
     }
 
