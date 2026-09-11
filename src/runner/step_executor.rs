@@ -60,6 +60,7 @@ impl PipelineRunner {
             rate_limiter: self.rate_limiter.clone(),
             tool_guards: self.tool_guards.clone(),
             round_observer: self.round_observer.clone(),
+            approval_decision: self.approval_decision.clone(),
         };
 
         // Derive the sub-agent's policy from the PARENT's actual policy so that

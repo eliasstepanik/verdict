@@ -17,6 +17,6 @@ pub use http::HttpTool;
 pub use search::{GrepTool, SearchFilesTool};
 pub use shell::{CargoCheckTool, CargoFmtTool, CargoTestTool, RunCommandTool};
 pub use tool::{
-    DiagnosticEntry, DiagnosticSeverity, StructuredOutput, Tool, ToolChunk, ToolContext, ToolError,
-    ToolGuard, ToolOutput, ToolSource,
+    ApprovalDecision, DiagnosticEntry, DiagnosticSeverity, StructuredOutput, Tool, ToolChunk,
+    ToolContext, ToolError, ToolGuard, ToolOutput, ToolSource,
 };
